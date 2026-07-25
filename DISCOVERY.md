@@ -308,6 +308,51 @@ The SDK's FFC/DFC may apply inside the ISP path, in which case raw mode bypasses
 them and we need our own implementation. **This must be tested, not assumed.**
 Either way, `FfcExport`/`FfcImport` means calibration is storable per setup.
 
+### The flat can be derived from the mosaic tiles themselves
+
+The subject moves between tiles; the illumination field does not. So the field
+is recoverable from a set of unaligned tiles without shooting a blank slide —
+per-pixel max (brightfield, where subject is darker than background) or median,
+followed by heavy smoothing.
+
+Tested on the four brightfield captures:
+
+```
+                       centre ---------------------------> corner    spread
+ov0004 raw             1.000  0.989  0.984  0.952  0.920  0.915  0.888  0.851   +17.5%
+derived flat field     1.000  0.995  0.985  0.964  0.943  0.926  0.899  0.864   +15.8%
+ov0004 corrected       1.000  1.000  1.002  1.003  0.998  1.002  1.003  1.003    +0.5%
+
+same derived flat applied to the other three tiles:
+ov0001 corrected  +0.2%      ov0002 corrected  +0.4%      ov0003 corrected  +0.5%
+```
+
+**17.5 % → 0.2–0.5 %.** A 35–80× reduction in field non-uniformity, from JPEG
+data, with no calibration frames captured.
+
+**Feature: auto-flat from session tiles.** A user who never shoots a flat still
+gets the correction, derived from their own mosaic. A properly captured flat
+will beat this, but this is the floor and the floor is good.
+
+### Illumination mode determines the flat — measured
+
+```
+brightfield   1.00 -> 0.85    edges 15% DARKER
+phase         1.00 -> 1.30    edges 30% BRIGHTER
+```
+
+Same objective, same relay, opposite directions. The phase gradient is therefore
+**not vignetting and not the camera relay** — brightfield through the identical
+optical train falls off the normal way. It originates in the phase contrast
+system itself: off-axis rays at the field edge traverse the phase plate
+differently than the annulus intends.
+
+**Consequence: a flat cannot be shared between illumination modes.** The
+per-mode profile keying in §6 is a requirement, not tidiness.
+
+*(Also noted: brightfield clips the darkest diatom cores to 0. More 8-bit
+damage, and another thing raw fixes.)*
+
 ### Central crop
 
 Use only the central ~50–60 % of each frame for the mosaic. This kills field
@@ -601,10 +646,52 @@ part nobody has built.**
 - **Seed the offline stitch with those positions.** The largest single payoff.
   The stitcher stops doing blind global search and only refines locally — the
   difference between "sometimes works" and "always works".
-- **Focus assist.** Live `Toupcam_calc_ClarityFactor` as a readout. Find the
-  peak, then auto-sweep a symmetric Z range around it. Makes "the same Z stack
-  at every tile" repeatable, which is precisely the step that is currently
-  miserable.
+- **Focus assist.** Live `Toupcam_calc_ClarityFactorV2` as a readout. Find the
+  peak, then sweep a symmetric Z range around it. Makes "the same Z stack at
+  every tile" repeatable, which is precisely the step that is currently
+  miserable. See below — with a manual Z axis this is core scope.
+
+### Focus peaking
+
+A per-pixel sharpness overlay, in the manner of a mirrorless camera's peaking.
+`calc_ClarityFactor` is a whole-frame scalar, so the map is ours to compute.
+
+**The naive implementation fails on this subject.** Standard peaking is
+high-pass → threshold → colorize. In darkfield, every diatom is a bright blob on
+black and its outline carries enormous edge gradient *at any focus*. Naive
+peaking outlines everything, permanently, and tells you nothing.
+
+Two changes fix it:
+
+1. **Normalize by local contrast.** Divide the high-frequency response by local
+   RMS, so the measure is *relative* sharpness rather than absolute edge
+   strength and a bright diatom stops winning merely for being bright. Without
+   this, peaking in darkfield is decorative.
+2. **Band-pass, not high-pass.** Focus in a diatom is indicated by the
+   **striae** — pore rows near the resolution limit, and the first structure to
+   vanish on defocus, while the gross frustule outline stays sharp well out of
+   focus. A difference-of-Gaussians tuned to that band is effectively a striae
+   detector, which is the thing being focused on anyway.
+
+### Focus coverage — the feature that fixes stack depth
+
+Union the in-focus masks across a Z sweep. Report **coverage**: "94 % of the
+central crop has been in focus at some Z", and paint the regions that have not.
+
+This answers *"have I taken enough slices?"* objectively. At present that is a
+feel, it differs at every tile, and inconsistent stack depth between tiles is a
+significant part of why stacking and stitching refuse to compose. With coverage,
+the operator stops at 100 % rather than when they feel finished, and every tile
+gets equivalent treatment without ever reading a Z scale.
+
+**Free bonus:** paint the *current* in-focus mask live and rack the fine focus.
+The in-focus zone visibly travels across the field. With field curvature it
+moves as a ring or blob rather than the whole frame lighting together — a **live
+field-curvature visualization**, showing during setup what §6 measures properly
+with a grid target.
+
+All of this runs on the binned live stream. DoG plus local normalization at
+1824 × 1216 is not a performance concern.
 
 ---
 
