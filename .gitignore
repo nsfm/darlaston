@@ -1,0 +1,34 @@
+# ToupTek SDK — proprietary, never vendored. See DISCOVERY.md §4c.
+# Users install it themselves; we dlopen at runtime.
+sdk/
+toupcamsdk*
+lib*.so
+*.so.*
+
+# Captures and calibration data — large, and not source
+*.tif
+*.tiff
+*.dng
+*.fits
+*.fit
+*.raw
+captures/
+sessions/
+profiles/
+calibration/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
