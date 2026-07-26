@@ -353,6 +353,90 @@ per-mode profile keying in §6 is a requirement, not tidiness.
 *(Also noted: brightfield clips the darkest diatom cores to 0. More 8-bit
 damage, and another thing raw fixes.)*
 
+### Calibration practice worth adopting wholesale
+
+From the astrophotography survey. All of it works with zero motion control.
+
+- **`OPTION_ZERO_PADDING` (0x78) must be set to 1.** Default is "high": 12-bit
+  data arrives **left-justified** in the 16-bit word, so values run 0–65520 in
+  steps of 16 rather than 0–4095. INDI's `indi_toupbase.cpp` sets it. Silent
+  and confusing if missed.
+- **`BLACKLEVEL_AUTOADJUST` (0x89) must be off** for raw work. An auto-adjusting
+  offset silently changes the meaning of every dark frame ever captured.
+- **Per-Bayer-phase flat normalisation is non-optional.** ASTAP splits its flat
+  norm four ways on `odd(x)`/`odd(y)` (`flatNorm11/12/21/22`) because the four
+  phases have different sensitivity and different vignetting; one scalar leaves
+  a 2×2 checkerboard baked into every corrected frame. `tools/derive_flat.py`
+  now has `--bayer` for this.
+- **ASTAP's `CALSTAT` FITS keyword** — records which steps have been applied
+  (`'D'` dark, `'F'` flat, `'B'` bias) and skips re-application. Idempotent
+  calibration, self-documenting on disk, about ten lines. Plus `DARK_CNT` /
+  `FLAT_CNT` / `BIAS_CNT`.
+- **PHD2's `DefectMap`** (BSD-3, `src/image_math.h`) — sigma-threshold a master
+  dark into a bad-pixel list, then *repair* those pixels per frame instead of
+  subtracting a whole master. Cheaper, and **temperature-robust**, which matters
+  a great deal here because this camera has no TEC (§4b). Ekos ships the same
+  idea with separate hot- and cold-pixel aggressiveness sliders.
+- **AstroDMx's preview-only vs preview+saved calibration toggle.** Its stated
+  rationale is exactly our problem: hot pixels are indistinguishable from small
+  bright objects and **poison the histogram and the object detector**. Being
+  able to calibrate the *display* while leaving the data untouched is the right
+  default for an art workflow.
+- **Ordering rule** (SharpCap): dark → flat → *everything else*. On 12-bit raw,
+  before demosaic.
+- **Master auto-selection axes.** SharpCap keys masters on
+  camera/colour-space/resolution/exposure/gain; N.I.N.A. adds an **"Ignore"
+  wildcard** fallback. Our extra axis is **illumination mode in place of
+  "filter"**, and flats key on objective × condenser × illumination. Nobody in
+  astronomy has that axis.
+- **A Flat Wizard.** N.I.N.A.'s Dynamic Exposure does a binary search on
+  exposure to hit a target histogram mean. We have a lamp knob and a blank
+  slide, which *is* a flat panel. "Trained flat exposure per objective" is the
+  direct analogue of their trained-per-filter table.
+- **AstroDMx's Connection Monitor** — polls for a stalled stream, then resets,
+  reinitialises with existing settings, and **resumes from the point of failure,
+  pausing rather than aborting** an in-progress capture. Directly addresses the
+  USB dropout problem in §4b. A 20 MP USB3 camera will drop out.
+
+### Two SDK gotchas documented in-tree
+
+Worth knowing before debugging them from scratch:
+
+- INDI: *"When taking an exposure, the camera switches to software trigger mode.
+  When streaming video, the camera switches to video mode."*
+- INDIGO: *"There is a known issue with SDK and reopening the camera — exposure
+  is not possible until the camera is reconnected."* **This directly constrains
+  the hotplug/reconnect design in §10.**
+
+### Licensing update: the vendor pushes the blob itself
+
+`indi-3rdparty` carries `libtoupcam` at **60.31631.20260606** — newer than the
+SDK downloaded here (59.30594) — and **the blob updates are pushed by GitHub
+user `touptek` itself**, on a roughly six-weekly cadence (PR #1335 merged
+2026-06-07; #1291, #1252, #1223, #1169 before it).
+
+That is materially better evidence than "no licence file": the vendor is
+actively and repeatedly placing the binary in a public repository for
+redistribution. It does not create a written grant, so §4c's posture stands, but
+it substantially weakens any argument that redistribution was unintended.
+
+Also confirmed there: this camera is PID **0x1122** (USB3) / **0x1123**
+(USB2 variant), vendor `0547`, with `04b4` (Cypress FX2/FX3) also covered by the
+udev rules.
+
+### Audio focus feedback — nobody does this, and it fits
+
+SharpCap explicitly has no audio feedback, and neither does anything else in the
+survey. But a microscopist focusing by hand is looking **down the tube or at the
+sample**, not at the monitor.
+
+The one existing implementation is `rpicam-apps/post_processing_stages/`
+`acoustic_focus_stage.cpp` (BSD-2-Clause) — maps focus figure-of-merit to an
+audible tone, 300–3000 Hz, log or linear, 1 Hz update. Its header states the
+rationale exactly: *"No visual contact with the preview is required."*
+
+Cheap, and it fits the ergonomics of this instrument better than any overlay.
+
 ### Central crop
 
 Use only the central ~50–60 % of each frame for the mosaic. This kills field
@@ -673,6 +757,124 @@ Two changes fix it:
    focus. A difference-of-Gaussians tuned to that band is effectively a striae
    detector, which is the thing being focused on anyway.
 
+### Which focus metric — revised against the literature
+
+The obvious choice is wrong for this subject, and it was measured decades ago.
+
+**Santos et al. 1997** ([open PDF](https://www2.die.upm.es/im/papers/Autofocus.pdf),
+DOI `10.1046/j.1365-2818.1997.2630819.x`) evaluated 13 autofocus functions on
+**FISH fluorescence — sparse bright objects on a black background**, the closest
+published analogue to darkfield diatoms. Final ranking, lower is better:
+
+```
+Fvoll4       1.49    <- Vollath F4
+Fvoll5       2.85
+Fnor_var     3.06
+Ftenengrad   3.17
+Fvar         3.27
+...
+Frange        --     too noisy to locate a maximum in 4 of 10 series
+```
+
+From the discussion, verbatim:
+
+> "accuracy is highest for function Ftenengrad, **but this function performs
+> badly when the information content is low.**"
+
+> "this worsening is less pronounced in functions Fvoll4 and Fvoll5. These two
+> functions seem to work properly on cytogenetic images with a small number of
+> nuclei."
+
+**A diatom in a black field is the low-information-content case by
+construction.** Tenengrad is what `focus-stack` uses, what oaCapture uses, and
+the obvious first reach.
+
+**Mateos-Pérez et al. 2012** (DOI `10.1002/cyto.a.22020`) ran 13 methods on
+fluorescent TB bacteria — again sparse bright objects on black, different group,
+15 years later. **VOL4 won again.**
+
+Why it survives sparsity:
+
+```
+F4 = Σ g(i,j)·g(i+1,j) − Σ g(i,j)·g(i+2,j)
+```
+
+A **difference of two autocorrelation lags**, so zero-mean noise cancels between
+the terms rather than being squared and accumulated. And because it is
+multiplicative in intensity, **empty background contributes ~0 to both terms**.
+It is also parameter-free — which matters for a tool that cannot be tuned per
+slide. Two shifted multiplies; pure NumPy.
+
+**Defaults by illumination mode:**
+
+| Mode | Metric | Source |
+|---|---|---|
+| **Darkfield / phase** | **Vollath F4** | Santos 1997, Mateos-Pérez 2012 — two independent wins on this image class |
+| **Brightfield** | Normalised variance, or variance of Laplacian | Sun 2004, Liu 2007; LAPV is Pech-Pacheco's own diatom result |
+| Alternates | Tenengrad, LAPV, Redondo, RMS contrast with saturation mask | Tenengrad's accuracy advantage is real on a densely populated strew |
+
+**Prefilter must also switch by mode.** Mateos-Pérez found **median filtering
+degraded** focus precision on sparse bright objects while **white top-hat
+morphology improved** it. pyuscope's `medianBlur(9)` was tuned for brightfield
+IC dies. So: **none / median / top-hat**, defaulting to top-hat for darkfield
+and median for brightfield. Not hardcoded.
+
+**Field confirmation.** Squid's `_def.py` states it outright, and their deployed
+fluorescence configs actually set it:
+
+```python
+LAPE = "LAPE"  # LAPE has worked well for bright field images
+GLVA = "GLVA"  # GLVA works well for darkfield/fluorescence
+```
+
+**Pipeline order** (from ImSwitch's `_compute_focus_value_fast`, GPLv3):
+ROI crop → grayscale → optional bin → optional prefilter → metric. Crop first so
+everything downstream is cheap.
+
+*Aside worth knowing: the ubiquitous `cv2.Laplacian(img).var()` one-liner traces
+directly to **Pech-Pacheco et al. 2000, "Diatom autofocusing in brightfield
+microscopy"** (DOI `10.1109/ICPR.2000.903548`), which fed the ADIAC automatic
+diatom identification project. The most-copied focus metric in computer vision
+comes from a paper about autofocusing diatoms. It was brightfield.*
+
+### Peaking implementation — four pieces, all liftable
+
+1. **Peak the display buffer, never the sensor frame.** darktable
+   (`thumbnail.c:811`, `cairo_scale(1/scale)`) and Open Camera
+   (`use_preview_bitmap_small`) both run peaking on the already-rendered
+   screen-resolution buffer. Neither does anything clever to make full
+   resolution fast — they just don't do it. At ~1600×1000 a Sobel plus Gaussian
+   is trivially realtime.
+2. **`focus-stack`'s `src/task_focusmeasure.cc`** — MIT, 47 lines, the whole
+   per-pixel map: Sobel x and y → `accumulateSquare` → threshold to a noise
+   floor → **GaussianBlur** → sqrt. The blur is the load-bearing step nobody
+   else does: it turns a sparse edge response into a smooth *field* that can be
+   colourmapped. `m_radius` is the spatial-resolution knob.
+3. **darktable's two-scale close-vs-far gradient** (`src/common/focus_peaking.h`,
+   GPL-3.0, same licence as us), four lines:
+   ```c
+   luma_ds[i] = _laplacian(luma, index_close)
+              - 0.67f * (_laplacian(luma, index_far) - 0.00390625f);
+   ```
+   Its in-source rationale: **if the close-neighbour gradient ≈ the
+   far-neighbour gradient you have local *contrast*, not *sharpness*.** That is
+   precisely the failure mode identified above — a bright diatom outlining
+   itself regardless of focus — and it is a cleaner fix than local-RMS
+   normalisation alone.
+4. **Magic Lantern's percentage-target auto-threshold servo** (`src/zebra.c`,
+   GPLv2+):
+   ```c
+   if (1000 * n_over / n_total > focus_peaking_pthr) thr += thr_increment;
+   else                                              thr -= thr_increment;
+   ```
+   The user sets a **target fraction of pixels lit** (default 0.5 %) and the
+   threshold servos toward it frame by frame. Scene-invariant. **Essential for a
+   hand crank** — while racking continuously a fixed threshold either saturates
+   or goes blank.
+
+Optionally **Open Camera's `count >= 3` cross-neighbourhood cleanup**, which
+kills isolated speckle without a blur pass.
+
 ### Focus coverage — the feature that fixes stack depth
 
 Union the in-focus masks across a Z sweep. Report **coverage**: "94 % of the
@@ -801,6 +1003,203 @@ re-applies the active profile. Settings must survive a nudged cable.
 *Diagnostic:* on any flake, read `/sys/bus/usb/devices/*/speed`. A drop from
 5000 to 480 means the link fell back to USB 2.0 — that is the cable, not the
 camera.
+
+---
+
+## 10a. Library survey — verified licences and empirical tests
+
+Findings from a dedicated survey pass. Licences verified from repository files,
+not assumed. Two of the results below come from experiments rather than
+documentation.
+
+### Confidence alone cannot detect a wrong match
+
+Four overlap scenarios, measured:
+
+| Overlap content | `cv2.phaseCorrelate` response | Correct? |
+|---|---|---|
+| Sparse darkfield blobs, true overlap | 0.910 | yes |
+| Pure black + independent noise | 0.021 | correctly rejected |
+| Smooth shading only | 0.009 | correctly rejected |
+| **One blob each, different objects** | **0.799** | **confidently wrong** |
+
+The last row is the real darkfield risk: one diatom in each overlap strip, phase
+correlation locks the wrong pair together and reports 0.80 — indistinguishable
+from the true match at 0.91. **No confidence threshold catches this.**
+
+The only thing that does is a **position constraint** — MIST's search window,
+m2stitch's repeatability filter, ASHLAR's `max_shift`.
+
+**This revises §7.** Phase correlation does work on this subject, but the
+constraint is not optional, and the overview frame is one way to supply it.
+It is a stronger argument for capture-time position tracking than previously
+made, and a strong argument against writing our own stitcher.
+
+Note also: **`skimage.registration.phase_cross_correlation`'s `error` return is
+unusable under its own default** — it returns ~1.0 unconditionally
+([scikit-image#7078](https://github.com/scikit-image/scikit-image/issues/7078)).
+`cv2.phaseCorrelate`'s `response` is a genuine confidence. Use OpenCV.
+
+### Depth-map beats pyramid merging on glowing edges
+
+Synthetic phase-contrast-like Z sweep with bright halo rings, max-Laplacian
+(PMax/wavelet family) versus a smoothed regularised depth map:
+
+| Metric | max-Laplacian | depth map |
+|---|---|---|
+| Selection-map speckle | 0.912 % | **0.011 %** (83× fewer) |
+| RMSE near the glowing edge | 0.0264 | **0.0113** |
+| Max overshoot (ringing) | +0.107 | **+0.044** |
+| RMSE inside the halo ring | **0.0442** | 0.0507 |
+
+Depth-map wins on exactly the two properties that matter here — background
+purity beside a bright edge, and ringing — and loses slightly *inside* the halo,
+which is the expected trade. Synthetic, so indicative rather than definitive.
+
+**And no maintained, well-licensed, depth-map focus stacker exists in Python.**
+That is the genuine gap in the ecosystem and the highest-leverage build in this
+pipeline.
+
+### Selected tools
+
+| Role | Choice | Licence | Why |
+|---|---|---|---|
+| **Mosaic** | **m2stitch** | MIT | Pure Python, **no JVM**, v0.7.2 (2026-01). `position_initial_guess=` *clamps the search window* — the direct hand-off from capture-time tracking. Returns positions only, so we own the blend |
+| Mosaic cross-check | ASHLAR | MIT | v1.20.0 (2026-04). Cleanest reject-then-predict-from-neighbours logic. Drags in a JVM via Bio-Formats |
+| **Global layout** | `scipy.sparse.linalg.lsqr` | BSD | Pure translation makes this **linear** least squares — ~30 lines, one tile pinned for gauge. No packaged library exists and none is needed. Do not reach for g2o / Ceres / GTSAM |
+| **Stack alignment** | focus-stack (Aimonen) | MIT | Active (2026-01). `findTransformECC` genuinely handles focus breathing. Use `--consistency=2` |
+| **Stack merge** | **build a depth-map merger** | — | See above. Use focus-stack's wavelet output as baseline, not final |
+| Blending | `cv2.detail_FeatherBlender` or distance-transform ramp | Apache-2.0 | **Not multiband.** Multiband hides parallax and exposure mismatch; after flat-fielding we have neither, and its cross-octave mixing is the mechanism that manufactures halos at a glowing edge. *(Mechanism-based reasoning, not a citation — verify empirically.)* |
+| **Flat field** | median-of-tiles (ours) | — | Theoretically correct for sparse foreground. Keep as default |
+| Flat field upgrade | BaSiCPy | MIT | Optional, for its darkfield offset term. **Guard and pin** — documented to return all-NaN darkfield on small stacks; v2.0 broke API (JAX→PyTorch) |
+| Archival format | OME-TIFF via `tifffile` | BSD-3 | See below |
+| RAW export | PiDNG | MIT | Pure Python, purpose-built for 12-bit Bayer |
+
+**On storage:** DNG is likely the wrong *primary* format. No Python library
+gives spec-compliant DNG for free, and its metadata is camera-shaped —
+`AsShotNeutral` is meaningless in darkfield, and no Adobe calibration illuminant
+describes a microscope condenser. Write OME-TIFF as archival; offer DNG as an
+optional export for Lightroom/RawTherapee users.
+
+### Licence blockers and traps
+
+- **Original BaSiC (`marrlab/BaSiC`) is CC BY-NC-ND 4.0** — NonCommercial *and*
+  NoDerivatives. Unusable. **BaSiCPy is a separate MIT codebase**; the taint
+  does not carry.
+- **Adobe DNG SDK** — proprietary EULA with an indemnification clause, a
+  "further restriction" barred by GPLv3 §7.
+- **CIDRE** bundles minFunc under CC BY-NC. Also dead since 2021.
+- **`sjawhar/focus-stacking`** and **`cw1204772/depth_from_focus`** have no
+  licence file, therefore all rights reserved. The second is the best
+  architectural reference found (MRF depth-from-focus via graph cut) and can be
+  read but not copied.
+- **LibRaw's CDDL-1.0 option is GPL-incompatible.** Take LGPL-2.1.
+- **Fiji Extended Depth of Field** — unresolved conflict. EPFL's site now states
+  GPLv3; the repository's own `LICENSE.txt` still says research-only,
+  no-redistribution, and has not been touched since 2017. Skip.
+- **pystackreg** ships pre-relicence Thévenaz terms with a same-terms clause
+  that conflicts with GPLv3 redistribution. Fine as an arms-length dependency;
+  do not vendor.
+- **Trap:** PyPI `focus-stack` v0.0.1 (2020) is an unrelated abandoned stub, not
+  Aimonen's tool.
+
+**Assumptions that were wrong in our favour:** Fiji/Stitching, BigStitcher,
+`mpicbg` and enblend/enfuse are all GPL-2.0-**or-later** (verified in source
+headers), hence GPLv3-compatible — the JVM is the cost, not the licence. MIST is
+effectively public domain (NIST notice). `cv2.detail_*` blenders and seam
+finders are in the plain `opencv-python` wheel, not contrib.
+
+---
+
+## 10d. Honest framing of novelty
+
+Live mosaic guidance for a **manual** stage is already shipped by:
+
+- **ToupTek ToupView** — green/yellow/red rectangle, "move the slides"
+- **Zeiss ZEN Panorama** — documented verbatim as supporting "un-coded and
+  un-motorized stages"
+- **Olympus cellSens Manual MIA**, Microvisioneer mvSlide, ViewsIQ Panoptiq,
+  PROMICRA QuickPHOTO, BioStitch-500
+- **RT-4M** (research, Windows binary, research-use licence expiring
+  2027-07-31)
+
+So the accurate claim is **"first free Linux implementation"**, not "first
+implementation". Still worthwhile — ToupTek withholds stitching and EDF from
+ToupLite specifically, RT-4M ships no source, MicroMos is offline MATLAB, sWSI
+never released — but the earlier framing in §4b was wrong.
+
+### What does appear genuinely unbuilt
+
+**Focus coverage — union the in-focus masks across a Z sweep and report
+coverage %.** No prior art found in microscopy or astronomy. Every open-source
+focus aid is a whole-frame scalar or, at best, Ekos' 3×3 tile grid for tilt
+inspection. The entire public focus-peaking corpus is naive
+high-pass-and-threshold, which §9 already establishes is useless in darkfield.
+
+Given that Z stays hand-cranked, **this should be ranked above the mosaic work.**
+It is a smaller feature and it is worth more.
+
+### Negative finding
+
+The amateur diatom and photomicrography community has **no open-source capture
+tool of any kind.** Quekett recommends Helicon and Zerene; the MicrobeHunter
+ToupTek threads are people running ToupLite on Ubuntu and getting capture only.
+That entire space is post-processing, on Windows.
+
+---
+
+## 10e. Steal rather than write
+
+| Source | Licence | What to take |
+|---|---|---|
+| **Squid / Cephla** `software/control/camera_toupcam.py` | BSD-3 | 46 KB production `ToupcamCamera(AbstractCamera)` — RAW mode, `OPTION_BITDEPTH`, binning→resolution map, strobe. Runs on Ubuntu, committed 2026-06. *Caveat: sits on ToupTek's unlicensed vendor binding* |
+| **OpenFlexure** `camera_stage_mapping.py` | GPLv3 | Cross-correlates live frames as a **2D displacement encoder**, calibrates a px↔stage affine ([arXiv:2101.00933](https://arxiv.org/abs/2101.00933)). Our tracker, minus the motors |
+| **Ekos** `align/polaralignmentassistant` | GPL-2.0-or-later | Already solves *guide a human hand with live image feedback* — recomputes error live from the image while the user turns manual knobs. Their documented caveat (continuous live estimation is expensive, therefore optional) is a constraint we will hit |
+| **Ekos** `auxiliary/darklibrary` | GPL-2.0-or-later | Dark masters keyed on duration/binning/**temperature**, plus **defect maps** (hot-pixel lists) as a lighter alternative to full dark subtraction. Directly applicable to the per-profile calibration store, especially given this camera has no TEC |
+| **Micro-Manager** `ImgSharpnessAnalysis.java` | BSD | Eleven focus metrics including **FFTBandpass** — the band-pass measure §9 argues for, already parameterised with cutoffs. Do not write a focus metric |
+| **Ekos** `focus/focusblurriness.cpp` | GPL-2.0-or-later | Splits metrics into star-field (StdDev = **variance/mean**) vs extended-object (Sobel var/mean, Laplacian mean², Canny mean). The **variance/mean local-contrast normalisation §9 derived from first principles**, arrived at independently |
+| **sWSI** ([JMIR 2017](https://mhealth.jmir.org/2017/9/e132/)) | not released | The UI design: mini-map plus four discrete operator states — *moving too fast*, *lost*, *touching a boundary*, *ok*. And the architecture: **downsampled realtime tracking on the live path, full-resolution stitching deferred offline.** 20 MP was never a realtime budget |
+| **Olympus cellSens** Manual MIA | commercial | Two primitives nobody else has: **semi-transparent live overlay on the previous tile** (superimpose structures by eye) and **undo-last-frame**. Both cheap, both belong in v1 |
+
+### Contradictions between survey passes — unresolved
+
+Two claims came back in conflict. Neither is settled; both are cheap to check.
+
+- **m2stitch.** One pass called it top pick for accepting seed positions via
+  `position_initial_guess`. Another says it **requires a regular grid with
+  row/column indices**, making it the wrong shape for freehand tiles, and points
+  to **ASHLAR** (MIT, arbitrary per-tile positions, spanning-tree refinement,
+  `--maximum-shift`) instead. For hand-driven capture ASHLAR looks the better
+  fit. **§10a's recommendation is provisional until its API is read.**
+- **ChimpStackr.** One pass read the current source and found Laplacian pyramid
+  and weighted average only, no depth map. Another lists a depth-map mode. This
+  matters — depth-map is the merge we want.
+
+### Also settled
+
+- **UVC is definitively out.** `libtoupcam.so` statically links libusb-1.0 and
+  addresses usbfs directly (`/dev/bus/usb/%03u/%03u`); zero UVC/VIDIOC/videodev
+  symbols. There is no V4L2 path.
+- **No viable free reimplementation exists.**
+  `openastroproject/libtouptek` (GPL-3.0) has the E3ISPM20000KPA in its camera
+  table but contains **49,524 `notYetImplemented` entries** and implements no
+  image acquisition at all. Abandoned after 18 days in 2021. The blob is the
+  only road.
+- **Micro-Manager's ToupTek path is broken on Linux.** The in-tree `AmScope`
+  adapter is Windows-only and absent from the Linux build's SUBDIRS. ToupTek's
+  own `mmgr` adapter targets Device Interface 68–74; MM moved to DI 75 on
+  2026-02-26, so using it means pinning `pymmcore==11.10.0.74.1` (Oct 2024).
+
+### Licence action item with a deadline
+
+**Write the GPL linking exception now, while sole copyright holder.** After the
+first outside contribution it requires their agreement too. One paragraph today
+against a coordination problem later.
+
+`oaCapture` (GPL-3.0) is the precedent for the `dlopen` half — its
+`dynloader.c` `dlopen`s libtoupcam with per-symbol `dlsym` — and notably lacks
+the exception half. INDI's `libtoupcam/COPYING.LGPL` sitting beside a
+proprietary blob is the thing not to copy.
 
 ---
 

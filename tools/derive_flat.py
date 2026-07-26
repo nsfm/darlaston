@@ -5,7 +5,7 @@ The subject moves between tiles; the illumination field does not. So across a
 set of unaligned tiles, most frames show background at any given pixel, and a
 per-pixel extremum picks the background out.
 
-    derive_flat.py <tile> [tile ...] [--dark] [--sigma N]
+    derive_flat.py <tile> [tile ...] [--dark] [--bayer] [--sigma N]
 
 Use --dark when the subject is BRIGHTER than the background (darkfield, phase
 glow), so the minimum is taken instead of the maximum.
@@ -32,29 +32,56 @@ def fmt(prof, spread):
     return "  ".join(f"{v:.3f}" for v in prof) + f"   spread {spread:+.1%}"
 
 
-def derive(paths, dark=False, sigma=60):
-    stack = np.stack([cv2.imread(p, cv2.IMREAD_GRAYSCALE).astype(np.float32)
-                      for p in paths])
+def normalise(field, bayer=False):
+    """Normalise a flat to unit mean.
+
+    On an undemosaiced Bayer frame a single scalar is wrong: the four phases
+    have different sensitivities and different vignetting, so one norm leaves a
+    2x2 checkerboard baked into every corrected frame. Normalise each phase
+    against its own mean instead. (ASTAP does the same, flatNorm11..22.)
+    """
+    if not bayer:
+        return field / field.mean()
+    out = field.copy()
+    for dy in (0, 1):
+        for dx in (0, 1):
+            phase = out[dy::2, dx::2]
+            out[dy::2, dx::2] = phase / phase.mean()
+    return out
+
+
+def derive(paths, dark=False, sigma=60, bayer=False):
+    flag = cv2.IMREAD_UNCHANGED if bayer else cv2.IMREAD_GRAYSCALE
+    stack = np.stack([cv2.imread(p, flag).astype(np.float32) for p in paths])
     # Subject-darker-than-background -> max picks background, and vice versa.
     field = stack.min(axis=0) if dark else stack.max(axis=0)
-    # Heavy blur: keep the illumination field, discard residual subject.
-    field = cv2.GaussianBlur(field, (0, 0), sigma)
-    return field / field.mean(), stack
+    # Heavy blur keeps the illumination field and discards residual subject.
+    # On Bayer data blur each phase separately, or the smoothing mixes colour
+    # channels and destroys the very structure we are trying to measure.
+    if bayer:
+        for dy in (0, 1):
+            for dx in (0, 1):
+                field[dy::2, dx::2] = cv2.GaussianBlur(
+                    field[dy::2, dx::2], (0, 0), sigma / 2)
+    else:
+        field = cv2.GaussianBlur(field, (0, 0), sigma)
+    return normalise(field, bayer), stack
 
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     dark = "--dark" in sys.argv
+    bayer = "--bayer" in sys.argv
     sigma = 60
     if "--sigma" in sys.argv:
         sigma = float(sys.argv[sys.argv.index("--sigma") + 1])
     if len(args) < 3:
         sys.exit(__doc__)
 
-    flat, stack = derive(args, dark, sigma)
+    flat, stack = derive(args, dark, sigma, bayer)
     cv2.imwrite("flat.tif", (flat * 10000).astype(np.uint16))
-    print(f"derived from {len(args)} tiles "
-          f"({'min' if dark else 'max'}, sigma {sigma:g}) -> flat.tif\n")
+    print(f"derived from {len(args)} tiles ({'min' if dark else 'max'}, "
+          f"sigma {sigma:g}{', per-Bayer-phase' if bayer else ''}) -> flat.tif\n")
 
     print("radial profile, centre -> corner")
     print(f"  {'derived flat':<24}" + fmt(*radial_profile(flat)))

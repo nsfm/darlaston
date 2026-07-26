@@ -13,13 +13,13 @@ focus-stacked photograph rather than a measurement.
 The only Linux software that drives these cameras is ToupTek's ToupLite, and it
 quietly discards most of what the hardware can do. Measured, not assumed:
 
-| Stage | ToupLite gives you | The camera can do |
-|---|---|---|
-| Resolution | 2736 × 1824 (2×2 binned) | **5440 × 3648** |
-| Bit depth | 8-bit | **12-bit raw** |
-| Tone | curve + colour matrix baked in | linear |
-| Chroma | 4:2:0 subsampled | full resolution |
-| Encoding | JPEG | lossless |
+| Stage      | ToupLite gives you             | The camera can do |
+| ---------- | ------------------------------ | ----------------- |
+| Resolution | 2736 × 1824 (2×2 binned)       | **5440 × 3648**   |
+| Bit depth  | 8-bit                          | **12-bit raw**    |
+| Tone       | curve + colour matrix baked in | linear            |
+| Chroma     | 4:2:0 subsampled               | full resolution   |
+| Encoding   | JPEG                           | lossless          |
 
 On a real darkfield capture, **90.6 % of all pixels occupy just four luma
 levels** — at 12 bits that same tonal region gets 64. The faint outer glow around
@@ -61,17 +61,17 @@ project takes a deliberately conservative posture:
 - users install the SDK themselves from
   [ToupTek's download centre](https://www.touptekphotonics.com/download/?category=SDK)
 
-*This is an engineering posture, not legal advice.*
+_This is an engineering posture, not legal advice._
 
 ## tools/
 
 Standalone diagnostics written during discovery. Each runs on its own.
 
-| | |
-|---|---|
-| `probe_camera.py` | Interrogates a connected camera — bit depth, raw format, resolutions, and which SDK options the firmware actually honours. Read-only: options are set, read back, and restored. |
-| `analyze_shots.py` | Measures what a capture pipeline costs — clipping, posterisation, chroma damage, illumination falloff. |
-| `test_registration.py` | Phase-correlates a sequence of captures to test whether a subject can be registered at all, with proper noise-floor controls. |
+|                        |                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `probe_camera.py`      | Interrogates a connected camera — bit depth, raw format, resolutions, and which SDK options the firmware actually honours. Read-only: options are set, read back, and restored. |
+| `analyze_shots.py`     | Measures what a capture pipeline costs — clipping, posterisation, chroma damage, illumination falloff.                                                                          |
+| `test_registration.py` | Phase-correlates a sequence of captures to test whether a subject can be registered at all, with proper noise-floor controls.                                                   |
 
 `probe_camera.py` finds `libtoupcam.so` automatically, or takes a path as its
 first argument, or reads `$TOUPCAM_LIB`.

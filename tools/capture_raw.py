@@ -108,7 +108,7 @@ def main():
     a = p.parse_args()
 
     out = Path(a.out)
-    out.mkdir(exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
 
     devs = toupcam.Toupcam.EnumV2()
     if not devs:
@@ -123,25 +123,30 @@ def main():
         w, h = cam.get_Size()
         print(f"resolution index {a.res}: {w} x {h} ({w*h/1e6:.2f} MP)\n")
 
-        # Fixed exposure and gain. Auto-exposure would make the two captures
-        # incomparable, which is the entire point of the experiment.
-        cam.put_AutoExpoEnable(0)
-        if a.exposure:
-            cam.put_ExpoTime(a.exposure)
-        cam.put_ExpoAGain(a.gain)
-        expo = cam.get_ExpoTime()
-        print(f"exposure {expo} us ({expo/1000:.1f} ms), gain {a.gain}%\n")
+        def expose():
+            """Exposure controls are only valid once the stream is running.
 
-        # Software trigger: one frame on demand, no callback threading.
-        cam.put_Option(toupcam.TOUPCAM_OPTION_TRIGGER, 1)
+            Setting them before StartPullMode returns E_UNEXPECTED. Auto
+            exposure must be off or the two passes are not comparable.
+            """
+            cam.put_AutoExpoEnable(0)
+            if a.exposure:
+                cam.put_ExpoTime(a.exposure)
+            cam.put_ExpoAGain(a.gain)
+            return cam.get_ExpoTime()
 
         # --- pass 1: through the hardware ISP, as ToupLite delivers it -------
+        # Mode flags must be set BEFORE the stream starts -- put_Option(RAW)
+        # returns E_UNEXPECTED while streaming.
         print("pass 1 -- hardware ISP (ToupLite-equivalent)")
         opt(cam, "RAW", toupcam.TOUPCAM_OPTION_RAW, 0)
         opt(cam, "BITDEPTH", toupcam.TOUPCAM_OPTION_BITDEPTH, 0)
+        cam.put_Option(toupcam.TOUPCAM_OPTION_TRIGGER, 1)
         cam.StartPullModeWithCallback(None, None)
+        expo = expose()
+        print(f"  exposure {expo} us ({expo/1000:.2f} ms), gain {a.gain}%")
         buf = bytes(w * h * 3)
-        cam.TriggerSync(5000, buf, 24, 0, None)
+        cam.TriggerSync(8000, buf, 24, 0, None)
         isp = np.frombuffer(buf, np.uint8).reshape(h, w, 3)
         cv2.imwrite(str(out / "isp_rgb.png"), isp)
         cam.Stop()
@@ -157,31 +162,46 @@ def main():
         opt(cam, "LINEAR", toupcam.TOUPCAM_OPTION_LINEAR, 0)
         opt(cam, "CURVE", toupcam.TOUPCAM_OPTION_CURVE, 0)
         opt(cam, "COLORMATIX", toupcam.TOUPCAM_OPTION_COLORMATIX, 0)
+        # Measured, not assumed: ZERO_PADDING=1 ("low") puts the zeros in the
+        # LOW bits, i.e. leaves the 12 bits LEFT-justified (max 65504 = 4094<<4).
+        # 0 ("high") right-justifies to true 0..4095, which is what we want.
+        # INDI sets 1 for its own display scaling; that is not our case.
+        opt(cam, "ZERO_PADDING", toupcam.TOUPCAM_OPTION_ZERO_PADDING, 0)
 
         fourcc, bpp = cam.get_RawFormat()
         pattern = "".join(chr((fourcc >> (8 * i)) & 0xFF) for i in range(4))
-        try:
-            pf = cam.get_Option(toupcam.TOUPCAM_OPTION_PIXEL_FORMAT)
-            pfname = RAW_FORMATS.get(pf, f"0x{pf:02x}")
-        except toupcam.HRESULTException:
-            pfname = "?"
-        print(f"  bayer pattern {pattern}, {bpp} bits/pixel, format {pfname}")
+        print(f"  bayer pattern {pattern}, {bpp} bits/pixel")
 
+        cam.put_Option(toupcam.TOUPCAM_OPTION_TRIGGER, 1)
         cam.StartPullModeWithCallback(None, None)
+        expose()
         buf = bytes(w * h * 2)
-        cam.TriggerSync(5000, buf, 16, w * 2, None)
+        cam.TriggerSync(8000, buf, 16, w * 2, None)
         raw = np.frombuffer(buf, np.uint16).reshape(h, w)
         cam.Stop()
+
+        # Measured: the raw stream arrives bottom-up while the ISP path does
+        # not -- phase correlation between the two passes matches at conf 0.83
+        # only after a vertical flip. Flipping an even-height frame shifts the
+        # Bayer row parity, which is why the delivered buffer looks like RGGB
+        # when get_RawFormat honestly reports GBRG. Flip first, then the
+        # sensor's own pattern applies.
+        raw = np.ascontiguousarray(cv2.flip(raw, 0))
 
         cv2.imwrite(str(out / "raw_bayer.tif"), raw)
         print(f"  wrote {out/'raw_bayer.tif'}")
         stats("raw Bayer (12-bit)", raw)
 
-        for name, code in BAYER_CODES.items():
-            rgb = cv2.cvtColor(raw, code)
-            cv2.imwrite(str(out / f"raw_demosaic_{name}.png"),
-                        (rgb >> 4).astype(np.uint8))
-        print(f"  wrote 4 demosaic candidates -- pick the one with sane colour")
+        # OpenCV's Bayer naming is offset one pixel from the sensor convention,
+        # so a GBRG buffer needs COLOR_BayerGR2BGR. Verified by checking that
+        # the two matched green phases land in the green channel.
+        rgb = cv2.cvtColor(raw, cv2.COLOR_BayerGR2BGR).astype(np.float32) / 4095
+        cv2.imwrite(str(out / "raw_linear.png"),
+                    (np.clip(rgb, 0, 1) * 65535).astype(np.uint16))
+        print(f"  wrote {out/'raw_linear.png'} (linear, no white balance)")
+        ph = [raw[dy::2, dx::2].mean() for dy in (0, 1) for dx in (0, 1)]
+        print(f"  bayer phase means G{ph[0]:.0f} B{ph[1]:.0f} "
+              f"R{ph[2]:.0f} G{ph[3]:.0f}")
 
         # --- the comparison --------------------------------------------------
         print("\ntonal resolution in the shadows")

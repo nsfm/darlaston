@@ -12,6 +12,8 @@ lib*.so
 *.fits
 *.fit
 *.raw
+*.png
+*.jpg
 captures/
 sessions/
 profiles/
