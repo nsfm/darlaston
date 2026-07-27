@@ -36,6 +36,39 @@ class Prefilter(str, Enum):
     TOPHAT = "tophat"
 
 
+class Region(str, Enum):
+    """Where the focus metric looks.
+
+    Not cosmetic. Field curvature puts the frame edges on a different focal
+    plane from the centre, so a full-field score averages together things that
+    cannot be sharp at the same time -- it flattens the peak you are trying to
+    find. A tight box around one detail gives a far more decisive curve.
+    """
+
+    SPOT = "spot"          # central 20% -- one detail, junk elsewhere
+    CENTRE = "centre"      # central 50% -- the default
+    FULL = "full"          # everything, curvature and all
+    CUSTOM = "custom"      # a box the operator drew
+
+
+#: Fraction of each axis, for the fixed regions.
+REGION_FRACTION = {Region.SPOT: 0.20, Region.CENTRE: 0.50, Region.FULL: 1.0}
+
+
+def region_rect(shape: tuple[int, int], region: Region,
+                custom: tuple[float, float, float, float] | None = None
+                ) -> tuple[int, int, int, int]:
+    """Pixel rect for a region. Custom is normalised (x, y, w, h) in 0..1."""
+    h, w = shape[:2]
+    if region is Region.CUSTOM and custom is not None:
+        x, y, cw, ch = custom
+        return (int(x * w), int(y * h),
+                max(8, int(cw * w)), max(8, int(ch * h)))
+    f = REGION_FRACTION.get(region, 0.5)
+    rw, rh = int(w * f), int(h * f)
+    return ((w - rw) // 2, (h - rh) // 2, rw, rh)
+
+
 class Illumination(str, Enum):
     BRIGHTFIELD = "brightfield"
     DARKFIELD = "darkfield"

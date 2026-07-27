@@ -104,6 +104,12 @@ def stylesheet() -> str:
     QPushButton:hover {{ border-color: {DIM}; }}
     QPushButton:focus {{ border-color: {BRASS}; outline: none; }}
     QPushButton[role="primary"] {{ border-color: {BRASS}; color: {BRASS}; }}
+    QPushButton[role="seg"] {{
+        padding: 3px 0; font-size: 11px; color: {DIM};
+    }}
+    QPushButton[role="seg"]:checked {{
+        border-color: {BRASS}; color: {BRASS};
+    }}
     QPushButton[role="step"] {{
         padding: 2px 9px; font-size: 13px; min-width: 0;
     }}

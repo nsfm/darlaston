@@ -18,7 +18,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ..camera.base import CameraBackend, CameraState
 from ..camera.session import CameraSession, SessionStatus
-from ..live.focus import Illumination
+from ..live.focus import Illumination, Region
 from ..live.pipeline import LivePipeline, LiveSignals
 from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
                              ScopeProfile, Setup, Turret)
@@ -84,6 +84,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waiting.synthetic.setVisible(self._allow_synthetic)
 
         self.view = LiveView()
+        self.view.region_drawn.connect(self._on_custom_region)
         self.histogram = Histogram()
         self.trace = FocusTraceView()
 
@@ -154,6 +155,33 @@ class MainWindow(QtWidgets.QMainWindow):
         sensor.addLayout(_readout("gain", self.gain_value))
         sensor.addWidget(self.gain)
         col.addLayout(sensor)
+
+        # Where the metric looks. Field curvature puts the frame edges on a
+        # different focal plane, so a full-field score averages together things
+        # that cannot be sharp together -- a tight box gives a decisive curve.
+        self.regions = QtWidgets.QButtonGroup(self)
+        # Not exclusive: a dragged box is a fourth state in which none of the
+        # presets is active, and an exclusive group cannot express that.
+        self.regions.setExclusive(False)
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(4)
+        for region, label in ((Region.SPOT, "spot"), (Region.CENTRE, "centre"),
+                              (Region.FULL, "full")):
+            b = QtWidgets.QPushButton(label)
+            b.setCheckable(True)
+            b.setProperty("role", "seg")
+            b.setChecked(region is Region.CENTRE)
+            b.clicked.connect(lambda _=False, r=region: self._on_region(r))
+            self.regions.addButton(b)
+            row.addWidget(b)
+        self._region_buttons = {r: b for r, b in
+                                zip((Region.SPOT, Region.CENTRE, Region.FULL),
+                                    self.regions.buttons())}
+        measure = _group("measure from", row)
+        hint = QtWidgets.QLabel("drag on the image for a custom box")
+        hint.setProperty("role", "key")
+        measure.addWidget(hint)
+        col.addLayout(measure)
 
         self.peaking = QtWidgets.QCheckBox("focus peaking")
         self.peaking.toggled.connect(self._on_peaking)
@@ -243,6 +271,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_focus_peak()
         self.gain_value.setText(f"{value / 100:.1f}×")
 
+    def _on_region(self, region: Region) -> None:
+        self.pipeline.set_focus_region(region)
+        for r, b in self._region_buttons.items():
+            b.setChecked(r is region)
+
+    def _on_custom_region(self, rect: tuple) -> None:
+        """A box dragged on the image wins over any preset."""
+        self.pipeline.set_focus_region(Region.CUSTOM, rect)
+        for b in self._region_buttons.values():
+            b.setChecked(False)
+
     def _on_peaking(self, on: bool) -> None:
         self.pipeline.set_peaking(on)
         if not on:
@@ -263,6 +302,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object)
     def _on_signals(self, s: LiveSignals) -> None:
+        self.view.set_focus_rect(s.focus_rect)
         self.view.set_frame(s.preview, s.peaking)
         self.histogram.set_data(s.histogram, s.clipped_fraction, s.black_fraction)
         self.trace.set_data(s.focus_trace, s.focus_fraction_of_peak)

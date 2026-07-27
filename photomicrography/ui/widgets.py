@@ -10,15 +10,23 @@ PANEL = QtGui.QColor("#0b0d0b")
 GOOD = QtGui.QColor("#5fb37a")
 WARN = QtGui.QColor("#d9a441")
 BAD = QtGui.QColor("#d0605e")
+BRASS = QtGui.QColor("#c89b4a")
 
 
 class LiveView(QtWidgets.QWidget):
     """The preview. Scales to fit, keeps aspect, never upscales past 1:1."""
 
+    #: Normalised (x, y, w, h) the operator dragged out on the image.
+    region_drawn = QtCore.Signal(tuple)
+
     def __init__(self) -> None:
         super().__init__()
         self._image: QtGui.QImage | None = None
         self._peaking: QtGui.QImage | None = None
+        self._focus_rect: tuple[float, float, float, float] | None = None
+        self._drag_from: QtCore.QPointF | None = None
+        self._drag_to: QtCore.QPointF | None = None
+        self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
         self.setMinimumSize(480, 320)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
                            QtWidgets.QSizePolicy.Policy.Expanding)
@@ -51,6 +59,9 @@ class LiveView(QtWidgets.QWidget):
         return QtGui.QImage(self._peak_buf.data, w, h, self._peak_buf.strides[0],
                             QtGui.QImage.Format.Format_ARGB32)
 
+    def set_focus_rect(self, rect) -> None:
+        self._focus_rect = rect
+
     def clear_peaking(self) -> None:
         self._peaking = None
         self.update()
@@ -68,6 +79,55 @@ class LiveView(QtWidgets.QWidget):
         p.drawImage(target, self._image)
         if self._peaking is not None:
             p.drawImage(target, self._peaking)
+
+        # The measured region, drawn so it is never a mystery what the focus
+        # number refers to.
+        if self._focus_rect is not None:
+            x, y, w, h = self._focus_rect
+            box = QtCore.QRectF(target.x() + x * target.width(),
+                                target.y() + y * target.height(),
+                                w * target.width(), h * target.height())
+            pen = QtGui.QPen(BRASS, 1)
+            pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawRect(box)
+
+        if self._drag_from is not None and self._drag_to is not None:
+            p.setPen(QtGui.QPen(BRASS, 1))
+            p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
+
+    # ---- drawing a region ------------------------------------------------
+
+    def mousePressEvent(self, e) -> None:
+        if self._image is not None:
+            self._drag_from = e.position()
+            self._drag_to = e.position()
+            self.update()
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._drag_from is not None:
+            self._drag_to = e.position()
+            self.update()
+
+    def mouseReleaseEvent(self, e) -> None:
+        if self._drag_from is None or self._image is None:
+            return
+        box = QtCore.QRectF(self._drag_from, e.position()).normalized()
+        self._drag_from = self._drag_to = None
+        target = self._fit(self._image.size())
+        if box.width() < 12 or box.height() < 12 or target.width() == 0:
+            self.update()
+            return
+        # Widget coordinates back to image-normalised, clamped to the frame.
+        nx = (box.x() - target.x()) / target.width()
+        ny = (box.y() - target.y()) / target.height()
+        nw, nh = box.width() / target.width(), box.height() / target.height()
+        nx, ny = max(0.0, min(1.0, nx)), max(0.0, min(1.0, ny))
+        nw, nh = min(nw, 1.0 - nx), min(nh, 1.0 - ny)
+        if nw > 0.02 and nh > 0.02:
+            self.region_drawn.emit((nx, ny, nw, nh))
+        self.update()
 
     def _fit(self, size: QtCore.QSize) -> QtCore.QRect:
         scaled = size.scaled(self.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)

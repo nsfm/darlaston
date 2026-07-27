@@ -28,7 +28,8 @@ import numpy as np
 
 from ..camera.buffers import Frame
 from .cell import LatestFrame
-from .focus import DEFAULTS, FocusTrace, Illumination, Metric, Prefilter, measure
+from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
+                    Region, measure, region_rect)
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,9 @@ class LiveSignals:
     xy_offset: tuple[float, float] | None = None
     xy_confidence: float = 0.0
     peaking: np.ndarray | None = None
+    #: Normalised (x, y, w, h) of the region the metric was taken from, so the
+    #: view can show what is actually being measured.
+    focus_rect: tuple[float, float, float, float] | None = None
     stats: dict = field(default_factory=dict)
 
 
@@ -73,6 +77,8 @@ class LivePipeline:
         self._trace = FocusTrace()
         self._peaking_divisor = max(1, peaking_divisor)
         self._peaking_enabled = False
+        self._region = Region.CENTRE
+        self._custom: tuple[float, float, float, float] | None = None
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
         self._analysed = 0
@@ -96,6 +102,17 @@ class LivePipeline:
     def set_metric(self, metric: Metric, prefilter: Prefilter) -> None:
         with self._lock:
             self._metric, self._prefilter = metric, prefilter
+            self._trace = FocusTrace()
+
+    def set_focus_region(self, region: Region,
+                        custom: tuple[float, float, float, float] | None = None
+                        ) -> None:
+        with self._lock:
+            self._region = region
+            if custom is not None:
+                self._custom = custom
+            # The absolute score is not comparable between regions, so a peak
+            # remembered from the old one would be meaningless.
             self._trace = FocusTrace()
 
     def set_peaking(self, enabled: bool) -> None:
@@ -145,6 +162,7 @@ class LivePipeline:
             metric, prefilter = self._metric, self._prefilter
             peaking_on = self._peaking_enabled
             trace = self._trace
+            region, custom = self._region, self._custom
 
         data = frame.data
         gray = (cv2.cvtColor(data, cv2.COLOR_BGR2GRAY) if data.ndim == 3
@@ -155,8 +173,11 @@ class LivePipeline:
         clipped = float(hist[255] / total)
         black = float(hist[0] / total)
 
-        score = measure(gray, metric, prefilter, self._centre_roi(gray))
+        rect = region_rect(gray.shape, region, custom)
+        score = measure(gray, metric, prefilter, rect)
         trace.push(score)
+        gh, gw = gray.shape[:2]
+        norm_rect = (rect[0] / gw, rect[1] / gh, rect[2] / gw, rect[3] / gh)
 
         small = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_AREA)
         small_f = small.astype(np.float32)
@@ -187,17 +208,11 @@ class LivePipeline:
             xy_offset=offset,
             xy_confidence=confidence,
             peaking=peak_map,
+            focus_rect=norm_rect,
             stats={"analysed_fps": self._rate, "delivered": delivered,
                    "dropped": dropped, "exposure_us": frame.exposure_us,
                    "gain_pct": frame.gain_pct},
         ))
-
-    @staticmethod
-    def _centre_roi(gray: np.ndarray) -> tuple[int, int, int, int]:
-        """Central half. Field curvature makes the edges a different focal
-        plane, so scoring them fights the thing being measured."""
-        h, w = gray.shape
-        return (w // 4, h // 4, w // 2, h // 2)
 
     def _track(self, small: np.ndarray, full_shape) -> tuple[tuple[float, float] | None, float]:
         """Phase correlation against the previous frame.
