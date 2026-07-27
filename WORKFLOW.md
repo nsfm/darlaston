@@ -255,12 +255,22 @@ discovered at 80% full.
 - Mosaics target 12-40 tiles, so sessions must be resumable.
 - Bayer DNG for single frames, linear DNG for composites. Uncompressed.
 
-**Still open:**
+**All answered — see [DESIGN.md](DESIGN.md) for what they imply:**
 
-1. How often does the relay optic actually change within a session?
-2. How many blank-field positions is reasonable to ask for? (Four is probably
-   enough statistically, six better, ten annoying.)
-3. Is frame averaging worth the capture-time cost routinely, or hero shots only?
-4. Does a session mean one subject, or several in a sitting?
-5. Should inverted-brightfield intent be recorded as session metadata, given the
-   inversion itself belongs to Darktable?
+1. **Relay rarely changes and stays tied to the camera**, so it belongs to the
+   camera unit rather than the scope. The camera travels between microscopes;
+   the objectives do not travel with it.
+2. **Four blank positions**, with more available for the thorough — and
+   opportunistically auto-banked while hunting, so the wizard often never
+   appears.
+3. **Frame averaging is for hero shots only.** Its own button, not part of the
+   default path.
+4. **A few subjects per sitting**, so a session contains subjects rather than
+   being one.
+5. **Inverted brightfield is first-class**, native in live view, an export
+   option, and never baked into the raw.
+
+Also corrected: the assumption that the operator is looking down the tube.
+Camera and eyepieces are rarely parfocal in practice, so **the screen is the
+viewfinder** — which demotes audio focus feedback to a stretch goal and
+promotes live-view quality to the primary instrument.
