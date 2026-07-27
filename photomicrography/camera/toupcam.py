@@ -16,6 +16,12 @@ leak upward:
     name, so the library is preloaded by absolute path with RTLD_GLOBAL. Its
     SONAME is exactly that, so the later bare-name dlopen finds the copy
     already in the process.
+  * PullImageV4 declares pImageData as c_char_p, so a numpy array must be
+    handed over as a pointer rather than directly.
+  * The binding's naming is inconsistent with the C API and with itself:
+    ResolutionNumber, MaxBitDepth and SerialNumber carry no get_ prefix while
+    get_Resolution, get_RawFormat and get_PixelSize do. Read the signatures,
+    do not infer them.
 
 The SDK is never vendored -- see DISCOVERY.md 4c. Users install it themselves.
 """
@@ -75,6 +81,7 @@ class ToupcamBackend(CameraBackend):
         self._gain_pct = 100
         self._preview = 2
         self._lock = threading.Lock()
+        self._pull_failed = False
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -88,7 +95,7 @@ class ToupcamBackend(CameraBackend):
 
         cam = self._cam
         resolutions = []
-        for i in range(cam.get_ResolutionNumber()):
+        for i in range(cam.ResolutionNumber()):
             w, h = cam.get_Resolution(i)
             try:
                 px, _py = cam.get_PixelSize(i)
@@ -105,7 +112,7 @@ class ToupcamBackend(CameraBackend):
             model=devices[self._index].displayname,
             serial=self._serial(),
             resolutions=tuple(resolutions),
-            max_bit_depth=cam.get_MaxBitDepth(),
+            max_bit_depth=cam.MaxBitDepth(),
             bayer_pattern=pattern,
             exposure_range_us=(int(lo), int(hi)),
             gain_range_pct=(int(glo), int(ghi)),
@@ -114,7 +121,7 @@ class ToupcamBackend(CameraBackend):
 
     def _serial(self) -> str:
         try:
-            return self._cam.get_SerialNumber()
+            return self._cam.SerialNumber()
         except Exception:
             return "unknown"
 
@@ -174,6 +181,7 @@ class ToupcamBackend(CameraBackend):
 
         self._pool = BufferPool((h, w, 3), np.uint8, count=4)
         self._size = (w, h)
+        self._pull_failed = False
         cam.StartPullModeWithCallback(self._callback, None)
         self._apply_exposure()
 
@@ -194,9 +202,17 @@ class ToupcamBackend(CameraBackend):
             # the correct answer on the live path.
             return
         try:
-            self._cam.PullImageV4(buf, 0, 24, 0, None)
-        except Exception:
+            # The binding declares pImageData as c_char_p, so a bare ndarray
+            # raises ArgumentError on every frame. Hand it the pointer.
+            self._cam.PullImageV4(buf.ctypes.data_as(ctypes.c_char_p),
+                                  0, 24, 0, None)
+        except Exception as exc:
             pool._give_back(buf)
+            # Report once. Swallowing this silently is how a stream that never
+            # delivers a frame looks exactly like a stream that is merely idle.
+            if not self._pull_failed:
+                self._pull_failed = True
+                print(f"[toupcam] PullImage failed: {exc!r}", file=sys.stderr)
             return
         self._seq += 1
         frame = Frame(data=buf, seq=self._seq, timestamp=time.time(),

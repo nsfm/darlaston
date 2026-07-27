@@ -166,6 +166,16 @@ class MockCamera(CameraBackend):
             on_frame(frame)
             time.sleep(max(0.0, interval - (time.perf_counter() - t0)))
 
+    def _noise(self, shape: tuple[int, int]) -> np.ndarray:
+        h, w = shape
+        field = getattr(self, "_noise_field", None)
+        if field is None or field.shape[0] < h + 64 or field.shape[1] < w + 64:
+            field = self._rng.standard_normal((h + 64, w + 64)).astype(np.float32)
+            self._noise_field = field
+        dy = int(self._rng.integers(0, 64))
+        dx = int(self._rng.integers(0, 64))
+        return field[dy:dy + h, dx:dx + w]
+
     def _vignette(self, h: int, w: int) -> np.ndarray:
         cached = getattr(self, "_vig", None)
         if cached is not None and cached.shape == (h, w):
@@ -225,23 +235,26 @@ class MockCamera(CameraBackend):
         # Illumination falloff, so flat-field correction is exercisable.
         # Cached: it depends only on the frame size, and rebuilding an mgrid
         # per frame made the synthetic camera slower than a real one.
-        img *= self._vignette(h, w)
+        # Vignette, exposure and gain are all constant between frames, so they
+        # fold into one cached field: one multiply instead of four passes over
+        # 2.2 MP. The synthetic camera exists to stand in for a real one, and a
+        # mock three times slower than the hardware misrepresents the app.
+        img *= self._scale_field(h, w)
+        img += self._noise((h, w)) * (0.004 * np.sqrt(self._gain_pct / 100.0))
 
-        # Exposure and gain behave the way the handoff in DESIGN.md 4 assumes:
-        # both scale the signal, only gain amplifies the noise with it.
-        level = img * (self._exposure_us / 8330.0) * (self._gain_pct / 100.0)
-        # Gain amplifies read noise along with signal; exposure does not. That
-        # asymmetry is the whole basis of the exposure handoff, so the synthetic
-        # camera has to honour it or the feature cannot be tested here.
-        noise_scale = 0.004 * np.sqrt(self._gain_pct / 100.0)
-        level += self._rng.normal(0, noise_scale, level.shape).astype(np.float32)
-
-        u8 = np.clip(level * 255.0, 0, 255).astype(np.uint8)
+        u8 = np.clip(img * 255.0, 0, 255).astype(np.uint8)
         buf[:, :, 0] = u8
         buf[:, :, 1] = u8
-        buf[:, :, 2] = np.clip(u8.astype(np.int16) + 6, 0, 255).astype(np.uint8)
+        buf[:, :, 2] = u8
 
-    # ---- capture ---------------------------------------------------------
+    def _scale_field(self, h: int, w: int) -> np.ndarray:
+        key = (h, w, self._exposure_us, self._gain_pct)
+        if getattr(self, "_scale_key", None) != key:
+            self._scale_key = key
+            self._scale = (self._vignette(h, w)
+                           * (self._exposure_us / 8330.0)
+                           * (self._gain_pct / 100.0)).astype(np.float32)
+        return self._scale
 
     def grab_raw(self, timeout_ms: int = 8000) -> Frame:
         """Full-resolution 12-bit frame, rendered natively rather than upscaled."""
