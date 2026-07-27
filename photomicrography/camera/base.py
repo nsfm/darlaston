@@ -77,6 +77,19 @@ class CameraBackend(ABC):
     def set_gain(self, percent: int) -> None: ...
 
     @abstractmethod
+    def get_exposure(self) -> int:
+        """Microseconds, as the camera actually has it.
+
+        Not what we last asked for: the camera clamps and quantises, and a
+        control that shows a different number from the hardware is worse than
+        no control.
+        """
+
+    @abstractmethod
+    def get_gain(self) -> int:
+        """Percent, as the camera actually has it."""
+
+    @abstractmethod
     def start_stream(self, on_frame: Callable[[Frame], None]) -> None:
         """Begin delivering preview frames.
 

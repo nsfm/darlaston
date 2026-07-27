@@ -10,6 +10,8 @@ nothing in camera/ or live/ has ever heard of Qt.
 from __future__ import annotations
 
 import argparse
+import math
+import signal
 import sys
 
 from PySide6 import QtCore, QtWidgets
@@ -53,6 +55,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Illumination is selectable before a camera exists, so it is held here
         # and applied when the setup is built rather than being lost.
         self._illumination = BUILTIN_ILLUMINATION[0]
+        self._synced = False
         self._make_backend = make_backend
         self._allow_synthetic = allow_synthetic
 
@@ -173,6 +176,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.titlebar.update_status(status, self.setup)
         self.strip.set_status(status)
 
+        if status.is_live and not self._synced:
+            self._adopt_camera_settings()
+
         if status.is_live:
             self.stack.setCurrentWidget(self.view)
         else:
@@ -180,9 +186,32 @@ class MainWindow(QtWidgets.QMainWindow):
             self.stack.setCurrentWidget(self.waiting)
             self.view.clear_peaking()
 
+    def _adopt_camera_settings(self) -> None:
+        """Show what the camera actually has, not what we guessed.
+
+        The sliders were initialised to fixed positions that did not correspond
+        to the values the session was sending, so the first nudge of a control
+        jumped the exposure by an order of magnitude. The camera is the source
+        of truth; the controls follow it.
+        """
+        actual = self.session.actual_settings()
+        if actual is None:
+            return
+        us, gain = actual
+        for widget, value in ((self.exposure, self._us_to_slider(us)),
+                              (self.gain, gain)):
+            widget.blockSignals(True)
+            widget.setValue(max(widget.minimum(), min(widget.maximum(), value)))
+            widget.blockSignals(False)
+        self.exposure_value.setText(
+            f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
+        self.gain_value.setText(f"{gain / 100:.1f}×")
+        self._synced = True
+
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
         self.session.stop()
+        self._synced = False
         self.session = CameraSession(lambda: MockCamera(fps=30.0),
                                      self.bridge.status.emit,
                                      self.pipeline.submit)  # always present
@@ -190,10 +219,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- controls --------------------------------------------------------
 
+    @staticmethod
+    def _slider_to_us(value: int) -> int:
+        """Logarithmic: the useful range spans a third of a millisecond to
+        several seconds, and a linear slider spends its travel nowhere useful."""
+        return int(300 * (10 ** (value / 250.0)))
+
+    @staticmethod
+    def _us_to_slider(us: int) -> int:
+        return int(round(250.0 * math.log10(max(us, 300) / 300.0)))
+
     def _on_exposure(self, value: int) -> None:
-        # Logarithmic: the useful range spans a third of a millisecond to
-        # several seconds, and a linear slider spends its travel nowhere useful.
-        us = int(300 * (10 ** (value / 250.0)))
+        us = self._slider_to_us(value)
         self.session.set_exposure(us)
         # Metrics are normalised against intensity, but clipping breaks that,
         # so a peak recorded before a big brightness change is not comparable.
@@ -231,9 +268,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trace.set_data(s.focus_trace, s.focus_fraction_of_peak)
         self.strip.set_live(s)
 
-    def closeEvent(self, event) -> None:
+    def shutdown(self) -> None:
+        """Release the camera. Idempotent, and reached from both the window
+        closing and a Ctrl-C, so the device is never left held."""
+        if getattr(self, "_shut", False):
+            return
+        self._shut = True
         self.session.stop()
         self.pipeline.stop()
+
+    def closeEvent(self, event) -> None:
+        self.shutdown()
         super().closeEvent(event)
 
 
@@ -316,6 +361,18 @@ def main() -> int:
     theme.load_fonts()
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
     win.show()
+
+    # Qt blocks in C++, so Python never gets to run its SIGINT handler and
+    # Ctrl-C does nothing. A timer that does nothing at all gives the
+    # interpreter a slot to run in; the handler then quits the loop cleanly.
+    app.aboutToQuit.connect(win.shutdown)
+    signal.signal(signal.SIGINT, lambda *_: (
+        print("\ninterrupted, releasing the camera", file=sys.stderr),
+        app.quit()))
+    heartbeat = QtCore.QTimer()
+    heartbeat.start(150)
+    heartbeat.timeout.connect(lambda: None)
+
     return app.exec()
 
 

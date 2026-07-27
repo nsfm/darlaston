@@ -127,6 +127,12 @@ class MockCamera(CameraBackend):
     def set_gain(self, percent: int) -> None:
         self._gain_pct = int(percent)
 
+    def get_exposure(self) -> int:
+        return self._exposure_us
+
+    def get_gain(self) -> int:
+        return self._gain_pct
+
     # ---- streaming -------------------------------------------------------
 
     def start_stream(self, on_frame: Callable[[Frame], None]) -> None:

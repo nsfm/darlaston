@@ -75,6 +75,10 @@ class CameraSession:
         # forgets them and a partially configured camera is worse than none.
         self._exposure_us = 8330
         self._gain_pct = 100
+        #: Live preview rate. Analysis tops out around 47 fps, so a camera free-
+        #: running at 60 spends a third of its output being discarded -- and
+        #: those pulls hold the GIL. Ask for fewer instead. 0 disables the cap.
+        self.framerate_cap = 30
 
         self._status = SessionStatus(CameraState.DISCONNECTED,
                                      message="Waiting for a camera")
@@ -104,6 +108,17 @@ class CameraSession:
             self._thread = None
         self._teardown()
         self._publish(CameraState.DISCONNECTED, message="Stopped")
+
+    def actual_settings(self) -> tuple[int, int] | None:
+        """(exposure_us, gain_pct) as the camera has them, or None if closed."""
+        with self._lock:
+            b = self._backend
+        if b is None:
+            return None
+        try:
+            return b.get_exposure(), b.get_gain()
+        except Exception:
+            return None
 
     def set_exposure(self, microseconds: int) -> None:
         self._exposure_us = int(microseconds)
@@ -158,6 +173,8 @@ class CameraSession:
         backend.start_stream(self._on_frame)
         backend.set_exposure(self._exposure_us)
         backend.set_gain(self._gain_pct)
+        if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
+            backend.set_framerate_cap(self.framerate_cap)
 
         detail = ""
         if link.is_degraded and link.advice:

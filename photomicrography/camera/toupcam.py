@@ -159,6 +159,31 @@ class ToupcamBackend(CameraBackend):
                 except Exception:
                     pass
 
+    def get_exposure(self) -> int:
+        try:
+            return int(self._cam.get_ExpoTime())
+        except Exception:
+            return self._exposure_us
+
+    def get_gain(self) -> int:
+        try:
+            return int(self._cam.get_ExpoAGain())
+        except Exception:
+            return self._gain_pct
+
+    def set_framerate_cap(self, fps: int) -> None:
+        """Ask the camera for fewer frames rather than discarding more.
+
+        Frames we drop were still pulled -- memcpy'd off USB, with the SDK's
+        thread holding the GIL throughout -- so they actively steal time from
+        analysis. Sleeping in our own loop would not help; the camera would
+        keep producing them.
+        """
+        try:
+            self._cam.put_Option(self._t.TOUPCAM_OPTION_FRAMERATE, int(fps))
+        except Exception:
+            pass
+
     def _apply_exposure(self) -> None:
         """Only valid once streaming. Auto-exposure stays off: it would make
         frames incomparable, which breaks stacking and mosaicking both."""
