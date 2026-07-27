@@ -36,3 +36,6 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Bundled fonts are deliberate (IBM Plex, OFL 1.1)
+!photomicrography/ui/fonts/

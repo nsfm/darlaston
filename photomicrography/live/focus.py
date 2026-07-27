@@ -68,31 +68,56 @@ def vollath4(g: np.ndarray) -> float:
 
     The subtraction is the whole trick: it is a difference of autocorrelation
     lags, so uncorrelated noise cancels rather than accumulating.
+
+    Divided by the squared mean, which is not decoration. F4 is multiplicative
+    in intensity and so scales as brightness squared -- raise the gain and the
+    raw score quadruples with no change in focus whatsoever. Since exposure and
+    gain get adjusted constantly during a session, an un-normalised score makes
+    the peak memory meaningless the moment a slider moves.
     """
     f = g.astype(np.float32)
     a = float(np.sum(f[:, :-1] * f[:, 1:]))
     b = float(np.sum(f[:, :-2] * f[:, 2:]))
-    return (a - b) / f.size
+    mean = float(f.mean())
+    return (a - b) / (f.size * max(mean * mean, 1e-6))
 
 
 def norm_variance(g: np.ndarray) -> float:
-    """Sun et al. 2004's F-11. The /mean compensates brightness differences
-    between z-slices, which raw variance does not."""
+    """Squared coefficient of variation, sigma^2 / mu^2.
+
+    A deliberate deviation from Sun et al. 2004's F-11, which is sigma^2 / mu.
+    As published it compensates brightness differences *between z-slices* of a
+    fixed exposure, but it remains linear in overall brightness -- so raising
+    the gain raises the score with no change in focus. Dividing by mu squared
+    makes it dimensionless and stable across exposure changes, which is what a
+    live trace with peak memory actually needs.
+    """
     f = g.astype(np.float32)
     m = float(f.mean())
-    return float(((f - m) ** 2).mean() / max(m, 1e-6))
+    return float(((f - m) ** 2).mean() / max(m * m, 1e-6))
 
 
 def lapv(g: np.ndarray) -> float:
     """Variance of the Laplacian -- Pech-Pacheco et al. 2000, whose subject was,
-    fittingly, autofocusing diatoms in brightfield."""
-    return float(cv2.Laplacian(g, cv2.CV_32F).var())
+    fittingly, autofocusing diatoms in brightfield.
+
+    Also normalised by the squared mean, for the same reason as vollath4: the
+    Laplacian is linear in intensity, so its variance scales as brightness
+    squared.
+    """
+    f = g.astype(np.float32)
+    mean = float(f.mean())
+    return float(cv2.Laplacian(f, cv2.CV_32F).var() / max(mean * mean, 1e-6))
 
 
 def tenengrad(g: np.ndarray) -> float:
-    gx = cv2.Sobel(g, cv2.CV_32F, 1, 0)
-    gy = cv2.Sobel(g, cv2.CV_32F, 0, 1)
-    return float((gx * gx + gy * gy).mean())
+    """Normalised by the squared mean, as above -- gradients are linear in
+    intensity, so their squares are not comparable across exposures."""
+    f = g.astype(np.float32)
+    gx = cv2.Sobel(f, cv2.CV_32F, 1, 0)
+    gy = cv2.Sobel(f, cv2.CV_32F, 0, 1)
+    mean = float(f.mean())
+    return float((gx * gx + gy * gy).mean() / max(mean * mean, 1e-6))
 
 
 _FNS = {

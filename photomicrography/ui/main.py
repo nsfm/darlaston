@@ -1,11 +1,11 @@
 """Main window.
 
-The only place that knows about both the pipeline and Qt. The pipeline emits
-plain dataclasses from its analysis thread; a QObject signal marshals them to
-the main thread, and nothing below this module has ever heard of Qt.
+The only module that knows about both the session and Qt. Everything below it
+emits plain dataclasses; a QObject signal marshals them to the main thread, and
+nothing in camera/ or live/ has ever heard of Qt.
 
-    python -m photomicrography.ui.main            # synthetic camera
-    python -m photomicrography.ui.main --toupcam  # real hardware
+    python -m photomicrography.ui.main          # real hardware, synthetic offered
+    python -m photomicrography.ui.main --mock   # synthetic only
 """
 from __future__ import annotations
 
@@ -14,181 +14,307 @@ import sys
 
 from PySide6 import QtCore, QtWidgets
 
-from ..camera.base import CameraBackend
+from ..camera.base import CameraBackend, CameraState
+from ..camera.session import CameraSession, SessionStatus
 from ..live.focus import Illumination
 from ..live.pipeline import LivePipeline, LiveSignals
+from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
+                             ScopeProfile, Setup, Turret)
+from . import theme
+from .shell import Chip, ObjectiveStepper, TitleBar, WaitingPage
 from .widgets import FocusTraceView, Histogram, LiveView
 
-STYLE = """
-QWidget { background: #141312; color: #e8e6e3;
-          font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 12px; }
-QGroupBox { border: 1px solid #2a2826; border-radius: 4px;
-            margin-top: 14px; padding-top: 10px; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px;
-                   color: #8a8681; font-size: 10px;
-                   text-transform: uppercase; letter-spacing: 1px; }
-QLabel#stat { color: #8a8681; font-family: monospace; font-size: 11px; }
-QSlider::groove:horizontal { height: 3px; background: #2a2826; }
-QSlider::handle:horizontal { background: #e8e6e3; width: 11px;
-                             margin: -5px 0; border-radius: 5px; }
-QComboBox, QCheckBox { padding: 3px; }
-QComboBox { border: 1px solid #2a2826; border-radius: 3px; }
-"""
+#: Until the setup editor exists, a plausible stand so the chrome has something
+#: real to show. Replaced by the library as soon as a camera is recognised.
+_PROVISIONAL_SCOPE = ScopeProfile(
+    id="unconfigured", name="Microscope",
+    turret=Turret([Objective(10, 0.30), Objective(20, 0.50),
+                   Objective(40, 0.75), Objective(100, 1.30, immersion="oil")],
+                  current=2),
+    optovar=[1.0, 1.25, 1.6, 2.0], optovar_current=0)
 
 
-class SignalBridge(QtCore.QObject):
-    """Thread hop. Qt's queued connection is the marshalling, so the pipeline
-    never touches a widget -- ARCHITECTURE.md 3.6."""
+class Bridge(QtCore.QObject):
+    """Thread hop. Qt's queued connection is the marshalling."""
 
-    arrived = QtCore.Signal(object)
+    signals = QtCore.Signal(object)
+    status = QtCore.Signal(object)
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, camera: CameraBackend) -> None:
+    def __init__(self, make_backend, allow_synthetic: bool = True,
+                 presence=None) -> None:
         super().__init__()
-        self.camera = camera
-        info = camera.open()
-        self.setWindowTitle(f"photomicrography — {info.model}")
-        self.resize(1280, 820)
+        self.setWindowTitle("photomicrography")
+        self.resize(1340, 860)
 
-        self.bridge = SignalBridge()
-        self.bridge.arrived.connect(self._on_signals)
-        self.pipeline = LivePipeline(self.bridge.arrived.emit,
+        self.library = Library()
+        self.setup: Setup | None = None
+        # Illumination is selectable before a camera exists, so it is held here
+        # and applied when the setup is built rather than being lost.
+        self._illumination = BUILTIN_ILLUMINATION[0]
+        self._make_backend = make_backend
+        self._allow_synthetic = allow_synthetic
+
+        self.bridge = Bridge()
+        self.bridge.signals.connect(self._on_signals)
+        self.bridge.status.connect(self._on_status)
+
+        self.pipeline = LivePipeline(self.bridge.signals.emit,
                                      illumination=Illumination.BRIGHTFIELD)
+        self.session = CameraSession(make_backend,
+                                     self.bridge.status.emit,
+                                     self.pipeline.submit,
+                                     is_present=presence)
+
+        self._build()
+        self.pipeline.start()
+        self.session.start()
+
+    # ---- layout ----------------------------------------------------------
+
+    def _build(self) -> None:
+        self.titlebar = TitleBar()
+
+        self.waiting = WaitingPage()
+        self.waiting.use_synthetic.connect(self._switch_to_synthetic)
+        self.waiting.synthetic.setVisible(self._allow_synthetic)
 
         self.view = LiveView()
         self.histogram = Histogram()
         self.trace = FocusTraceView()
-        self._build(info)
 
-        self.pipeline.start()
-        camera.set_resolution(2)
-        camera.start_stream(self.pipeline.submit)
+        self.stack = QtWidgets.QStackedWidget()
+        self.stack.addWidget(self.waiting)
+        self.stack.addWidget(self.view)
 
-    # ---- layout ----------------------------------------------------------
+        body = QtWidgets.QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self.stack, 1)
+        body.addWidget(self._rail())
 
-    def _build(self, info) -> None:
-        side = QtWidgets.QVBoxLayout()
-        side.setSpacing(10)
-        side.addWidget(self._boxed("exposure", self.histogram))
-        side.addWidget(self._boxed("focus", self.trace))
-        side.addWidget(self._controls(info))
-        side.addStretch(1)
-        self.stats = QtWidgets.QLabel(objectName="stat")
-        self.stats.setWordWrap(True)
-        side.addWidget(self.stats)
+        self.strip = _StatusStrip()
 
-        panel = QtWidgets.QWidget()
-        panel.setLayout(side)
-        panel.setFixedWidth(300)
-
-        row = QtWidgets.QHBoxLayout()
-        row.setContentsMargins(10, 10, 10, 10)
-        row.setSpacing(10)
-        row.addWidget(self.view, 1)
-        row.addWidget(panel)
+        col = QtWidgets.QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(self.titlebar)
+        col.addLayout(body, 1)
+        col.addWidget(self.strip)
 
         central = QtWidgets.QWidget()
-        central.setLayout(row)
+        central.setLayout(col)
         self.setCentralWidget(central)
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(theme.stylesheet())
 
-    @staticmethod
-    def _boxed(title: str, widget: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox(title)
-        lay = QtWidgets.QVBoxLayout(box)
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.addWidget(widget)
-        return box
+    def _rail(self) -> QtWidgets.QWidget:
+        rail = QtWidgets.QFrame()
+        rail.setFixedWidth(286)
+        rail.setStyleSheet(
+            f"background:{theme.PANEL}; border-left:1px solid {theme.LINE};")
 
-    def _controls(self, info) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("capture")
-        form = QtWidgets.QFormLayout(box)
-        form.setContentsMargins(8, 8, 8, 8)
+        col = QtWidgets.QVBoxLayout(rail)
+        col.setContentsMargins(14, 14, 14, 14)
+        col.setSpacing(18)
 
-        self.illum = QtWidgets.QComboBox()
-        self.illum.addItems([i.value for i in Illumination])
-        self.illum.currentTextChanged.connect(
-            lambda t: self.pipeline.set_illumination(Illumination(t)))
-        form.addRow("illumination", self.illum)
+        col.addLayout(_group("exposure", self.histogram))
+        col.addLayout(_group("focus", self.trace))
 
-        lo, hi = info.exposure_range_us
+        # Optics — the two things that change several times a sitting.
+        self.objective = ObjectiveStepper()
+        self.illumination = QtWidgets.QComboBox()
+        for mode in BUILTIN_ILLUMINATION:
+            self.illumination.addItem(mode.display, mode)
+        self.illumination.currentIndexChanged.connect(self._on_illumination)
+        optics = _group("optics", self.objective)
+        optics.addWidget(self.illumination)
+        col.addLayout(optics)
+
+        # Sensor
         self.exposure = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.exposure.setRange(1, 1000)
         self.exposure.setValue(120)
-        self.exposure_label = QtWidgets.QLabel("8.3 ms", objectName="stat")
-        self.exposure.valueChanged.connect(self._set_exposure)
-        form.addRow("exposure", self.exposure)
-        form.addRow("", self.exposure_label)
+        self.exposure.valueChanged.connect(self._on_exposure)
+        self.exposure_value = QtWidgets.QLabel("8.3 ms")
+        self.exposure_value.setProperty("role", "value")
 
         self.gain = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.gain.setRange(info.gain_range_pct[0], min(info.gain_range_pct[1], 2000))
+        self.gain.setRange(100, 2000)
         self.gain.setValue(100)
-        self.gain_label = QtWidgets.QLabel("1.0x", objectName="stat")
-        self.gain.valueChanged.connect(self._set_gain)
-        form.addRow("gain", self.gain)
-        form.addRow("", self.gain_label)
+        self.gain.valueChanged.connect(self._on_gain)
+        self.gain_value = QtWidgets.QLabel("1.0×")
+        self.gain_value.setProperty("role", "value")
+
+        sensor = _group("sensor", _readout("exposure", self.exposure_value))
+        sensor.addWidget(self.exposure)
+        sensor.addLayout(_readout("gain", self.gain_value))
+        sensor.addWidget(self.gain)
+        col.addLayout(sensor)
 
         self.peaking = QtWidgets.QCheckBox("focus peaking")
-        self.peaking.toggled.connect(self._toggle_peaking)
-        form.addRow(self.peaking)
-        return box
+        self.peaking.toggled.connect(self._on_peaking)
+        col.addWidget(self.peaking)
 
-    # ---- control handlers ------------------------------------------------
+        col.addStretch(1)
+        return rail
 
-    def _set_exposure(self, value: int) -> None:
-        # Logarithmic: the useful range spans 0.3 ms to several seconds and a
-        # linear slider would spend most of its travel somewhere useless.
+    # ---- session ---------------------------------------------------------
+
+    @QtCore.Slot(object)
+    def _on_status(self, status: SessionStatus) -> None:
+        info = status.info
+        if info is not None and self.setup is None:
+            profile = self.library.remember_camera(info.serial, info.model)
+            self.setup = Setup(camera=profile, scope=_PROVISIONAL_SCOPE,
+                               illumination=self._illumination)
+            self.objective.set_turret(self.setup.scope.turret)
+
+        self.titlebar.update_status(status, self.setup)
+        self.strip.set_status(status)
+
+        if status.is_live:
+            self.stack.setCurrentWidget(self.view)
+        else:
+            self.waiting.update_status(status)
+            self.stack.setCurrentWidget(self.waiting)
+            self.view.clear_peaking()
+
+    def _switch_to_synthetic(self) -> None:
+        from ..camera.mock import MockCamera
+        self.session.stop()
+        self.session = CameraSession(lambda: MockCamera(fps=30.0),
+                                     self.bridge.status.emit,
+                                     self.pipeline.submit)  # always present
+        self.session.start()
+
+    # ---- controls --------------------------------------------------------
+
+    def _on_exposure(self, value: int) -> None:
+        # Logarithmic: the useful range spans a third of a millisecond to
+        # several seconds, and a linear slider spends its travel nowhere useful.
         us = int(300 * (10 ** (value / 250.0)))
-        self.camera.set_exposure(us)
-        self.exposure_label.setText(
+        self.session.set_exposure(us)
+        # Metrics are normalised against intensity, but clipping breaks that,
+        # so a peak recorded before a big brightness change is not comparable.
+        self.pipeline.reset_focus_peak()
+        self.exposure_value.setText(
             f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
 
-    def _set_gain(self, value: int) -> None:
-        self.camera.set_gain(value)
-        self.gain_label.setText(f"{value / 100:.1f}x")
+    def _on_gain(self, value: int) -> None:
+        self.session.set_gain(value)
+        self.pipeline.reset_focus_peak()
+        self.gain_value.setText(f"{value / 100:.1f}×")
 
-    def _toggle_peaking(self, on: bool) -> None:
+    def _on_peaking(self, on: bool) -> None:
         self.pipeline.set_peaking(on)
         if not on:
             self.view.clear_peaking()
 
-    # ---- the one slot that touches widgets -------------------------------
+    def _on_illumination(self, index: int) -> None:
+        mode = self.illumination.itemData(index)
+        if mode is None:
+            return
+        self._illumination = mode
+        if self.setup is not None:
+            self.setup.illumination = mode
+        # Focus metric and prefilter follow the illumination, per DISCOVERY.md 9.
+        self.pipeline.set_illumination(Illumination(mode.kind))
+        self.titlebar.update_status(self.session.status, self.setup)
+
+    # ---- live ------------------------------------------------------------
 
     @QtCore.Slot(object)
     def _on_signals(self, s: LiveSignals) -> None:
         self.view.set_frame(s.preview, s.peaking)
         self.histogram.set_data(s.histogram, s.clipped_fraction, s.black_fraction)
         self.trace.set_data(s.focus_trace, s.focus_fraction_of_peak)
-        st = s.stats
-        drop_rate = (st["dropped"] / max(st["delivered"] + st["dropped"], 1)) * 100
-        self.stats.setText(
-            f"{st['analysed_fps']:5.1f} fps analysed\n"
-            f"{st['dropped']:>6} dropped ({drop_rate:.0f}%)\n"
-            f"seq {s.seq}   conf {s.xy_confidence:.3f}")
+        self.strip.set_live(s)
 
     def closeEvent(self, event) -> None:
-        self.camera.stop_stream()
+        self.session.stop()
         self.pipeline.stop()
-        self.camera.close()
         super().closeEvent(event)
+
+
+# --------------------------------------------------------------------------
+
+def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout):
+    col = QtWidgets.QVBoxLayout()
+    col.setSpacing(7)
+    label = QtWidgets.QLabel(title.upper())
+    label.setProperty("role", "label")
+    col.addWidget(label)
+    col.addLayout(first) if isinstance(first, QtWidgets.QLayout) else col.addWidget(first)
+    return col
+
+
+def _readout(key: str, value_widget: QtWidgets.QLabel) -> QtWidgets.QHBoxLayout:
+    row = QtWidgets.QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    k = QtWidgets.QLabel(key)
+    k.setProperty("role", "key")
+    row.addWidget(k)
+    row.addStretch(1)
+    row.addWidget(value_widget)
+    return row
+
+
+class _StatusStrip(QtWidgets.QFrame):
+    """The numbers that tell you whether to trust what you are seeing."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedHeight(26)
+        self.setStyleSheet(
+            f"background:{theme.PANEL}; border-top:1px solid {theme.LINE};")
+        self.left = QtWidgets.QLabel("")
+        self.left.setProperty("role", "sub")
+        self.right = QtWidgets.QLabel("")
+        self.right.setProperty("role", "sub")
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(12, 0, 12, 0)
+        row.addWidget(self.left)
+        row.addStretch(1)
+        row.addWidget(self.right)
+
+    def set_status(self, status: SessionStatus) -> None:
+        bits = [status.message.lower()]
+        if status.state is CameraState.ERROR and status.next_retry_in:
+            bits.append(f"retrying in {status.next_retry_in:.0f}s")
+        self.left.setText("   ".join(bits))
+
+    def set_live(self, s: LiveSignals) -> None:
+        st = s.stats
+        total = max(st["delivered"] + st["dropped"], 1)
+        self.right.setText(
+            f"{st['analysed_fps']:.1f} fps    "
+            f"dropped {st['dropped']} ({st['dropped'] / total * 100:.0f}%)    "
+            f"seq {s.seq}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--toupcam", action="store_true",
-                    help="use real hardware instead of the synthetic camera")
+    ap.add_argument("--mock", action="store_true",
+                    help="use the synthetic camera and do not look for hardware")
     args = ap.parse_args()
 
-    if args.toupcam:
-        from ..camera.toupcam import ToupcamBackend
-        camera: CameraBackend = ToupcamBackend()
-    else:
+    if args.mock:
         from ..camera.mock import MockCamera
-        camera = MockCamera(fps=30.0)
+        make: callable = lambda: MockCamera(fps=30.0)
+        allow_synthetic = False
+        presence = None                      # synthetic is always there
+    else:
+        def make() -> CameraBackend:
+            from ..camera.toupcam import ToupcamBackend
+            return ToupcamBackend()
+        allow_synthetic = True
+        from ..camera import usb
+        presence = usb.present               # real hardware lives on the bus
 
     app = QtWidgets.QApplication(sys.argv)
-    win = MainWindow(camera)
+    theme.load_fonts()
+    win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
     win.show()
     return app.exec()
 

@@ -179,3 +179,24 @@ def test_focus_metric_peaks_at_best_focus():
     best = zs[int(np.argmax(scores))]
     assert best == 0.0, f"metric peaked at z={best}, not at focus. {scores}"
     assert scores[3] > scores[0] * 1.2, "peak is not meaningfully above the tails"
+
+
+def test_focus_metrics_are_exposure_invariant():
+    """Changing exposure or gain must not move the focus score.
+
+    Every one of these metrics is polynomial in intensity, so without
+    normalisation the score changes when a slider moves and the peak memory --
+    which is the whole point of the trace -- becomes meaningless.
+    """
+    from photomicrography.live.focus import (Metric, Prefilter, measure)
+    rng = np.random.default_rng(3)
+    base = (rng.random((256, 256)) * 120 + 40).astype(np.uint8)
+
+    for metric in (Metric.VOLLATH4, Metric.LAPV, Metric.TENENGRAD,
+                   Metric.NORM_VARIANCE):
+        dim = measure(base, metric, Prefilter.NONE)
+        bright = measure(np.clip(base.astype(np.float32) * 1.8, 0, 255
+                                 ).astype(np.uint8), metric, Prefilter.NONE)
+        ratio = bright / max(dim, 1e-12)
+        assert 0.8 < ratio < 1.25, (
+            f"{metric.value} moved {ratio:.2f}x for a brightness change alone")

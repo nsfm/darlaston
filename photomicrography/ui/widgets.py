@@ -6,7 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 INK = QtGui.QColor("#e8e6e3")
 DIM = QtGui.QColor("#6b6864")
-PANEL = QtGui.QColor("#1b1a19")
+PANEL = QtGui.QColor("#0b0d0b")
 GOOD = QtGui.QColor("#5fb37a")
 WARN = QtGui.QColor("#d9a441")
 BAD = QtGui.QColor("#d0605e")

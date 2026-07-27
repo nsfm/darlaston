@@ -1,0 +1,227 @@
+"""CameraSession — owns the handle, the state machine, and reconnection.
+
+Nothing else opens or closes a camera.
+
+The whole point is that **disconnection is a state, not an exception**. The USB
+link runs near saturation at full resolution and will drop when the cable is
+nudged; two documented SDK hazards compound it (INDIGO: exposure is impossible
+after a reopen without a reconnect; INDI: the camera switches between video and
+trigger modes underneath you). So acquisition restarts underneath an analysis
+thread and a window that both stay alive, and settings are re-applied in full
+because the SDK does not remember them and half-applied state is worse than
+none.
+
+No Qt here. Callbacks only -- see ARCHITECTURE.md 4 and 5.
+"""
+from __future__ import annotations
+
+import threading
+import time
+from dataclasses import dataclass
+from typing import Callable
+
+from .base import CameraBackend, CameraInfo, CameraState
+from .buffers import Frame
+from . import usb
+
+
+@dataclass(frozen=True)
+class SessionStatus:
+    state: CameraState
+    info: CameraInfo | None = None
+    link: usb.LinkInfo | None = None
+    message: str = ""
+    detail: str = ""
+    attempt: int = 0
+    next_retry_in: float = 0.0
+
+    @property
+    def is_live(self) -> bool:
+        return self.state is CameraState.STREAMING
+
+
+class CameraSession:
+    """Drives one backend through connect / stream / recover.
+
+    Construction does not touch hardware, so a window can open before a camera
+    exists -- which was the bug this class was written to remove.
+    """
+
+    POLL_INTERVAL = 1.0
+    RETRY_BACKOFF = (0.5, 1.0, 2.0, 3.0, 5.0)
+
+    def __init__(self, make_backend: Callable[[], CameraBackend],
+                 on_status: Callable[[SessionStatus], None],
+                 on_frame: Callable[[Frame], None],
+                 preview_resolution: int = 2,
+                 is_present: Callable[[], bool] | None = None) -> None:
+        # Presence is a property of the backend, not an assumption about USB.
+        # A synthetic camera is always present; a tethered one may answer
+        # differently again. Defaulting to "always" keeps the supervisor from
+        # gating a backend it knows nothing about.
+        self._is_present = is_present or (lambda: True)
+        self._make_backend = make_backend
+        self._on_status = on_status
+        self._on_frame = on_frame
+        self._preview = preview_resolution
+
+        self._backend: CameraBackend | None = None
+        self._thread: threading.Thread | None = None
+        self._running = threading.Event()
+        self._lock = threading.Lock()
+        self._attempt = 0
+
+        # Desired settings, re-applied on every (re)connect because the SDK
+        # forgets them and a partially configured camera is worse than none.
+        self._exposure_us = 8330
+        self._gain_pct = 100
+
+        self._status = SessionStatus(CameraState.DISCONNECTED,
+                                     message="Waiting for a camera")
+
+    # ---- public surface --------------------------------------------------
+
+    @property
+    def status(self) -> SessionStatus:
+        return self._status
+
+    @property
+    def backend(self) -> CameraBackend | None:
+        return self._backend
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._running.set()
+        self._thread = threading.Thread(target=self._supervise, daemon=True,
+                                        name="camera-session")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running.clear()
+        if self._thread is not None:
+            self._thread.join(timeout=4.0)
+            self._thread = None
+        self._teardown()
+        self._publish(CameraState.DISCONNECTED, message="Stopped")
+
+    def set_exposure(self, microseconds: int) -> None:
+        self._exposure_us = int(microseconds)
+        with self._lock:
+            if self._backend is not None:
+                try:
+                    self._backend.set_exposure(self._exposure_us)
+                except Exception:
+                    pass   # a dropped link surfaces through the supervisor
+
+    def set_gain(self, percent: int) -> None:
+        self._gain_pct = int(percent)
+        with self._lock:
+            if self._backend is not None:
+                try:
+                    self._backend.set_gain(self._gain_pct)
+                except Exception:
+                    pass
+
+    # ---- the supervisor --------------------------------------------------
+
+    def _supervise(self) -> None:
+        while self._running.is_set():
+            try:
+                if self._backend is None:
+                    self._try_connect()
+                else:
+                    self._watch()
+            except Exception as exc:              # never let the loop die
+                self._fail(exc)
+            time.sleep(self.POLL_INTERVAL)
+
+    def _try_connect(self) -> None:
+        link = usb.probe()
+        if not self._is_present():
+            self._publish(CameraState.DISCONNECTED, link=link,
+                          message="Waiting for a camera",
+                          detail="Connect a camera, or start the synthetic one.")
+            return
+
+        self._attempt += 1
+        self._publish(CameraState.CONNECTING, link=link,
+                      message="Connecting", attempt=self._attempt)
+
+        backend = self._make_backend()
+        info = backend.open()
+        with self._lock:
+            self._backend = backend
+        self._attempt = 0
+
+        backend.set_resolution(self._preview)
+        backend.start_stream(self._on_frame)
+        backend.set_exposure(self._exposure_us)
+        backend.set_gain(self._gain_pct)
+
+        detail = ""
+        if link.is_degraded and link.advice:
+            detail = link.advice
+        self._publish(CameraState.STREAMING, info=info, link=link,
+                      message="Live", detail=detail)
+
+    def _watch(self) -> None:
+        """Cheap liveness check: if the device left the bus, the link is gone.
+
+        Polling sysfs is far cheaper and far more decisive than waiting for the
+        SDK to report a failure, which it often does not.
+        """
+        if self._is_present():
+            return
+        self._lost()
+
+    def _lost(self) -> None:
+        link = usb.probe()
+        self._teardown()
+        self._publish(
+            CameraState.ERROR, link=link, message="Camera disconnected",
+            detail="Reconnecting and restoring exposure, gain and mode. "
+                   "Anything in progress is paused, not lost.")
+
+    def _fail(self, exc: Exception) -> None:
+        self._teardown()
+        wait = self.RETRY_BACKOFF[min(self._attempt, len(self.RETRY_BACKOFF) - 1)]
+        self._publish(CameraState.ERROR, link=usb.probe(),
+                      message="Could not open the camera",
+                      detail=self._explain(exc), attempt=self._attempt,
+                      next_retry_in=wait)
+        time.sleep(wait)
+
+    @staticmethod
+    def _explain(exc: Exception) -> str:
+        """Say what went wrong and what to do, never just the exception text."""
+        text = str(exc).lower()
+        if "another" in text or "busy" in text or "access" in text:
+            return ("Another program is holding the camera. Close ToupLite or "
+                    "any other capture software and it will connect.")
+        if "not found" in text or "no toup" in text:
+            return "No camera responded. Check the cable and try again."
+        return str(exc) or exc.__class__.__name__
+
+    def _teardown(self) -> None:
+        with self._lock:
+            backend, self._backend = self._backend, None
+        if backend is None:
+            return
+        try:
+            backend.stop_stream()
+        except Exception:
+            pass
+        try:
+            backend.close()
+        except Exception:
+            pass
+
+    def _publish(self, state: CameraState, **kw) -> None:
+        status = SessionStatus(state, **kw)
+        self._status = status
+        try:
+            self._on_status(status)
+        except Exception:
+            import traceback
+            traceback.print_exc()
