@@ -1,4 +1,7 @@
-# photomicrography
+# darlaston
+
+**Named for Herbert William Hutton Darlaston (1867–1949)**, a Birmingham mounter
+who turned professional around 1905 because too many people wanted his slides.
 
 A capture, calibration and mosaic tool for photomicrography on Linux.
 

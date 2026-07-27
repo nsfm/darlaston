@@ -6,7 +6,7 @@ the stand, the turret and the link, so it can just say.
 
 Renders to plain text for pasting into a forum, or ANSI for a terminal.
 
-    from photomicrography.session.setup_card import render
+    from darlaston.session.setup_card import render
     print(render(setup, info, link))
 """
 from __future__ import annotations

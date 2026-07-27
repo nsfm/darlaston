@@ -22,7 +22,7 @@ from pathlib import Path
 
 def config_dir() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
-    d = Path(base) / "photomicrography"
+    d = Path(base) / "darlaston"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

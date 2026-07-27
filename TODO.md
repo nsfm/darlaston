@@ -10,9 +10,13 @@ Ordered within each section by how much it would change what gets built.
 
 ## Next up
 
-- [ ] **Single capture.** Shutter → calibrated DNG with full metadata. Every
-      piece exists and is proven; it is the step that makes the app replace
-      ToupLite for real work rather than being a nicer viewer.
+- [x] ~~**Single capture.**~~ Shutter → DNG with metadata, subject and slide
+      fields, settings for location and naming. Calibration is not applied
+      yet — that is the next item.
+- [ ] **Structured metadata needs an exiftool pass.** pidng exposes no
+      `UserComment` and no ISO field, so the key=value comment and the analogue
+      gain cannot be written through it. The human-readable summary carries the
+      important part in `ImageDescription` for now.
 - [ ] **Calibration.** Dark, opportunistic flat banking, measured white
       balance. See DESIGN.md §2–3.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture

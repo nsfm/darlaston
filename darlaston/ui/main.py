@@ -4,8 +4,8 @@ The only module that knows about both the session and Qt. Everything below it
 emits plain dataclasses; a QObject signal marshals them to the main thread, and
 nothing in camera/ or live/ has ever heard of Qt.
 
-    python -m photomicrography.ui.main          # real hardware, synthetic offered
-    python -m photomicrography.ui.main --mock   # synthetic only
+    python -m darlaston.ui.main          # real hardware, synthetic offered
+    python -m darlaston.ui.main --mock   # synthetic only
 """
 from __future__ import annotations
 
@@ -18,11 +18,14 @@ from PySide6 import QtCore, QtWidgets
 
 from ..camera.base import CameraBackend, CameraState
 from ..camera.session import CameraSession, SessionStatus
+from ..capture import CaptureResult, StillCapture
 from ..live.focus import Illumination, Region
 from ..live.pipeline import LivePipeline, LiveSignals
 from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
                              ScopeProfile, Setup, Turret)
+from ..session.settings import Settings
 from . import theme
+from .capture_ui import SettingsDialog, ShutterButton, SubjectField
 from .shell import Chip, ObjectiveStepper, TitleBar, WaitingPage
 from .widgets import FocusTraceView, Histogram, LiveView
 
@@ -41,16 +44,19 @@ class Bridge(QtCore.QObject):
 
     signals = QtCore.Signal(object)
     status = QtCore.Signal(object)
+    capture_state = QtCore.Signal(str)
+    capture_result = QtCore.Signal(object)
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, make_backend, allow_synthetic: bool = True,
                  presence=None) -> None:
         super().__init__()
-        self.setWindowTitle("photomicrography")
+        self.setWindowTitle("darlaston")
         self.resize(1340, 860)
 
         self.library = Library()
+        self.settings = Settings.load()
         self.setup: Setup | None = None
         # Illumination is selectable before a camera exists, so it is held here
         # and applied when the setup is built rather than being lost.
@@ -62,6 +68,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge = Bridge()
         self.bridge.signals.connect(self._on_signals)
         self.bridge.status.connect(self._on_status)
+        self.bridge.capture_state.connect(self._on_capture_state)
+        self.bridge.capture_result.connect(self._on_capture_result)
 
         self.pipeline = LivePipeline(self.bridge.signals.emit,
                                      illumination=Illumination.BRIGHTFIELD)
@@ -70,6 +78,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                      self.pipeline.submit,
                                      is_present=presence)
 
+        self.capture = StillCapture(self.session, self.settings,
+                                    self.bridge.capture_state.emit,
+                                    self.bridge.capture_result.emit)
         self._build()
         self.pipeline.start()
         self.session.start()
@@ -121,6 +132,11 @@ class MainWindow(QtWidgets.QMainWindow):
         col = QtWidgets.QVBoxLayout(rail)
         col.setContentsMargins(14, 14, 14, 14)
         col.setSpacing(18)
+
+        # What is on the slide. Only the operator knows it, and it is the
+        # difference between an archive and a folder of numbered files.
+        self.subject = SubjectField()
+        col.addLayout(_group("subject", self.subject))
 
         col.addLayout(_group("exposure", self.histogram))
         col.addLayout(_group("focus", self.trace))
@@ -188,6 +204,20 @@ class MainWindow(QtWidgets.QMainWindow):
         col.addWidget(self.peaking)
 
         col.addStretch(1)
+
+        self.shutter = ShutterButton()
+        self.shutter.clicked.connect(self._on_capture)
+        self.shutter.set_available(False)
+        col.addWidget(self.shutter)
+
+        self.last_capture = QtWidgets.QLabel("")
+        self.last_capture.setProperty("role", "key")
+        self.last_capture.setWordWrap(True)
+        col.addWidget(self.last_capture)
+
+        prefs = QtWidgets.QPushButton("Settings…")
+        prefs.clicked.connect(self._open_settings)
+        col.addWidget(prefs)
         return rail
 
     # ---- session ---------------------------------------------------------
@@ -206,6 +236,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if status.is_live and not self._synced:
             self._adopt_camera_settings()
+
+        self.shutter.set_available(status.is_live and not self.capture.busy)
 
         if status.is_live:
             self.stack.setCurrentWidget(self.view)
@@ -281,6 +313,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.set_focus_region(Region.CUSTOM, rect)
         for b in self._region_buttons.values():
             b.setChecked(False)
+
+    def _on_capture(self) -> None:
+        if not self.capture.trigger(self.setup, subject=self.subject.subject,
+                                    slide=self.subject.slide_note):
+            return
+        self.shutter.set_state("exposing")
+
+    @QtCore.Slot(str)
+    def _on_capture_state(self, state: str) -> None:
+        self.shutter.set_state(state)
+        if state == "idle":
+            self.shutter.set_available(self.session.status.is_live)
+
+    @QtCore.Slot(object)
+    def _on_capture_result(self, result: CaptureResult) -> None:
+        self.last_capture.setText(result.summary)
+        colour = theme.DIM if result.ok else theme.BAD
+        self.last_capture.setStyleSheet(f"color: {colour};")
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self.settings, self.setup, self)
+        dialog.exec()
 
     def _on_peaking(self, on: bool) -> None:
         self.pipeline.set_peaking(on)

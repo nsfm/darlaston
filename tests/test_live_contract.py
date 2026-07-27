@@ -10,8 +10,8 @@ import time
 import numpy as np
 import pytest
 
-from photomicrography.camera.buffers import BufferPool, Frame
-from photomicrography.live.cell import LatestFrame
+from darlaston.camera.buffers import BufferPool, Frame
+from darlaston.live.cell import LatestFrame
 
 
 def make_frame(pool, seq=0):
@@ -132,8 +132,8 @@ def test_frame_context_manager_releases():
 def test_mock_camera_through_pipeline_produces_signals():
     """Integration: frames flow camera -> cell -> analysis -> signals, and the
     pool is whole afterwards. Drop *semantics* are covered directly above."""
-    from photomicrography.camera.mock import MockCamera
-    from photomicrography.live.pipeline import LivePipeline
+    from darlaston.camera.mock import MockCamera
+    from darlaston.live.pipeline import LivePipeline
 
     received = []
     pipeline = LivePipeline(received.append)
@@ -159,8 +159,8 @@ def test_mock_camera_through_pipeline_produces_signals():
 def test_focus_metric_peaks_at_best_focus():
     """The metric has to actually be a focus metric. Sweep the synthetic Z axis
     and require the score to peak where the blur is least."""
-    from photomicrography.camera.mock import MockCamera
-    from photomicrography.live.focus import Illumination, DEFAULTS, measure
+    from darlaston.camera.mock import MockCamera
+    from darlaston.live.focus import Illumination, DEFAULTS, measure
     import cv2
 
     cam = MockCamera()
@@ -188,7 +188,7 @@ def test_focus_metrics_are_exposure_invariant():
     normalisation the score changes when a slider moves and the peak memory --
     which is the whole point of the trace -- becomes meaningless.
     """
-    from photomicrography.live.focus import (Metric, Prefilter, measure)
+    from darlaston.live.focus import (Metric, Prefilter, measure)
     rng = np.random.default_rng(3)
     base = (rng.random((256, 256)) * 120 + 40).astype(np.uint8)
 

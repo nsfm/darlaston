@@ -13,7 +13,25 @@ archive. Six months later, "which objective was this?" has an answer.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
+
+
+def ascii_safe(text: str) -> str:
+    """EXIF ASCII tags are ASCII, and writers refuse anything else.
+
+    Our natural strings are full of · and ×, so transliterate the ones that
+    have obvious equivalents and strip the rest rather than letting a capture
+    fail over a multiplication sign.
+    """
+    if not text:
+        return text
+    swap = {"×": "x", "·": "-", "—": "-", "–": "-", "’": "'",
+            "“": '"', "”": '"', "µ": "u", "°": "deg"}
+    for a, b in swap.items():
+        text = text.replace(a, b)
+    text = unicodedata.normalize("NFKD", text)
+    return text.encode("ascii", "ignore").decode("ascii")
 
 
 @dataclass(frozen=True)
@@ -30,6 +48,11 @@ class CaptureMetadata:
     description: str = ""             # human sentence
     comment: str = ""                 # structured key=value, machine-readable
     software: str = ""
+
+    def __post_init__(self) -> None:
+        for f in ("make", "model", "unique_camera_model", "serial",
+                  "lens_model", "description", "comment", "software"):
+            object.__setattr__(self, f, ascii_safe(getattr(self, f)))
 
     def as_exif(self) -> dict:
         """Tag names as ExifTool and most DNG writers know them."""
@@ -53,7 +76,7 @@ class CaptureMetadata:
 
 
 def from_setup(setup, *, exposure_us: int, gain_pct: int,
-               slide: str = "", calibration: str = "",
+               subject: str = "", slide: str = "", calibration: str = "",
                app_version: str = "") -> CaptureMetadata:
     """Build metadata from the live setup."""
     cam, scope = setup.camera, setup.scope
@@ -68,7 +91,9 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     bits.append(setup.illumination.display)
     if total:
         bits.append(f"{total:g}× total")
-    description = " · ".join(bits)
+    # The subject leads, since it is what a person searching their archive
+    # actually remembers. A slide may carry several.
+    description = " · ".join(([subject] if subject else []) + bits)
 
     fields = {
         "scope": scope.name,
@@ -78,6 +103,7 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         "inverted": "1" if setup.illumination.inverted else "0",
         "relay": cam.relay,
         "total_magnification": f"{total:g}" if total else "",
+        "subject": subject,
         "slide": slide,
         "calibration": calibration,
     }
@@ -95,5 +121,5 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         iso=int(round(gain_pct)),
         description=description,
         comment=comment,
-        software=f"photomicrography {app_version}".strip(),
+        software=f"darlaston {app_version}".strip(),
     )
