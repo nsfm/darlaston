@@ -6,7 +6,14 @@ Built for large diatom arrangements shot on an ordinary microscope with a
 ToupTek camera, brightfield, darkfield and phase, where the goal is a stitched,
 focus-stacked photograph rather than a measurement.
 
-**Status: discovery. No implementation yet.** See [DISCOVERY.md](DISCOVERY.md).
+**Status: planned, not yet implemented.**
+
+| | |
+|---|---|
+| [DISCOVERY.md](DISCOVERY.md) | what the hardware and the ecosystem actually do, measured |
+| [WORKFLOW.md](WORKFLOW.md) | one capture session as a narrative — requirements derive from it |
+| [DESIGN.md](DESIGN.md) | entity model, calibration lifetimes, the exposure handoff |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | threading contract and component boundaries |
 
 ## Why
 
