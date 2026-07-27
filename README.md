@@ -14,6 +14,7 @@ focus-stacked photograph rather than a measurement.
 | [WORKFLOW.md](WORKFLOW.md) | one capture session as a narrative — requirements derive from it |
 | [DESIGN.md](DESIGN.md) | entity model, calibration lifetimes, the exposure handoff |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | threading contract and component boundaries |
+| [TODO.md](TODO.md) | everything asked for, deferred, or left unverified |
 
 ## Why
 
