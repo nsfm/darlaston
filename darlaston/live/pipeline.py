@@ -45,6 +45,11 @@ class LiveSignals:
     focus_metric: float
     focus_fraction_of_peak: float
     focus_trace: np.ndarray
+    #: Per-channel fraction of pixels at 255 in the preview. Reported
+    #: separately because they are not comparable: the ISP must boost blue
+    #: about 3x to neutralise this sensor, so blue saturates roughly 4.7x
+    #: earlier in raw terms than green does.
+    channel_clipped: tuple[float, float, float] = (0.0, 0.0, 0.0)
     xy_offset: tuple[float, float] | None = None
     xy_confidence: float = 0.0
     peaking: np.ndarray | None = None
@@ -170,8 +175,23 @@ class LivePipeline:
 
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
         total = float(gray.size)
-        clipped = float(hist[255] / total)
         black = float(hist[0] / total)
+
+        # Clipping is judged on green, not on luminance or on any channel.
+        #
+        # Measured against a raw frame of the same scene: a naive
+        # preview == 255 test reported 22.26% of pixels clipped where the raw
+        # had 0.69%. Blue accounted for essentially all of it -- 62% of blue
+        # sites were blown in the preview and *none* of them were at raw
+        # saturation, because neutralising this sensor needs about 3x blue
+        # gain. Green saturates at raw ~3584, 88% of full scale, so it is
+        # honest to within about 12% and carries most of the luminance anyway.
+        if data.ndim == 3:
+            per = tuple(float((data[:, :, i] >= 255).mean()) for i in (2, 1, 0))
+            clipped = per[1]           # green
+        else:
+            per = (0.0, float(hist[255] / total), 0.0)
+            clipped = per[1]
 
         rect = region_rect(gray.shape, region, custom)
         score = measure(gray, metric, prefilter, rect)
@@ -202,6 +222,7 @@ class LivePipeline:
             histogram=hist,
             clipped_fraction=clipped,
             black_fraction=black,
+            channel_clipped=per,
             focus_metric=score,
             focus_fraction_of_peak=trace.fraction_of_peak,
             focus_trace=trace.normalised,

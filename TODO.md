@@ -17,17 +17,25 @@ Ordered within each section by how much it would change what gets built.
       its `Tag` entries are only `(id, Type)` pairs and `set()` takes any of
       them — so both are defined locally rather than reached for through
       exiftool. No new dependency.
-- [ ] **The preview histogram measures the wrong thing.** It reads the ISP's
-      8-bit output, which clips at 62% on a frame where the raw clips at 0%
-      (DISCOVERY.md §3). So the clipping warning — one of the headline reasons
-      this app exists — can cry wolf. Options: preview linear and accept a dark
-      image, tame the tone curve, or estimate raw clipping some other way.
-      Needs a decision, not a patch.
+- [x] ~~**The preview histogram measured the wrong thing.**~~ Green-based
+      warning now (free, honest to ~12%), plus a measured preview LUT during
+      calibration that reports headroom as two numbers: fraction pinned and the
+      raw level that implies. A neutral-looking preview and an honest
+      per-channel histogram are mutually exclusive from 8-bit data — the ISP
+      must boost blue ~3x, so blue's information is destroyed before we see it.
 - [ ] **UI sweep.** Spacing, resizing behaviour, layout. Deliberately deferred
       until more elements exist, so the pass is done once against the finished
       set rather than twice.
-- [ ] **Calibration.** Dark, opportunistic flat banking, measured white
-      balance. See DESIGN.md §2–3.
+- [x] ~~**Calibration engine.**~~ Store keyed by product lifetime, dark
+      averaging with a defect map, flat medianing with per-Bayer-phase
+      normalisation, measured white balance, opportunistic blank banking, and
+      the preview LUT. Dark path verified on real hardware.
+- [ ] **Wire calibration into the UI.** The engine exists and is tested; it has
+      no buttons yet. Needs the status panel, the guided routines, and the
+      opportunistic banking hooked to the live tracker's motion estimate.
+- [ ] **Apply calibration at capture.** `StillCapture` still writes
+      uncorrected raw; it should look up dark, flat and white balance and pass
+      them through `calib.frames.calibrate`.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture
       at unity gain. Needs calibration to be verifiable. DESIGN.md §4.
 - [ ] **Focus coverage.** Union of in-focus masks across a sweep, reported as a

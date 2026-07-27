@@ -150,8 +150,10 @@ class Histogram(QtWidgets.QWidget):
         self._black = 0.0
         self.setFixedHeight(96)
 
-    def set_data(self, hist: np.ndarray, clipped: float, black: float) -> None:
+    def set_data(self, hist: np.ndarray, clipped: float, black: float,
+                 per_channel: tuple[float, float, float] | None = None) -> None:
         self._hist, self._clipped, self._black = hist, clipped, black
+        self._per = per_channel
         self.update()
 
     def paintEvent(self, _event) -> None:
@@ -176,7 +178,14 @@ class Histogram(QtWidgets.QWidget):
         f = p.font()
         f.setPointSizeF(7.5)
         p.setFont(f)
-        msg = f"clipped {self._clipped * 100:.2f}%   black {self._black * 100:.2f}%"
+        per = getattr(self, "_per", None)
+        if per and max(per) > 0.0005:
+            hot = "".join(n for n, v in zip("RGB", per) if v > 0.0005)
+            msg = (f"clipped {self._clipped * 100:.2f}% (green)   {hot} hot"
+                   f"   black {self._black * 100:.2f}%")
+        else:
+            msg = (f"clipped {self._clipped * 100:.2f}%"
+                   f"   black {self._black * 100:.2f}%")
         p.drawText(QtCore.QRect(0, h - 12, w, 12),
                    QtCore.Qt.AlignmentFlag.AlignCenter, msg)
 

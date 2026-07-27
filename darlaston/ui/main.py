@@ -358,7 +358,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_signals(self, s: LiveSignals) -> None:
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_frame(s.preview, s.peaking)
-        self.histogram.set_data(s.histogram, s.clipped_fraction, s.black_fraction)
+        self.histogram.set_data(s.histogram, s.clipped_fraction,
+                                s.black_fraction, s.channel_clipped)
         self.trace.set_data(s.focus_trace, s.focus_fraction_of_peak)
         self.strip.set_live(s)
 

@@ -274,6 +274,36 @@ class ToupcamBackend(CameraBackend):
 
     # ---- capture ---------------------------------------------------------
 
+    def grab_isp_full(self, timeout_ms: int = 8000) -> np.ndarray:
+        """One full-resolution frame through the ISP, as BGR.
+
+        Pairs with grab_raw to measure what the ISP does to the sensor data.
+        It must be full resolution, not the binned preview, or there is no
+        per-pixel correspondence to measure.
+        """
+        t, cam = self._t, self._cam
+        was_streaming = self._pool is not None
+        on_frame = self._on_frame
+        if was_streaming:
+            self.stop_stream()
+
+        cam.put_eSize(0)
+        w, h = cam.get_Size()
+        cam.put_Option(t.TOUPCAM_OPTION_RAW, 0)
+        cam.put_Option(t.TOUPCAM_OPTION_BITDEPTH, 0)
+        cam.put_Option(t.TOUPCAM_OPTION_TRIGGER, 1)
+        cam.StartPullModeWithCallback(None, None)
+        self._apply_exposure()
+
+        buf = bytes(w * h * 3)
+        cam.TriggerSync(timeout_ms, buf, 24, 0, None)
+        cam.Stop()
+        image = np.frombuffer(buf, np.uint8).reshape(h, w, 3).copy()
+
+        if was_streaming and on_frame is not None:
+            self.start_stream(on_frame)
+        return image
+
     def grab_raw(self, timeout_ms: int = 8000) -> Frame:
         """One full-resolution 12-bit frame, canonical orientation.
 
