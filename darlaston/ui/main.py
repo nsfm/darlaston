@@ -18,6 +18,9 @@ from PySide6 import QtCore, QtWidgets
 
 from ..camera.base import CameraBackend, CameraState
 from ..camera.session import CameraSession, SessionStatus
+from ..calib import (CalibrationService, CalibrationStore, Opportunist,
+                     Progress)
+from ..calib.store import flat_key
 from ..capture import CaptureResult, StillCapture
 from ..live.focus import Illumination, Region
 from ..live.pipeline import LivePipeline, LiveSignals
@@ -25,6 +28,7 @@ from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
                              ScopeProfile, Setup, Turret)
 from ..session.settings import Settings
 from . import theme
+from .calib_ui import CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterButton, SubjectField
 from .shell import Chip, ObjectiveStepper, TitleBar, WaitingPage
 from .widgets import FocusTraceView, Histogram, LiveView
@@ -46,6 +50,9 @@ class Bridge(QtCore.QObject):
     status = QtCore.Signal(object)
     capture_state = QtCore.Signal(str)
     capture_result = QtCore.Signal(object)
+    calib_progress = QtCore.Signal(object)
+    banked = QtCore.Signal(int, int)
+    banking = QtCore.Signal(bool)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -57,6 +64,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.library = Library()
         self.settings = Settings.load()
+        self.store = CalibrationStore()
         self.setup: Setup | None = None
         # Illumination is selectable before a camera exists, so it is held here
         # and applied when the setup is built rather than being lost.
@@ -70,6 +78,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.status.connect(self._on_status)
         self.bridge.capture_state.connect(self._on_capture_state)
         self.bridge.capture_result.connect(self._on_capture_result)
+        self.bridge.calib_progress.connect(self._on_calib_progress)
+        self.bridge.banked.connect(self._on_banked)
+        self.bridge.banking.connect(self._on_banking)
 
         self.pipeline = LivePipeline(self.bridge.signals.emit,
                                      illumination=Illumination.BRIGHTFIELD)
@@ -80,7 +91,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.capture = StillCapture(self.session, self.settings,
                                     self.bridge.capture_state.emit,
-                                    self.bridge.capture_result.emit)
+                                    self.bridge.capture_result.emit,
+                                    store=self.store)
+        self.calibration = CalibrationService(self.session, self.store,
+                                              self.bridge.calib_progress.emit)
+        self.opportunist = Opportunist(self.session,
+                                       self.bridge.banked.emit,
+                                       self.bridge.banking.emit)
         self._build()
         self.pipeline.start()
         self.session.start()
@@ -137,6 +154,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # difference between an archive and a folder of numbered files.
         self.subject = SubjectField()
         col.addLayout(_group("subject", self.subject))
+
+        self.calib_panel = CalibrationPanel()
+        self.calib_panel.capture_dark.connect(self._do_dark)
+        self.calib_panel.build_flat.connect(self._do_flat)
+        self.calib_panel.build_lut.connect(self._do_lut)
+        col.addLayout(_group("calibration", self.calib_panel))
 
         col.addLayout(_group("exposure", self.histogram))
         col.addLayout(_group("focus", self.trace))
@@ -238,6 +261,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._adopt_camera_settings()
 
         self.shutter.set_available(status.is_live and not self.capture.busy)
+        if self.setup is not None:
+            self.opportunist.set_key(flat_key(self.setup,
+                                              self.subject.slide_note))
+            self._refresh_calibration()
 
         if status.is_live:
             self.stack.setCurrentWidget(self.view)
@@ -314,6 +341,47 @@ class MainWindow(QtWidgets.QMainWindow):
         for b in self._region_buttons.values():
             b.setChecked(False)
 
+    # ---- calibration -----------------------------------------------------
+
+    def _do_dark(self) -> None:
+        self.calibration.capture_dark()
+
+    def _do_flat(self) -> None:
+        self.calibration.build_flat(self.setup, self.opportunist.frames,
+                                    self.subject.slide_note)
+
+    def _do_lut(self) -> None:
+        self.calibration.build_preview_lut(self.setup)
+
+    @QtCore.Slot(object)
+    def _on_calib_progress(self, progress: Progress) -> None:
+        self.calib_panel.set_progress(progress)
+        if progress.finished:
+            if progress.stage == "flat":
+                self.opportunist.bank.reset()
+            self._refresh_calibration()
+
+    @QtCore.Slot(int, int)
+    def _on_banked(self, count: int, wanted: int) -> None:
+        self._refresh_calibration()
+
+    @QtCore.Slot(bool)
+    def _on_banking(self, busy: bool) -> None:
+        """The preview freezes for over a second during an opportunistic grab,
+        so say so. A tool that stalls unexplained is worse than one that asks."""
+        self.strip.set_note("banking a blank field…" if busy else "")
+
+    def _refresh_calibration(self) -> None:
+        if self.setup is None:
+            return
+        actual = self.session.actual_settings() or (8330, 100)
+        status = self.store.status(self.setup, actual[0], actual[1],
+                                   self.subject.slide_note)
+        self.calib_panel.set_status(status, self.opportunist.count,
+                                    self.opportunist.bank.wanted,
+                                    live=self.session.status.is_live
+                                    and not self.calibration.busy)
+
     def _on_capture(self) -> None:
         if not self.capture.trigger(self.setup, subject=self.subject.subject,
                                     slide=self.subject.slide_note):
@@ -356,6 +424,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object)
     def _on_signals(self, s: LiveSignals) -> None:
+        self.opportunist.observe(s)
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_frame(s.preview, s.peaking)
         self.histogram.set_data(s.histogram, s.clipped_fraction,
@@ -410,6 +479,8 @@ class _StatusStrip(QtWidgets.QFrame):
             f"background:{theme.PANEL}; border-top:1px solid {theme.LINE};")
         self.left = QtWidgets.QLabel("")
         self.left.setProperty("role", "sub")
+        self._base = ""
+        self._note = ""
         self.right = QtWidgets.QLabel("")
         self.right.setProperty("role", "sub")
         row = QtWidgets.QHBoxLayout(self)
@@ -418,11 +489,16 @@ class _StatusStrip(QtWidgets.QFrame):
         row.addStretch(1)
         row.addWidget(self.right)
 
+    def set_note(self, note: str) -> None:
+        self._note = note
+        self.left.setText(note or self._base)
+
     def set_status(self, status: SessionStatus) -> None:
         bits = [status.message.lower()]
         if status.state is CameraState.ERROR and status.next_retry_in:
             bits.append(f"retrying in {status.next_retry_in:.0f}s")
-        self.left.setText("   ".join(bits))
+        self._base = "   ".join(bits)
+        self.left.setText(getattr(self, "_note", "") or self._base)
 
     def set_live(self, s: LiveSignals) -> None:
         st = s.stats

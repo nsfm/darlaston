@@ -26,6 +26,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
+from ..live.blank import BlankDetector  # re-exported for convenience
 from . import frames as F
 from . import preview_lut
 from .store import (CalibrationStore, Provenance, dark_key, flat_key,
@@ -44,29 +45,6 @@ class Progress:
     @property
     def fraction(self) -> float:
         return self.done / self.total if self.total else 0.0
-
-
-class BlankDetector:
-    """Decides whether a preview frame is empty slide.
-
-    Deliberately conservative: a false positive silently poisons the flat with
-    a diatom, and a flat with a subject baked into it stamps an inverse ghost
-    on every frame it ever corrects.
-    """
-
-    def __init__(self, structure_limit: float = 0.012) -> None:
-        self._limit = structure_limit
-
-    def looks_blank(self, gray: np.ndarray) -> bool:
-        small = cv2.resize(gray, (256, 256), interpolation=cv2.INTER_AREA)
-        f = small.astype(np.float32)
-        mean = float(f.mean())
-        if mean < 12 or mean > 245:
-            return False              # black or blown tells us nothing
-        # High-pass relative to local level: real structure, not shading.
-        low = cv2.GaussianBlur(f, (0, 0), 12)
-        detail = float(np.abs(f - low).mean() / max(mean, 1e-6))
-        return detail < self._limit
 
 
 class FlatBank:
@@ -219,6 +197,13 @@ class CalibrationService:
         backend = self._require_backend()
         base = backend.get_exposure()
         gain = backend.get_gain()
+
+        # The whole method assumes the ISP transform is fixed across the ramp.
+        # Continuous auto white balance would re-fit it between frames and the
+        # resulting table would be silently wrong, so switch it off rather than
+        # hoping it is already off. Verified as off on this camera, but that is
+        # luck, not design.
+        restore_awb = self._suspend_awb(backend)
         # An exposure ramp, because one frame does not exercise the whole
         # preview range -- measured, green only ever visited 116-255.
         ladder = [max(300, int(base * f)) for f in (0.25, 0.5, 1.0, 2.0)][:steps]
@@ -235,6 +220,7 @@ class CalibrationService:
                     pairs.append((isp, frame.copy()))
         finally:
             backend.set_exposure(base)
+            restore_awb()
 
         lut = preview_lut.build(pairs)
         key = illumination_key(setup)
@@ -245,6 +231,32 @@ class CalibrationService:
         sat = "  ".join(f"{n} {v}" for n, v in zip("RGB", lut.saturation))
         self._emit(Progress("lut", len(ladder), len(ladder), finished=True,
                             message=f"preview saturates at raw — {sat}"))
+
+    @staticmethod
+    def _suspend_awb(backend) -> Callable[[], None]:
+        """Turn continuous auto white balance off, returning a restorer."""
+        cam = getattr(backend, "_cam", None)
+        toup = getattr(backend, "_t", None)
+        code = getattr(toup, "TOUPCAM_OPTION_AWB_CONTINUOUS", None)
+        if cam is None or code is None:
+            return lambda: None
+        try:
+            previous = cam.get_Option(code)
+        except Exception:
+            return lambda: None
+        if not previous:
+            return lambda: None
+        try:
+            cam.put_Option(code, 0)
+        except Exception:
+            return lambda: None
+
+        def restore() -> None:
+            try:
+                cam.put_Option(code, previous)
+            except Exception:
+                pass
+        return restore
 
     @staticmethod
     def _grab_preview(backend) -> np.ndarray:

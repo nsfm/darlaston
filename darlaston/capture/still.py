@@ -18,6 +18,8 @@ from typing import Callable
 
 import numpy as np
 
+from ..calib import frames as F
+from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
 from ..process import dng
 from ..process.metadata import from_setup
 from ..session.settings import Settings, next_sequence
@@ -32,15 +34,21 @@ class CaptureResult:
     width: int = 0
     height: int = 0
     clipped_fraction: float = 0.0
+    #: Which calibration products were actually applied. Recorded and reported,
+    #: because a file whose provenance has to be inferred is one that will
+    #: eventually be trusted wrongly.
+    applied: tuple[str, ...] = ()
 
     @property
     def summary(self) -> str:
         if not self.ok:
             return self.message
         mp = self.width * self.height / 1e6
-        return (f"{self.path.name}   {mp:.1f} MP   {self.elapsed:.1f}s"
-                + (f"   {self.clipped_fraction * 100:.1f}% clipped"
-                   if self.clipped_fraction > 0.0005 else ""))
+        bits = [self.path.name, f"{mp:.1f} MP", f"{self.elapsed:.1f}s"]
+        bits.append("+".join(self.applied) if self.applied else "uncalibrated")
+        if self.clipped_fraction > 0.0005:
+            bits.append(f"{self.clipped_fraction * 100:.1f}% clipped")
+        return "   ".join(bits)
 
 
 class StillCapture:
@@ -53,9 +61,11 @@ class StillCapture:
 
     def __init__(self, session, settings: Settings,
                  on_state: Callable[[str], None] | None = None,
-                 on_result: Callable[[CaptureResult], None] | None = None) -> None:
+                 on_result: Callable[[CaptureResult], None] | None = None,
+                 store: CalibrationStore | None = None) -> None:
         self._session = session
         self._settings = settings
+        self._store = store or CalibrationStore()
         self._on_state = on_state or (lambda _s: None)
         self._on_result = on_result or (lambda _r: None)
         self._busy = threading.Lock()
@@ -89,6 +99,10 @@ class StillCapture:
                 exposure_us = frame.exposure_us
                 gain_pct = frame.gain_pct
 
+            self._on_state("calibrating")
+            corrected, applied, neutral, black = self._apply_calibration(
+                raw, setup, exposure_us, gain_pct, slide)
+
             self._on_state("writing")
             path = self._destination(setup, subject)
             info = backend.info
@@ -98,16 +112,19 @@ class StillCapture:
             if setup is not None:
                 meta = from_setup(setup, exposure_us=exposure_us,
                                   gain_pct=gain_pct, subject=subject,
-                                  slide=slide, app_version=_version())
+                                  slide=slide,
+                                  calibration="+".join(applied) or "none",
+                                  app_version=_version())
 
-            written = dng.write_bayer(path, raw, pattern=pattern, meta=meta)
+            written = dng.write_bayer(path, corrected, pattern=pattern,
+                                      black=black, neutral=neutral, meta=meta)
 
             clipped = float((raw >= dng.WHITE_LEVEL).sum()) / raw.size
             self._on_state("idle")
             self._on_result(CaptureResult(
                 ok=True, path=written, elapsed=time.perf_counter() - started,
                 width=raw.shape[1], height=raw.shape[0],
-                clipped_fraction=clipped))
+                clipped_fraction=clipped, applied=tuple(applied)))
         except Exception as exc:
             self._on_state("idle")
             self._on_result(CaptureResult(
@@ -115,6 +132,56 @@ class StillCapture:
                 elapsed=time.perf_counter() - started))
         finally:
             self._busy.release()
+
+    def _apply_calibration(self, raw, setup, exposure_us: int, gain_pct: int,
+                           slide: str):
+        """Correct the frame with whatever the store has for this configuration.
+
+        Deliberately partial: a dark with no flat is still worth having, and
+        refusing to capture because one product is missing would make the gate
+        a wall. What was applied is recorded rather than assumed.
+
+        Black level is written as zero once a dark has been subtracted, because
+        it has been -- leaving the original offset in the tag would make a
+        developer subtract it twice.
+        """
+        applied: list[str] = []
+        dark = flat = defects = None
+        neutral = None
+        black = 0
+
+        got = self._store.get("dark", dark_key(exposure_us, gain_pct),
+                              max_age_hours=8)
+        if got is not None and got.data is not None:
+            dark = got.data
+            applied.append("dark")
+        else:
+            black = 0
+
+        if setup is not None:
+            got = self._store.get("flat", flat_key(setup, slide))
+            if got is not None and got.data is not None:
+                flat = got.data
+                applied.append("flat")
+
+            got = self._store.get("defects", dark_key(exposure_us, gain_pct))
+            if got is not None and got.data is not None and got.data.size:
+                defects = got.data
+                applied.append(f"defects({len(defects)})")
+
+            got = self._store.get("wb", illumination_key(setup))
+            if got is not None and got.values.get("gains"):
+                gr, _gg, gb = got.values["gains"]
+                # DNG wants the reciprocal of the neutralising gains.
+                neutral = (1.0 / max(gr, 1e-6), 1.0, 1.0 / max(gb, 1e-6))
+                applied.append("wb")
+
+        if dark is None and flat is None and defects is None:
+            return raw, applied, neutral, black
+
+        corrected = F.calibrate(raw, dark=dark, flat=flat, defects=defects,
+                                white_level=dng.WHITE_LEVEL)
+        return corrected.astype(raw.dtype), applied, neutral, black
 
     def _destination(self, setup, subject: str) -> Path:
         when = datetime.now()

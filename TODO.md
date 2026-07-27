@@ -30,12 +30,15 @@ Ordered within each section by how much it would change what gets built.
       averaging with a defect map, flat medianing with per-Bayer-phase
       normalisation, measured white balance, opportunistic blank banking, and
       the preview LUT. Dark path verified on real hardware.
-- [ ] **Wire calibration into the UI.** The engine exists and is tested; it has
-      no buttons yet. Needs the status panel, the guided routines, and the
-      opportunistic banking hooked to the live tracker's motion estimate.
-- [ ] **Apply calibration at capture.** `StillCapture` still writes
-      uncorrected raw; it should look up dark, flat and white balance and pass
-      them through `calib.frames.calibrate`.
+- [x] ~~**Wire calibration into the UI.**~~ Status panel, guided routines,
+      opportunistic banking on the tracker's motion estimate. Preview
+      profiling verified on real hardware.
+- [x] ~~**Apply calibration at capture.**~~ Dark, flat, defects and white
+      balance are looked up and applied; what was used is recorded in the file
+      and reported in the result line.
+- [ ] **Verify the flat path on real glass.** Blank-field banking and the flat
+      it produces have only been exercised against the synthetic camera —
+      needs a real slide and some stage movement.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture
       at unity gain. Needs calibration to be verifiable. DESIGN.md §4.
 - [ ] **Focus coverage.** Union of in-focus masks across a sweep, reported as a

@@ -50,6 +50,12 @@ class LiveSignals:
     #: about 3x to neutralise this sensor, so blue saturates roughly 4.7x
     #: earlier in raw terms than green does.
     channel_clipped: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    #: Does this frame look like empty slide? Cheap to compute here and it
+    #: lets the app notice a chance to bank a flat field without asking.
+    looks_blank: bool = False
+    #: Has the view been still for a moment? A raw grab freezes the preview
+    #: for over a second, so it must only happen when nobody is moving.
+    settled: bool = False
     xy_offset: tuple[float, float] | None = None
     xy_confidence: float = 0.0
     peaking: np.ndarray | None = None
@@ -83,6 +89,8 @@ class LivePipeline:
         self._peaking_divisor = max(1, peaking_divisor)
         self._peaking_enabled = False
         self._region = Region.CENTRE
+        self._blank = None
+        self._still_for = 0
         self._custom: tuple[float, float, float, float] | None = None
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
@@ -203,6 +211,17 @@ class LivePipeline:
         small_f = small.astype(np.float32)
         offset, confidence = self._track(small_f, gray.shape)
 
+        # Stillness, from the tracker we already run. Two pixels of drift is
+        # hand tremor on a manual stage, not movement.
+        moving = offset is not None and (abs(offset[0]) > 2 or abs(offset[1]) > 2)
+        self._still_for = 0 if moving else self._still_for + 1
+        settled = self._still_for >= 8
+
+        if self._blank is None:
+            from .blank import BlankDetector
+            self._blank = BlankDetector()
+        blank = self._blank.looks_blank(small)
+
         peak_map = None
         if peaking_on and self._analysed % self._peaking_divisor == 0:
             peak_map = self._peaking(gray)
@@ -223,6 +242,8 @@ class LivePipeline:
             clipped_fraction=clipped,
             black_fraction=black,
             channel_clipped=per,
+            looks_blank=blank,
+            settled=settled,
             focus_metric=score,
             focus_fraction_of_peak=trace.fraction_of_peak,
             focus_trace=trace.normalised,
