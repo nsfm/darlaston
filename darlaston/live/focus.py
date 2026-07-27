@@ -177,13 +177,20 @@ def measure(gray: np.ndarray, metric: Metric, prefilter: Prefilter,
 
 
 class FocusTrace:
-    """Rolling history with peak memory.
+    """Rolling history, normalised against the best of the recent past.
 
-    Absolute metric values are meaningless across metrics and subjects, so the
-    UI needs a normalised trace and a distance-from-peak, not a number.
+    The peak is the maximum *within the window*, not an all-time high. An
+    all-time peak never ages, so a single sharp moment -- or a noise spike --
+    early in a session pins everything afterwards to a small fraction of it,
+    and the trace becomes unreadable until something resets it. Windowing it
+    means the displayed range always spans what you can actually see, and a
+    peak you passed a while ago eventually stops dominating.
+
+    At roughly 35 fps a 512-sample window is about fifteen seconds, which is a
+    reasonable memory for "did I just go past focus?".
     """
 
-    def __init__(self, length: int = 256) -> None:
+    def __init__(self, length: int = 512) -> None:
         self._buf: list[float] = []
         self._length = length
         self.peak = 0.0
@@ -192,10 +199,13 @@ class FocusTrace:
         self._buf.append(value)
         if len(self._buf) > self._length:
             del self._buf[0]
-        self.peak = max(self.peak, value)
+        self.peak = max(self._buf) if self._buf else 0.0
 
     def reset_peak(self) -> None:
-        self.peak = max(self._buf[-1:], default=0.0)
+        """Drop the history entirely. Used when the score stops being
+        comparable at all -- a new metric, region, or illumination."""
+        self._buf = self._buf[-1:]
+        self.peak = max(self._buf, default=0.0)
 
     @property
     def values(self) -> np.ndarray:

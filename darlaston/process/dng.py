@@ -11,11 +11,10 @@ Two shapes, both verified end to end against darktable-cli 5.4.1:
 Compression is not available. pidng writes it and rawspeed refuses to read it:
 a component-count mismatch on linear, and unsupported predictor 6 on Bayer.
 
-pidng also exposes no UserComment tag and no ISO field, so the structured
-key=value comment and the analogue gain cannot be written through it. The
-human-readable summary carries the important part in ImageDescription; the
-full structured set would need an exiftool pass afterwards, which is not worth
-a dependency yet.
+pidng names no UserComment or ISO tag, but its `Tag` class is only a set of
+`(id, Type)` tuples and `DNGTags.set` accepts any of them -- so the two are
+defined here rather than reached for through exiftool. Verified by reading them
+back out. Keeping the dependency set small is worth a few lines.
 """
 from __future__ import annotations
 
@@ -28,7 +27,17 @@ from pidng.defs import (CalibrationIlluminant, CFAPattern, DNGVersion,
                         Orientation, PhotometricInterpretation,
                         PreviewColorSpace)
 
+from pidng.dng import Type
+
 from .metadata import CaptureMetadata
+
+#: Not named by pidng, but its Tag entries are just (id, Type) pairs and
+#: DNGTags.set takes any of them.
+USER_COMMENT = (37510, Type.Undefined)     # 0x9286
+ISO_SPEED = (34855, Type.Short)            # 0x8827
+
+#: UserComment is EXIF UNDEFINED and carries an 8-byte character-set prefix.
+_ASCII_PREFIX = b"ASCII\x00\x00\x00"
 
 WHITE_LEVEL = 4095
 
@@ -80,6 +89,13 @@ def _base_tags(w: int, h: int, black: int, meta: CaptureMetadata | None,
             # Rational tags take a list of pairs, not a flat pair.
             t.set(Tag.ExposureTime, [_ratio(meta.exposure_seconds)])
         t.set(Tag.DateTimeOriginal, datetime.now().strftime("%Y:%m:%d %H:%M:%S"))
+        if meta.iso:
+            # Gain is a multiplier on an already-collected signal, which is
+            # exactly what ISO describes.
+            t.set(ISO_SPEED, int(meta.iso))
+        if meta.comment:
+            t.set(USER_COMMENT,
+                  list(_ASCII_PREFIX + meta.comment.encode("ascii", "ignore")))
     return t
 
 

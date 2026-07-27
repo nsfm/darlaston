@@ -200,9 +200,24 @@ class ToupcamBackend(CameraBackend):
         w, h = cam.get_Size()
 
         # Mode flags go before the stream; put_Option(RAW) fails after it.
-        cam.put_Option(t.TOUPCAM_OPTION_RAW, 0)
-        cam.put_Option(t.TOUPCAM_OPTION_BITDEPTH, 0)
-        cam.put_Option(t.TOUPCAM_OPTION_TRIGGER, 0)   # free-running video
+        #
+        # The preview mode is stated in full rather than restored piecemeal.
+        # grab_raw switches off the ISP, the linear mapping, the tone curve and
+        # the colour matrix; restoring only what we happened to remember left
+        # the colour matrix off and the preview came back magenta. Declaring
+        # every flag means no capture path can leave this half-configured.
+        for option, value in (
+                (t.TOUPCAM_OPTION_RAW, 0),
+                (t.TOUPCAM_OPTION_BITDEPTH, 0),
+                (t.TOUPCAM_OPTION_TRIGGER, 0),        # free-running video
+                (t.TOUPCAM_OPTION_ISP, 0),            # 0 = auto
+                (t.TOUPCAM_OPTION_LINEAR, 1),
+                (t.TOUPCAM_OPTION_CURVE, 2),          # logarithmic, the default
+                (t.TOUPCAM_OPTION_COLORMATIX, 1)):
+            try:
+                cam.put_Option(option, value)
+            except Exception:
+                pass          # not every option exists on every model
 
         self._pool = BufferPool((h, w, 3), np.uint8, count=4)
         self._size = (w, h)

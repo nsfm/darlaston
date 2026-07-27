@@ -13,10 +13,19 @@ Ordered within each section by how much it would change what gets built.
 - [x] ~~**Single capture.**~~ Shutter → DNG with metadata, subject and slide
       fields, settings for location and naming. Calibration is not applied
       yet — that is the next item.
-- [ ] **Structured metadata needs an exiftool pass.** pidng exposes no
-      `UserComment` and no ISO field, so the key=value comment and the analogue
-      gain cannot be written through it. The human-readable summary carries the
-      important part in `ImageDescription` for now.
+- [x] ~~**Structured metadata.**~~ pidng names no `UserComment` or ISO tag, but
+      its `Tag` entries are only `(id, Type)` pairs and `set()` takes any of
+      them — so both are defined locally rather than reached for through
+      exiftool. No new dependency.
+- [ ] **The preview histogram measures the wrong thing.** It reads the ISP's
+      8-bit output, which clips at 62% on a frame where the raw clips at 0%
+      (DISCOVERY.md §3). So the clipping warning — one of the headline reasons
+      this app exists — can cry wolf. Options: preview linear and accept a dark
+      image, tame the tone curve, or estimate raw clipping some other way.
+      Needs a decision, not a patch.
+- [ ] **UI sweep.** Spacing, resizing behaviour, layout. Deliberately deferred
+      until more elements exist, so the pass is done once against the finished
+      set rather than twice.
 - [ ] **Calibration.** Dark, opportunistic flat banking, measured white
       balance. See DESIGN.md §2–3.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture
