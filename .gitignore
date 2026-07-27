@@ -5,7 +5,12 @@ toupcamsdk*
 lib*.so
 *.so.*
 
-# Captures and calibration data — large, and not source
+# Captures, calibration data and scratch — large, and not source
+spike/
+captures/
+sessions/
+profiles/
+calibration/
 *.tif
 *.tiff
 *.dng
@@ -15,16 +20,12 @@ lib*.so
 *.png
 *.jpg
 *.xmp
-captures/
-sessions/
-profiles/
-calibration/
 
 # Python
-__pycache__/
-*.py[cod]
 .venv/
 venv/
+__pycache__/
+*.py[cod]
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
