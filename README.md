@@ -3,7 +3,7 @@
 A capture, calibration and mosaic tool for photomicrography on Linux.
 
 Built for large diatom arrangements shot on an ordinary microscope with a
-ToupTek camera — brightfield, darkfield and phase — where the goal is a stitched,
+ToupTek camera, brightfield, darkfield and phase, where the goal is a stitched,
 focus-stacked photograph rather than a measurement.
 
 **Status: discovery. No implementation yet.** See [DISCOVERY.md](DISCOVERY.md).
@@ -25,7 +25,7 @@ On a real darkfield capture, **90.6 % of all pixels occupy just four luma
 levels** — at 12 bits that same tonal region gets 64. The faint outer glow around
 the diatoms is not dim in those files. It is gone.
 
-Meanwhile a 30 % radial illumination gradient across every frame is what makes
+Meanwhile a 30% radial illumination gradient across every frame is what makes
 tiles refuse to blend, and it disappears entirely under flat-field correction.
 
 ## Design principles
