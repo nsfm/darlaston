@@ -86,6 +86,12 @@ class MockCamera(CameraBackend):
         # Externally driven, so tests and the UI can move the world.
         self.stage_xy = (0.0, 0.0)   # microns
         self.focus_z = 0.0           # microns from best focus
+        #: Focal-plane tilt across the frame, in microns from one edge to the
+        #: other. A real slide is never perfectly normal to the axis, and a
+        #: thick subject has depth -- so different regions come into focus at
+        #: different Z. Without this the synthetic camera cannot exercise
+        #: focus coverage at all, because everything focuses at once.
+        self.focus_tilt = 0.0
 
         # One RNG, reused. Constructing a generator per frame is pure waste.
         self._rng = np.random.default_rng()
@@ -182,6 +188,36 @@ class MockCamera(CameraBackend):
         dx = int(self._rng.integers(0, 64))
         return field[dy:dy + h, dx:dx + w]
 
+    def _defocus(self, img: np.ndarray, scale: float) -> np.ndarray:
+        """Blur by |z - z_focus|, where z_focus may vary across the frame.
+
+        A spatially varying Gaussian is expensive, so this renders a few
+        discrete blur levels and picks between them per pixel. Crude, but it
+        is a synthetic camera -- what matters is that different regions come
+        into focus at different Z, which is the situation focus coverage
+        exists to handle.
+        """
+        h, w = img.shape
+        if abs(self.focus_tilt) < 1e-6:
+            sigma = abs(self.focus_z) * 0.9 * scale
+            return cv2.GaussianBlur(img, (0, 0), sigma) if sigma > 0.35 else img
+
+        # Focal plane ramps left to right across the frame.
+        ramp = np.linspace(-0.5, 0.5, w, dtype=np.float32) * self.focus_tilt
+        local = np.abs(self.focus_z - ramp) * 0.9 * scale        # (w,)
+
+        levels = np.array([0.0, 1.0, 2.0, 3.5, 5.5, 8.0], np.float32)
+        pick = np.abs(local[None, :] - levels[:, None]).argmin(axis=0)  # (w,)
+        out = np.empty_like(img)
+        for i, sigma in enumerate(levels):
+            cols = np.nonzero(pick == i)[0]
+            if not cols.size:
+                continue
+            band = (img if sigma <= 0.35
+                    else cv2.GaussianBlur(img, (0, 0), float(sigma)))
+            out[:, cols] = band[:, cols]
+        return out
+
     def _vignette(self, h: int, w: int) -> np.ndarray:
         cached = getattr(self, "_vig", None)
         if cached is not None and cached.shape == (h, w):
@@ -205,15 +241,12 @@ class MockCamera(CameraBackend):
         py = int(self.stage_xy[1] / full.pixel_um) % (self._scene.shape[0] - full.height)
         view = self._scene[py:py + full.height, px:px + full.width]
 
-        sigma = abs(self.focus_z) * 0.9
         native = (w, h) == (full.width, full.height)
 
         if native:
             # Full resolution: blur at sensor scale, where the striae live.
             img = view.astype(np.float32) / 255.0
-            if sigma > 0.35:
-                img = cv2.GaussianBlur(img, (0, 0), sigma)
-            return img
+            return self._defocus(img, 1.0)
 
         # Preview: downsample on uint8 first, then blur at the reduced scale.
         # Strictly the optics blur before the sensor samples, but at preview
@@ -229,10 +262,7 @@ class MockCamera(CameraBackend):
             self._crop_key = key
             self._crop = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
         img = self._crop.astype(np.float32) / 255.0
-        s = sigma * (w / full.width)
-        if s > 0.35:
-            img = cv2.GaussianBlur(img, (0, 0), s)
-        return img
+        return self._defocus(img, w / full.width)
 
     def _render_into(self, buf: np.ndarray, res: Resolution) -> None:
         h, w = res.height, res.width

@@ -24,6 +24,7 @@ class LiveView(QtWidgets.QWidget):
         self._image: QtGui.QImage | None = None
         self._peaking: QtGui.QImage | None = None
         self._focus_rect: tuple[float, float, float, float] | None = None
+        self._remaining: QtGui.QImage | None = None
         self._drag_from: QtCore.QPointF | None = None
         self._drag_to: QtCore.QPointF | None = None
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
@@ -62,6 +63,27 @@ class LiveView(QtWidgets.QWidget):
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect
 
+    def set_remaining(self, mask, rect) -> None:
+        """Regions that still need to go through focus.
+
+        Drawn so it says *where* to keep racking, not merely that you are not
+        finished. Brass at low opacity: it must not be mistaken for the red
+        that means clipping.
+        """
+        if mask is None or rect is None:
+            self._remaining = None
+            return
+        h, w = mask.shape
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[..., 0] = 74       # B
+        rgba[..., 1] = 155      # G
+        rgba[..., 2] = 200      # R
+        rgba[..., 3] = (mask > 0).astype(np.uint8) * 70
+        self._rem_buf = np.ascontiguousarray(rgba)
+        self._remaining = QtGui.QImage(self._rem_buf.data, w, h,
+                                       self._rem_buf.strides[0],
+                                       QtGui.QImage.Format.Format_ARGB32)
+
     def clear_peaking(self) -> None:
         self._peaking = None
         self.update()
@@ -87,6 +109,8 @@ class LiveView(QtWidgets.QWidget):
             box = QtCore.QRectF(target.x() + x * target.width(),
                                 target.y() + y * target.height(),
                                 w * target.width(), h * target.height())
+            if self._remaining is not None:
+                p.drawImage(box, self._remaining)
             pen = QtGui.QPen(BRASS, 1)
             pen.setStyle(QtCore.Qt.PenStyle.DashLine)
             p.setPen(pen)
@@ -231,3 +255,51 @@ class FocusTraceView(QtWidgets.QWidget):
         p.drawText(QtCore.QRect(0, h - 14, w, 14),
                    QtCore.Qt.AlignmentFlag.AlignCenter,
                    f"{self._fraction * 100:.0f}% of peak sharpness")
+
+
+class CoverageMeter(QtWidgets.QWidget):
+    """How much of the frame has been through focus.
+
+    The number that turns "have I taken enough slices?" from a feel into a
+    stop condition. Reads zero until something has risen *and fallen* -- you
+    have to pass through focus, not merely reach it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._value: float | None = None
+        self.setFixedHeight(34)
+
+    def set_value(self, value: float | None, complete: bool = False) -> None:
+        self._value = value
+        self._complete = complete
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QtGui.QPainter(self)
+        h, w = self.height(), self.width()
+        p.fillRect(QtCore.QRect(0, 10, w, 6), PANEL)
+
+        f = p.font()
+        f.setPointSizeF(7.5)
+        p.setFont(f)
+        if self._value is None:
+            p.setPen(DIM)
+            p.drawText(QtCore.QRect(0, 18, w, 16),
+                       QtCore.Qt.AlignmentFlag.AlignCenter,
+                       "not sweeping")
+            return
+
+        # Complete is not the same as 100%: the structured area must also
+        # have stopped growing, or a frame that has only shown half of itself
+        # would read as finished.
+        done = getattr(self, "_complete", False)
+        colour = GOOD if done else BRASS
+        p.fillRect(QtCore.QRect(0, 10, int(w * self._value), 6), colour)
+        p.setPen(DIM)
+        p.drawText(QtCore.QRect(0, 18, w, 16),
+                   QtCore.Qt.AlignmentFlag.AlignCenter,
+                   "covered — sweep complete" if done
+                   else f"{self._value * 100:.0f}% through focus"
+                   + ("  still finding structure"
+                      if self._value >= 0.999 else ""))

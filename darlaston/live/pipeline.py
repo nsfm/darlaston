@@ -28,6 +28,7 @@ import numpy as np
 
 from ..camera.buffers import Frame
 from .cell import LatestFrame
+from .coverage import FocusCoverage
 from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
                     Region, measure, region_rect)
 
@@ -62,6 +63,12 @@ class LiveSignals:
     #: Normalised (x, y, w, h) of the region the metric was taken from, so the
     #: view can show what is actually being measured.
     focus_rect: tuple[float, float, float, float] | None = None
+    #: Fraction of the structured area that has been through focus, and a mask
+    #: of what has not. None unless a sweep is running.
+    coverage: float | None = None
+    coverage_remaining: np.ndarray | None = None
+    #: Complete means covered *and* no longer finding new structure.
+    coverage_complete: bool = False
     stats: dict = field(default_factory=dict)
 
 
@@ -91,6 +98,8 @@ class LivePipeline:
         self._region = Region.CENTRE
         self._blank = None
         self._still_for = 0
+        self._coverage = FocusCoverage()
+        self._sweeping = False
         self._custom: tuple[float, float, float, float] | None = None
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
@@ -131,6 +140,20 @@ class LivePipeline:
     def set_peaking(self, enabled: bool) -> None:
         with self._lock:
             self._peaking_enabled = enabled
+
+    def start_sweep(self) -> None:
+        """Begin accumulating coverage. Resets whatever was there."""
+        with self._lock:
+            self._coverage.reset()
+            self._sweeping = True
+
+    def stop_sweep(self) -> None:
+        with self._lock:
+            self._sweeping = False
+
+    @property
+    def sweeping(self) -> bool:
+        return self._sweeping
 
     def reset_focus_peak(self) -> None:
         with self._lock:
@@ -176,6 +199,8 @@ class LivePipeline:
             peaking_on = self._peaking_enabled
             trace = self._trace
             region, custom = self._region, self._custom
+            sweeping = self._sweeping
+            coverage_acc = self._coverage
 
         data = frame.data
         gray = (cv2.cvtColor(data, cv2.COLOR_BGR2GRAY) if data.ndim == 3
@@ -222,9 +247,26 @@ class LivePipeline:
             self._blank = BlankDetector()
         blank = self._blank.looks_blank(small)
 
-        peak_map = None
-        if peaking_on and self._analysed % self._peaking_divisor == 0:
-            peak_map = self._peaking(gray)
+        # The sharpness field is the expensive part, so it is computed once
+        # and shared: peaking draws it, coverage accumulates it.
+        field = None
+        if (peaking_on or sweeping) and self._analysed % self._peaking_divisor == 0:
+            field = self._peaking(gray)
+
+        peak_map = field if peaking_on else None
+        coverage = coverage_remaining = None
+        coverage_done = False
+        if sweeping:
+            # Coverage is measured over the same region as the focus metric,
+            # so 'spot' gives fast feedback on one detail and 'full' answers
+            # whether the whole tile is covered.
+            rx, ry, rw, rh = rect
+            if field is not None:
+                coverage_acc.update(field[ry:ry + rh, rx:rx + rw])
+            coverage = coverage_acc.fraction
+            coverage_done = coverage_acc.complete
+            if coverage_acc.active:
+                coverage_remaining = coverage_acc.overlay((rh, rw))
 
         self._analysed += 1
         now = time.perf_counter()
@@ -251,6 +293,9 @@ class LivePipeline:
             xy_confidence=confidence,
             peaking=peak_map,
             focus_rect=norm_rect,
+            coverage=coverage,
+            coverage_remaining=coverage_remaining,
+            coverage_complete=coverage_done,
             stats={"analysed_fps": self._rate, "delivered": delivered,
                    "dropped": dropped, "exposure_us": frame.exposure_us,
                    "gain_pct": frame.gain_pct},

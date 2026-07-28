@@ -115,3 +115,75 @@ def test_preview_lut_recovers_a_known_transform():
     assert lut.saturation[2] < lut.saturation[1] < lut.saturation[0]
     # Red saturates latest, so it is the channel worth believing.
     assert lut.best_channel == 0
+
+
+# ---- focus coverage ---------------------------------------------------------
+
+def test_coverage_requires_passing_through_focus():
+    """Reaching focus is not the same as passing it. Stopping at the peak
+    means you may not hold the best slice, and coverage must say so."""
+    from darlaston.live.coverage import FocusCoverage
+
+    def field(sharpness):
+        f = np.zeros((32, 32), np.float32)
+        f[8:24, 8:24] = sharpness          # a subject in the middle
+        return f
+
+    rising = FocusCoverage()
+    for v in (1.0, 4.0, 9.0, 14.0):        # up to the peak, then stop
+        rising.update(field(v))
+    assert rising.fraction < 0.05, "counted as covered without passing through"
+
+    through = FocusCoverage()
+    for v in (1.0, 4.0, 9.0, 14.0, 9.0, 4.0, 1.0):
+        through.update(field(v))
+    assert through.fraction > 0.95, "a full pass did not register"
+
+
+def test_coverage_ignores_empty_field():
+    """On darkfield most of the frame is empty and will never be sharp. If it
+    counted, coverage could never reach 100% and the number would be useless."""
+    from darlaston.live.coverage import FocusCoverage
+
+    cov = FocusCoverage()
+    for v in (1.0, 8.0, 20.0, 8.0, 1.0):
+        f = np.zeros((64, 64), np.float32)
+        f[28:36, 28:36] = v                # 1.5% of the frame has anything
+        cov.update(f)
+    assert cov.fraction > 0.95, f"empty field dragged coverage to {cov.fraction}"
+
+
+def test_coverage_tracks_regions_independently():
+    """The case it exists for: a tilted plane, where regions pass through
+    focus at different Z and coverage should climb rather than jump."""
+    from darlaston.live.coverage import FocusCoverage
+
+    cov = FocusCoverage()
+    readings = []
+    # Two halves that peak at different times.
+    for step in range(9):
+        f = np.zeros((32, 32), np.float32)
+        f[:, :16] = 12.0 - abs(step - 2) * 5.0
+        f[:, 16:] = 12.0 - abs(step - 6) * 5.0
+        cov.update(np.maximum(f, 0.1))
+        readings.append(cov.fraction)
+
+    # The percentage alone lies here: at step 3 the second half is still below
+    # the structure floor, so coverage reads 100% having seen half the frame.
+    assert readings[-1] > 0.95, f"did not finish: {readings[-1]}"
+    assert min(readings[4:8]) < 0.75, "the second half never joined the count"
+
+
+def test_coverage_is_not_complete_while_structure_is_still_appearing():
+    """Reading 100% and then falling back to 50% would destroy any trust in
+    this as a stop signal, so completion also requires a settled denominator."""
+    from darlaston.live.coverage import FocusCoverage
+
+    cov = FocusCoverage()
+    for step in range(4):                  # only the left half has appeared
+        f = np.zeros((32, 32), np.float32)
+        f[:, :16] = 12.0 - abs(step - 1) * 6.0
+        f[:, 16:] = 0.1
+        cov.update(np.maximum(f, 0.1))
+    assert cov.fraction >= 0.999, "the left half should read as fully passed"
+    assert not cov.complete, "claimed complete while half the frame was unseen"

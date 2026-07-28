@@ -32,7 +32,7 @@ from .calib_ui import CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterButton, SubjectField
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, TitleBar, WaitingPage
-from .widgets import FocusTraceView, Histogram, LiveView
+from .widgets import CoverageMeter, FocusTraceView, Histogram, LiveView
 
 #: Until the setup editor exists, a plausible stand so the chrome has something
 #: real to show. Replaced by the library as soon as a camera is recognised.
@@ -226,6 +226,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.peaking = QtWidgets.QCheckBox("focus peaking")
         self.peaking.toggled.connect(self._on_peaking)
         col.addWidget(self.peaking)
+
+        self.sweep = QtWidgets.QCheckBox("Z sweep")
+        self.sweep.setToolTip(
+            "Accumulates which parts of the frame have been through focus.\n"
+            "Rack past focus in both directions; it reads 100% when every "
+            "region with something in it has been passed.")
+        self.sweep.toggled.connect(self._on_sweep)
+        col.addWidget(self.sweep)
+        self.coverage = CoverageMeter()
+        col.addWidget(self.coverage)
 
         col.addStretch(1)
 
@@ -426,6 +436,14 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog = SettingsDialog(self.settings, self.setup, self)
         dialog.exec()
 
+    def _on_sweep(self, on: bool) -> None:
+        if on:
+            self.pipeline.start_sweep()
+        else:
+            self.pipeline.stop_sweep()
+            self.coverage.set_value(None)
+            self.view.set_remaining(None, None)
+
     def _on_peaking(self, on: bool) -> None:
         self.pipeline.set_peaking(on)
         if not on:
@@ -452,6 +470,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.calibration.busy and not self.capture.busy:
             self.opportunist.observe(s)
         self.view.set_focus_rect(s.focus_rect)
+        self.view.set_remaining(s.coverage_remaining, s.focus_rect)
+        self.coverage.set_value(s.coverage, s.coverage_complete)
         self.view.set_frame(s.preview, s.peaking)
         self.histogram.set_data(s.histogram, s.clipped_fraction,
                                 s.black_fraction, s.channel_clipped)

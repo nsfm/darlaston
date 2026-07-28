@@ -54,9 +54,10 @@ Ordered within each section by how much it would change what gets built.
       would be better than assuming sRGB primaries.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture
       at unity gain. Needs calibration to be verifiable. DESIGN.md §4.
-- [ ] **Focus coverage.** Union of in-focus masks across a sweep, reported as a
-      percentage. No prior art found; ranks above the mosaic work because Z
-      stays hand-cranked. DISCOVERY.md §9.
+- [x] ~~**Focus coverage.**~~ Per-pixel pass-through detection with a settled
+      denominator, a meter, and an overlay showing *where* to keep racking.
+      Verified against a synthetic tilted focal plane. Still needs trying on a
+      real thick subject.
 - [ ] **Z-stacks.** Movement detection, settle, auto-trigger. Depends on
       coverage to know when a sweep is done.
 - [ ] **Mosaic.** Overview anchoring, minimap, coverage, undo-last-tile.
