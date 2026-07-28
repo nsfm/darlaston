@@ -41,10 +41,14 @@ Ordered within each section by how much it would change what gets built.
       came out of it: opportunistic banking started before the flat step was
       reached (correct, but startling), and a two-field flat medians to its
       mean and rejects nothing.
-- [ ] **Multiple scopes.** The setup editor edits *the* scope; it cannot
-      create a second one. Nate moves one camera between four stands, so the
-      library needs a picker and each scope needs a stable id of its own —
-      currently everything inherits `unconfigured`.
+- [x] ~~**Multiple scopes.**~~ Stands are a collection now, stored separately
+      from cameras, with stable ids derived from the name. One scope selects
+      itself silently; the picker only appears when there is a choice. The
+      camera remembers which stand it was last on.
+- [ ] **Empty vs capped turret positions.** Currently one state. They behave
+      oppositely for visual detection — an empty slot passes light, a capped
+      one blocks it — so the darkness sweep would read them as different
+      events entirely.
 - [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a
       guess rather than a mistake, but a matrix measured from a colour target
       would be better than assuming sRGB primaries.

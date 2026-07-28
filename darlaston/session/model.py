@@ -138,6 +138,23 @@ class CameraProfile:
         return self.name or self.model or self.serial[:12]
 
 
+def scope_id(name: str, existing: set[str] | None = None) -> str:
+    """A stable id from a name, unique within the library.
+
+    Derived from the name rather than random so the calibration key stays
+    readable, and fixed at creation so renaming a stand does not orphan every
+    flat filed under it.
+    """
+    base = "".join(c.lower() if c.isalnum() else "-" for c in name).strip("-")
+    base = "-".join(p for p in base.split("-") if p) or "scope"
+    if not existing or base not in existing:
+        return base
+    n = 2
+    while f"{base}-{n}" in existing:
+        n += 1
+    return f"{base}-{n}"
+
+
 @dataclass
 class ScopeProfile:
     id: str
@@ -217,6 +234,35 @@ class Library:
             "cameras": {k: asdict(v) for k, v in self.cameras.items()},
             "scopes": {k: asdict(v) for k, v in self.scopes.items()},
         }, indent=2) + "\n")
+
+    def scope_or_default(self, scope_id: str | None) -> "ScopeProfile | None":
+        """The named scope, else the only one, else nothing.
+
+        One camera on one stand should never see a picker; the case that needs
+        choosing is a camera that travels.
+        """
+        if scope_id and scope_id in self.scopes:
+            return self.scopes[scope_id]
+        if len(self.scopes) == 1:
+            return next(iter(self.scopes.values()))
+        return None
+
+    def add_scope(self, name: str) -> "ScopeProfile":
+        scope = ScopeProfile(id=scope_id(name, set(self.scopes)), name=name)
+        self.scopes[scope.id] = scope
+        self.save()
+        return scope
+
+    def remove_scope(self, scope_id: str) -> None:
+        self.scopes.pop(scope_id, None)
+        self.save()
+
+    def bind(self, serial: str, scope_id: str) -> None:
+        """Remember which stand this camera was last bolted to."""
+        if serial in self.cameras:
+            self.cameras[serial] = replace(self.cameras[serial],
+                                           last_scope=scope_id)
+            self.save()
 
     def remember_camera(self, serial: str, model: str) -> CameraProfile:
         """First sight of a camera gets a provisional name the user can change."""

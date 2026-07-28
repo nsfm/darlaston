@@ -1,4 +1,4 @@
-"""Describing the instrument.
+"""Describing the instrument, and choosing which one.
 
 Everything downstream keys on this. The calibration store looks up flats by
 objective and relay; the metadata writes the objective where a photographer
@@ -8,6 +8,11 @@ sit. A setup that is wrong here is wrong everywhere, silently.
 So the editor is deliberately plain: name the things, list the objectives in
 turret order, and see the calibration key it produces. No wizard, because this
 is a page you visit twice a year and then forget.
+
+Stands are a *collection*, kept separately from cameras, because that is the
+physical arrangement: a camera and its relay travel together between stands
+while the objectives stay with the stand. Someone with one microscope never
+sees the picker -- a single stand is selected silently.
 """
 from __future__ import annotations
 
@@ -78,6 +83,21 @@ class ObjectiveRow(QtWidgets.QWidget):
             immersion=_IMMERSION[self.immersion.currentIndex()])
 
     def set_value(self, objective: Objective | None) -> None:
+        """Blocks the children, because blockSignals on the row itself does
+        not stop a spin box emitting on its own behalf."""
+        widgets = (self.mag, self.na, self.kind, self.immersion)
+        for w in widgets:
+            w.blockSignals(True)
+        try:
+            self._set_value(objective)
+        finally:
+            for w in widgets:
+                w.blockSignals(False)
+
+    def _set_value(self, objective: Objective | None) -> None:
+        self.kind.clear()
+        self.na.setValue(0.0)
+        self.immersion.setCurrentIndex(0)
         if objective is None:
             self.mag.setValue(0.0)
             return
@@ -114,6 +134,21 @@ class SetupDialog(QtWidgets.QDialog):
         camera.addRow("Relay / adapter", self.relay)
         camera.addRow("Serial", serial)
 
+        # --- which stand. A camera that travels needs this; a camera that
+        # does not never sees it, because one scope selects itself.
+        self.picker = QtWidgets.QComboBox()
+        self.add_scope = QtWidgets.QPushButton("New…")
+        self.add_scope.setFixedWidth(64)
+        self.remove_scope = QtWidgets.QPushButton("Remove")
+        self.remove_scope.setFixedWidth(72)
+        self.add_scope.clicked.connect(self._new_scope)
+        self.remove_scope.clicked.connect(self._remove_scope)
+        picker_row = QtWidgets.QHBoxLayout()
+        picker_row.setSpacing(6)
+        picker_row.addWidget(self.picker, 1)
+        picker_row.addWidget(self.add_scope)
+        picker_row.addWidget(self.remove_scope)
+
         # --- stand
         self.scope_name = QtWidgets.QLineEdit(setup.scope.name)
         self.condenser = QtWidgets.QLineEdit(setup.scope.condenser)
@@ -127,6 +162,7 @@ class SetupDialog(QtWidgets.QDialog):
             "what makes an overview frame cheap.")
 
         stand = QtWidgets.QFormLayout()
+        stand.addRow("Microscope", picker_row)
         stand.addRow("Name", self.scope_name)
         stand.addRow("Condenser", self.condenser)
         stand.addRow("Optovar", self.optovar)
@@ -175,8 +211,92 @@ class SetupDialog(QtWidgets.QDialog):
 
         for w in (self.camera_name, self.relay, self.scope_name, self.optovar):
             w.textChanged.connect(self._refresh)
+        self._reload_picker(setup.scope.id)
+        self.picker.currentIndexChanged.connect(self._switch_scope)
         self._refresh()
         self.setStyleSheet(theme.stylesheet())
+
+    # ---- the collection --------------------------------------------------
+
+    def _reload_picker(self, select: str | None) -> None:
+        scopes = self._library.scopes if self._library else {}
+        self.picker.blockSignals(True)
+        self.picker.clear()
+        for sid, scope in sorted(scopes.items(), key=lambda kv: kv[1].name):
+            self.picker.addItem(scope.name, sid)
+        if not scopes:
+            self.picker.addItem(self._setup.scope.name, self._setup.scope.id)
+        idx = self.picker.findData(select)
+        self.picker.setCurrentIndex(max(idx, 0))
+        self.picker.blockSignals(False)
+        # One stand needs no choosing, so the picker stays out of the way.
+        single = len(scopes) <= 1
+        self.picker.setVisible(not single)
+        self.remove_scope.setVisible(not single)
+
+    def _new_scope(self) -> None:
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "New microscope", "Name",
+            text="Microscope %d" % (len(self._library.scopes) + 1
+                                    if self._library else 1))
+        if not ok or not name.strip():
+            return
+        self._commit_current()
+        scope = self._library.add_scope(name.strip())
+        self._setup = Setup(camera=self._setup.camera, scope=scope,
+                            illumination=self._setup.illumination)
+        self._load_scope(scope)
+        self._reload_picker(scope.id)
+        self._refresh()
+
+    def _remove_scope(self) -> None:
+        sid = self.picker.currentData()
+        if not sid or not self._library or len(self._library.scopes) <= 1:
+            return
+        name = self._library.scopes[sid].name
+        if QtWidgets.QMessageBox.question(
+                self, "Remove microscope",
+                f"Remove {name}? Flat fields filed under it stay on disk but "
+                f"will no longer be found.") != \
+                QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._library.remove_scope(sid)
+        remaining = next(iter(self._library.scopes.values()))
+        self._setup = Setup(camera=self._setup.camera, scope=remaining,
+                            illumination=self._setup.illumination)
+        self._load_scope(remaining)
+        self._reload_picker(remaining.id)
+        self._refresh()
+
+    def _switch_scope(self) -> None:
+        """Switching stands keeps the edits made to the one being left."""
+        sid = self.picker.currentData()
+        if not sid or not self._library or sid not in self._library.scopes:
+            return
+        self._commit_current()
+        scope = self._library.scopes[sid]
+        self._setup = Setup(camera=self._setup.camera, scope=scope,
+                            illumination=self._setup.illumination)
+        self._load_scope(scope)
+        self._refresh()
+
+    def _commit_current(self) -> None:
+        if not self._library:
+            return
+        built = self._build()
+        self._library.scopes[built.scope.id] = built.scope
+        self._library.cameras[built.camera.serial] = built.camera
+        self._library.save()
+
+    def _load_scope(self, scope: ScopeProfile) -> None:
+        self.scope_name.setText(scope.name)
+        self.condenser.setText(scope.condenser)
+        self.optovar.setText(" ".join(f"{v:g}" for v in scope.optovar))
+        positions = list(scope.turret.positions) + [None] * 6
+        for i, row in enumerate(self.rows):
+            row.blockSignals(True)
+            row.set_value(positions[i])
+            row.blockSignals(False)
 
     # ---- live feedback ---------------------------------------------------
 
@@ -212,6 +332,10 @@ class SetupDialog(QtWidgets.QDialog):
                 self.result_setup.camera
             self._library.scopes[self.result_setup.scope.id] = \
                 self.result_setup.scope
+            # Remember which stand this camera is on, so a travelling camera
+            # comes back to the right one without being asked.
+            self._library.bind(self.result_setup.camera.serial,
+                               self.result_setup.scope.id)
             self._library.save()
         self.accept()
 
