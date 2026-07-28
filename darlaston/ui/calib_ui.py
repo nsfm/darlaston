@@ -110,8 +110,12 @@ class CalibrationPanel(QtWidgets.QWidget):
         have_flat = status.get("flat", False)
         # The flat's action only becomes available once enough blank fields
         # have been banked -- otherwise the button is an invitation to fail.
-        self.flat.set_state(have_flat,
-                            "" if have_flat else f"{banked}/{wanted} fields",
+        # Say the counter fills itself. It climbing unprompted is the design
+        # working, but it reads as a glitch when nothing says so.
+        detail = "" if have_flat else f"{banked}/{wanted} auto"
+        if not have_flat and 0 < banked < 3:
+            detail += "  3+ rejects debris"
+        self.flat.set_state(have_flat, detail,
                             actionable=live and banked >= 2 and not have_flat)
         self.wb.set_state(status.get("white_balance", False),
                           "from flat", actionable=False)

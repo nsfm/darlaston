@@ -25,7 +25,8 @@ Ordered within each section by how much it would change what gets built.
       must boost blue ~3x, so blue's information is destroyed before we see it.
 - [ ] **UI sweep.** Spacing, resizing behaviour, layout. Deliberately deferred
       until more elements exist, so the pass is done once against the finished
-      set rather than twice.
+      set rather than twice. The rail is now dense enough that this is getting
+      closer.
 - [x] ~~**Calibration engine.**~~ Store keyed by product lifetime, dark
       averaging with a defect map, flat medianing with per-Bayer-phase
       normalisation, measured white balance, opportunistic blank banking, and
@@ -36,9 +37,17 @@ Ordered within each section by how much it would change what gets built.
 - [x] ~~**Apply calibration at capture.**~~ Dark, flat, defects and white
       balance are looked up and applied; what was used is recorded in the file
       and reported in the result line.
-- [ ] **Verify the flat path on real glass.** Blank-field banking and the flat
-      it produces have only been exercised against the synthetic camera —
-      needs a real slide and some stage movement.
+- [x] ~~**Verify the flat path on real glass.**~~ Ran end to end. Two things
+      came out of it: opportunistic banking started before the flat step was
+      reached (correct, but startling), and a two-field flat medians to its
+      mean and rejects nothing.
+- [ ] **Multiple scopes.** The setup editor edits *the* scope; it cannot
+      create a second one. Nate moves one camera between four stands, so the
+      library needs a picker and each scope needs a stable id of its own —
+      currently everything inherits `unconfigured`.
+- [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a
+      guess rather than a mistake, but a matrix measured from a colour target
+      would be better than assuming sRGB primaries.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture
       at unity gain. Needs calibration to be verifiable. DESIGN.md §4.
 - [ ] **Focus coverage.** Union of in-focus masks across a sweep, reported as a

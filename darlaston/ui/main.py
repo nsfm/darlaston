@@ -30,6 +30,7 @@ from ..session.settings import Settings
 from . import theme
 from .calib_ui import CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterButton, SubjectField
+from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, TitleBar, WaitingPage
 from .widgets import FocusTraceView, Histogram, LiveView
 
@@ -238,9 +239,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_capture.setWordWrap(True)
         col.addWidget(self.last_capture)
 
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.setSpacing(6)
+        scope = QtWidgets.QPushButton("Microscope…")
+        scope.clicked.connect(self._open_setup)
         prefs = QtWidgets.QPushButton("Settings…")
         prefs.clicked.connect(self._open_settings)
-        col.addWidget(prefs)
+        buttons.addWidget(scope)
+        buttons.addWidget(prefs)
+        col.addLayout(buttons)
         return rail
 
     # ---- session ---------------------------------------------------------
@@ -400,6 +407,21 @@ class MainWindow(QtWidgets.QMainWindow):
         colour = theme.DIM if result.ok else theme.BAD
         self.last_capture.setStyleSheet(f"color: {colour};")
 
+    def _open_setup(self) -> None:
+        if self.setup is None:
+            return
+        dialog = SetupDialog(self.setup, self.library, self)
+        if dialog.exec():
+            self.setup = dialog.result_setup
+            self.setup.illumination = self._illumination
+            self.objective.set_turret(self.setup.scope.turret)
+            self.titlebar.update_status(self.session.status, self.setup)
+            # The optical stack changed, so anything banked for the old one is
+            # no longer a flat for this one.
+            self.opportunist.set_key(flat_key(self.setup,
+                                              self.subject.slide_note))
+            self._refresh_calibration()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self.setup, self)
         dialog.exec()
@@ -424,7 +446,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object)
     def _on_signals(self, s: LiveSignals) -> None:
-        self.opportunist.observe(s)
+        # Not while a guided routine is running: banking a field mid-routine
+        # is startling, and during a dark capture the lamp is off, so anything
+        # taken then would be a black frame masquerading as a flat.
+        if not self.calibration.busy and not self.capture.busy:
+            self.opportunist.observe(s)
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_frame(s.preview, s.peaking)
         self.histogram.set_data(s.histogram, s.clipped_fraction,

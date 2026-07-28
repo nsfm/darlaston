@@ -41,12 +41,20 @@ _ASCII_PREFIX = b"ASCII\x00\x00\x00"
 
 WHITE_LEVEL = 4095
 
-#: Provisional, and honestly so. There is no published colour matrix for this
-#: sensor, and under a halogen lamp through phase optics the notion is shakier
-#: still. Neutral, so Darktable renders predictably and the user corrects there.
-NEUTRAL_MATRIX = [[1, 1], [0, 1], [0, 1],
-                  [0, 1], [1, 1], [0, 1],
-                  [0, 1], [0, 1], [1, 1]]
+#: XYZ -> sRGB (D65). Provisional, and honestly so: there is no published
+#: colour matrix for this sensor, and under a halogen lamp through phase optics
+#: the notion is shakier still.
+#:
+#: This says "assume the camera has sRGB primaries", which is wrong -- but the
+#: previous placeholder was an identity matrix, which says "assume the camera's
+#: primaries *are* XYZ", and that is much more wrong. It rendered every capture
+#: with a magenta cast, verified side by side in darktable. A measured matrix
+#: from a colour target would be better; this is the conventional default when
+#: there is nothing better.
+_XYZ_TO_SRGB = (3.2406, -1.5372, -0.4986,
+                -0.9689, 1.8758, 0.0415,
+                0.0557, -0.2040, 1.0570)
+NEUTRAL_MATRIX = [[int(round(v * 10000)), 10000] for v in _XYZ_TO_SRGB]
 
 _CFA = {"GBRG": CFAPattern.GBRG, "GRBG": CFAPattern.GRBG,
         "RGGB": CFAPattern.RGGB, "BGGR": CFAPattern.BGGR}

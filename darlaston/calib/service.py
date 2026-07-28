@@ -183,10 +183,16 @@ class CalibrationService:
         self.store.put("wb", wb_key,
                        Provenance("white_balance", wb_key, frames=len(banked)),
                        values={"gains": list(gains)})
+        # A median of two frames is their mean, and rejects nothing. The flat
+        # is still worth having -- it captures the illumination field and the
+        # white balance -- but any debris in either frame survives into it, so
+        # say so rather than letting it look finished.
+        caveat = ("  (two fields median to their mean — debris survives; "
+                  "three or more rejects it)" if len(banked) < 3 else "")
         self._emit(Progress(
             "flat", 1, 1, finished=True,
             message=(f"from {len(banked)} fields — white balance "
-                     f"R {gains[0]:.3f} G 1.000 B {gains[2]:.3f}")))
+                     f"R {gains[0]:.3f} G 1.000 B {gains[2]:.3f}{caveat}")))
 
     # ---- preview LUT -----------------------------------------------------
 
