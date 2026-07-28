@@ -28,10 +28,11 @@ from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
                              ScopeProfile, Setup, Turret)
 from ..session.settings import Settings
 from . import theme
+from .about import AboutDialog
 from .calib_ui import CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterButton, SubjectField
 from .setup_ui import SetupDialog
-from .shell import Chip, ObjectiveStepper, TitleBar, WaitingPage
+from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
 from .widgets import CoverageMeter, FocusTraceView, Histogram, LiveView
 
 #: Until the setup editor exists, a plausible stand so the chrome has something
@@ -106,7 +107,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- layout ----------------------------------------------------------
 
     def _build(self) -> None:
-        self.titlebar = TitleBar()
+        self.toolbar = ToolBar()
+        self.toolbar.about.connect(lambda: AboutDialog(self).exec())
+        # Menus rather than buttons, so these nest as more arrives instead of
+        # every name having to change when the third tool appears.
+        instrument = self.toolbar.add_menu("Instrument")
+        instrument.addAction("Microscope setup…", self._open_setup)
+        capture_menu = self.toolbar.add_menu("Capture")
+        capture_menu.addAction("Location and naming…", self._open_settings)
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -127,12 +135,12 @@ class MainWindow(QtWidgets.QMainWindow):
         body.addWidget(self.stack, 1)
         body.addWidget(self._rail())
 
-        self.strip = _StatusStrip()
+        self.strip = StatusBar()
 
         col = QtWidgets.QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        col.addWidget(self.titlebar)
+        col.addWidget(self.toolbar)
         col.addLayout(body, 1)
         col.addWidget(self.strip)
 
@@ -249,15 +257,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_capture.setWordWrap(True)
         col.addWidget(self.last_capture)
 
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.setSpacing(6)
-        scope = QtWidgets.QPushButton("Microscope…")
-        scope.clicked.connect(self._open_setup)
-        prefs = QtWidgets.QPushButton("Settings…")
-        prefs.clicked.connect(self._open_settings)
-        buttons.addWidget(scope)
-        buttons.addWidget(prefs)
-        col.addLayout(buttons)
         return rail
 
     # ---- session ---------------------------------------------------------
@@ -271,9 +270,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                illumination=self._illumination)
             self.objective.set_turret(self.setup.scope.turret)
 
-        self.titlebar.update_status(status, self.setup)
-        self.strip.set_status(status)
-
+        self.strip.update_status(status, self.setup)
+        
         if status.is_live and not self._synced:
             self._adopt_camera_settings()
 
@@ -425,7 +423,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup = dialog.result_setup
             self.setup.illumination = self._illumination
             self.objective.set_turret(self.setup.scope.turret)
-            self.titlebar.update_status(self.session.status, self.setup)
+            self.strip.update_status(self.session.status, self.setup)
             # The optical stack changed, so anything banked for the old one is
             # no longer a flat for this one.
             self.opportunist.set_key(flat_key(self.setup,
@@ -458,7 +456,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup.illumination = mode
         # Focus metric and prefilter follow the illumination, per DISCOVERY.md 9.
         self.pipeline.set_illumination(Illumination(mode.kind))
-        self.titlebar.update_status(self.session.status, self.setup)
+        self.strip.update_status(self.session.status, self.setup)
 
     # ---- live ------------------------------------------------------------
 
@@ -513,46 +511,6 @@ def _readout(key: str, value_widget: QtWidgets.QLabel) -> QtWidgets.QHBoxLayout:
     row.addStretch(1)
     row.addWidget(value_widget)
     return row
-
-
-class _StatusStrip(QtWidgets.QFrame):
-    """The numbers that tell you whether to trust what you are seeing."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setFixedHeight(26)
-        self.setStyleSheet(
-            f"background:{theme.PANEL}; border-top:1px solid {theme.LINE};")
-        self.left = QtWidgets.QLabel("")
-        self.left.setProperty("role", "sub")
-        self._base = ""
-        self._note = ""
-        self.right = QtWidgets.QLabel("")
-        self.right.setProperty("role", "sub")
-        row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(12, 0, 12, 0)
-        row.addWidget(self.left)
-        row.addStretch(1)
-        row.addWidget(self.right)
-
-    def set_note(self, note: str) -> None:
-        self._note = note
-        self.left.setText(note or self._base)
-
-    def set_status(self, status: SessionStatus) -> None:
-        bits = [status.message.lower()]
-        if status.state is CameraState.ERROR and status.next_retry_in:
-            bits.append(f"retrying in {status.next_retry_in:.0f}s")
-        self._base = "   ".join(bits)
-        self.left.setText(getattr(self, "_note", "") or self._base)
-
-    def set_live(self, s: LiveSignals) -> None:
-        st = s.stats
-        total = max(st["delivered"] + st["dropped"], 1)
-        self.right.setText(
-            f"{st['analysed_fps']:.1f} fps    "
-            f"dropped {st['dropped']} ({st['dropped'] / total * 100:.0f}%)    "
-            f"seq {s.seq}")
 
 
 def main() -> int:

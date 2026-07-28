@@ -60,6 +60,10 @@ Ordered within each section by how much it would change what gets built.
       real thick subject.
 - [ ] **Z-stacks.** Movement detection, settle, auto-trigger. Depends on
       coverage to know when a sweep is done.
+- [ ] **"Hold still" during a capture.** A full-resolution pull takes over a
+      second, and the operator has no reason to know that — carrying on racking
+      mid-shot smears the slice. Needs an unmissable state during the exposure,
+      and probably a discard-and-retry if motion is detected while it runs.
 - [ ] **Mosaic.** Overview anchoring, minimap, coverage, undo-last-tile.
 
 ## Capture features

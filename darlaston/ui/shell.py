@@ -65,64 +65,138 @@ class Chip(QtWidgets.QLabel):
             f"padding:1px 7px; color:{colour}; font-size:11px;")
 
 
-class TitleBar(QtWidgets.QFrame):
-    """Who is connected, to what, and what it is doing right now."""
+class ToolBar(QtWidgets.QFrame):
+    """The top bar is for things you can do.
+
+    Status moved out of it deliberately: what the instrument *is* belongs with
+    what it is *doing*, at the bottom, and mixing the two meant the bar was
+    half identity and half chrome with nowhere for tools to go.
+    """
+
+    about = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self.setProperty("role", "bar")
-        self.setFixedHeight(38)
+        self.setFixedHeight(36)
+
+        self.wordmark = QtWidgets.QPushButton("darlaston")
+        self.wordmark.setProperty("role", "wordmark")
+        self.wordmark.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.wordmark.setToolTip("About darlaston")
+        self.wordmark.clicked.connect(self.about)
+
+        divider = QtWidgets.QFrame()
+        divider.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        divider.setStyleSheet(f"color: {theme.LINE};")
+        divider.setFixedHeight(18)
+
+        self.menus: dict[str, QtWidgets.QMenu] = {}
+        self._row = QtWidgets.QHBoxLayout(self)
+        self._row.setContentsMargins(8, 0, 12, 0)
+        self._row.setSpacing(2)
+        self._row.addWidget(self.wordmark)
+        self._row.addSpacing(4)
+        self._row.addWidget(divider)
+        self._row.addSpacing(4)
+        self._row.addStretch(1)
+
+    def add_menu(self, title: str) -> QtWidgets.QMenu:
+        """A popup rather than a plain button, so these can nest as more
+        arrives without every name having to change."""
+        button = QtWidgets.QPushButton(title)
+        button.setProperty("role", "menu")
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        menu = QtWidgets.QMenu(button)
+        button.setMenu(menu)
+        self.menus[title] = menu
+        self._row.insertWidget(self._row.count() - 1, button)
+        return menu
+
+
+class StatusBar(QtWidgets.QFrame):
+    """What is connected, to what, and what it is doing.
+
+    Everything here is a fact about the current moment, which is why it all
+    sits together rather than being split across the window.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedHeight(28)
+        self.setStyleSheet(
+            f"background: {theme.PANEL}; border-top: 1px solid {theme.LINE};")
 
         self.dot = Dot()
-        self.name = QtWidgets.QLabel("—")
-        self.name.setProperty("role", "title")
+        self.state = QtWidgets.QLabel("—")
+        self.state.setProperty("role", "sub")
         self.context = QtWidgets.QLabel("")
         self.context.setProperty("role", "sub")
-        self.resolution = Chip("")
-        self.link = Chip("")
+        self.numbers = QtWidgets.QLabel("")
+        self.numbers.setProperty("role", "sub")
 
         row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(12, 0, 12, 0)
+        row.setContentsMargins(10, 0, 12, 0)
         row.setSpacing(10)
         row.addWidget(self.dot)
-        row.addWidget(self.name)
+        row.addWidget(self.state)
         row.addWidget(self.context)
         row.addStretch(1)
-        row.addWidget(self.resolution)
-        row.addWidget(self.link)
+        row.addWidget(self.numbers)
+        self._base = ""
+        self._note = ""
+
+    def set_note(self, note: str) -> None:
+        self._note = note
+        self.state.setText(note or self._base)
+        self.state.setStyleSheet(
+            f"color: {theme.BRASS};" if note else "")
 
     def update_status(self, status, setup=None) -> None:
         self.dot.set_state(status.state)
-        info = status.info
-        if setup is not None:
-            self.name.setText(setup.camera.display)
-            obj = setup.scope.turret.objective
-            bits = [setup.scope.name]
-            if obj:
-                bits.append(obj.label)
-            bits.append(setup.illumination.display)
-            self.context.setText(" · ".join(bits))
-        elif info is not None:
-            self.name.setText(info.model)
-            self.context.setText("")
-        else:
-            self.name.setText("no camera")
-            self.context.setText("")
+        bits = [status.message.lower()]
+        if status.state is CameraState.ERROR and status.next_retry_in:
+            bits.append(f"retrying in {status.next_retry_in:.0f}s")
+        self._base = "   ".join(bits)
+        if not self._note:
+            self.state.setText(self._base)
 
+        info = status.info
+        parts: list[str] = []
+        if setup is not None:
+            parts.append(setup.camera.display)
+            parts.append(setup.scope.name)
+            obj = setup.scope.turret.objective
+            if obj:
+                parts.append(obj.label)
+            parts.append(setup.illumination.display)
+        elif info is not None:
+            parts.append(info.model)
+        self.context.setText(" · ".join(parts))
+
+        tail: list[str] = []
         if info is not None and info.resolutions:
             full = max(info.resolutions, key=lambda r: r.width * r.height)
-            self.resolution.setText(f"{full.width} × {full.height}")
-            self.resolution.show()
-        else:
-            self.resolution.hide()
-
+            tail.append(f"{full.width}×{full.height}")
         link = status.link
         if link is not None and link.speed_mbps:
-            self.link.setText(link.label)
-            self.link.set_active(link.is_degraded)
-            self.link.show()
-        else:
-            self.link.hide()
+            tail.append(link.label)
+            self.numbers.setStyleSheet(
+                f"color: {theme.BAD};" if link.is_degraded else "")
+        self._tail = tail
+        self._render_numbers()
+
+    def set_live(self, signals) -> None:
+        st = signals.stats
+        total = max(st["delivered"] + st["dropped"], 1)
+        self._live = (f"{st['analysed_fps']:.0f} fps   "
+                      f"dropped {st['dropped']} ({st['dropped'] / total * 100:.0f}%)")
+        self._render_numbers()
+
+    def _render_numbers(self) -> None:
+        parts = list(getattr(self, "_tail", [])) + \
+            ([getattr(self, "_live")] if hasattr(self, "_live") else [])
+        self.numbers.setText("   ".join(parts))
 
 
 class WaitingPage(QtWidgets.QWidget):

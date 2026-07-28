@@ -42,6 +42,11 @@ def load_fonts() -> dict[str, str]:
     global _families
     if _families:
         return _families
+    # QFontDatabase segfaults without a QApplication rather than raising, so
+    # refuse politely instead of taking the process down.
+    from PySide6 import QtWidgets
+    if QtWidgets.QApplication.instance() is None:
+        return {"mono": "monospace", "sans": "sans-serif"}
     wanted = {
         "mono": ["IBMPlexMono-Regular.ttf", "IBMPlexMono-Medium.ttf"],
         "sans": ["IBMPlexSans-Regular.ttf", "IBMPlexSans-SemiBold.ttf"],
@@ -134,4 +139,33 @@ def stylesheet() -> str:
     QSlider::handle:horizontal {{ background: {INK}; width: 11px;
                                   margin: -5px 0; border-radius: 5px; }}
     QSlider::handle:horizontal:hover {{ background: {BRASS}; }}
+
+    /* Qt's default tooltip is black on grey, which is unreadable against a
+       dark interface and looks like it belongs to a different application. */
+    QToolTip {{
+        background: {PANEL}; color: {INK};
+        border: 1px solid {BRASS}; border-radius: 3px;
+        padding: 6px 8px; font-family: "{fam['sans']}"; font-size: 12px;
+        opacity: 240;
+    }}
+
+    QMenu {{
+        background: {PANEL}; border: 1px solid {LINE};
+        padding: 4px; font-family: "{fam['mono']}"; font-size: 12px;
+    }}
+    QMenu::item {{ padding: 5px 22px 5px 12px; border-radius: 2px; }}
+    QMenu::item:selected {{ background: {LINE}; color: {BRASS}; }}
+    QMenu::separator {{ height: 1px; background: {LINE}; margin: 4px 6px; }}
+
+    QPushButton[role="menu"] {{
+        border: 0; padding: 5px 10px; color: {DIM};
+        font-family: "{fam['mono']}"; font-size: 12px;
+    }}
+    QPushButton[role="menu"]:hover {{ color: {INK}; }}
+
+    QPushButton[role="wordmark"] {{
+        border: 0; padding: 4px 10px; color: {DIM};
+        font-family: "{fam['sans']}"; font-size: 13px; font-style: italic;
+    }}
+    QPushButton[role="wordmark"]:hover {{ color: {BRASS}; }}
     """
