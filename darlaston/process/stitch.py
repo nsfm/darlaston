@@ -310,60 +310,141 @@ _DEMOSAIC = {"GBRG": cv2.COLOR_BayerGR2BGR, "GRBG": cv2.COLOR_BayerGB2BGR,
              "RGGB": cv2.COLOR_BayerBG2BGR, "BGGR": cv2.COLOR_BayerRG2BGR}
 
 
+#: Classic TIFF -- which DNG is -- addresses file offsets with 32 bits, so a
+#: single image cannot exceed 4 GB and the header must fit too. Refuse before
+#: spending ten minutes producing a file no reader will open.
+_TIFF_LIMIT = 4_200_000_000
+#: Float accumulator budget for one band. Sets how tall the bands are; the
+#: only cost of smaller bands is re-reading tiles that straddle more of them.
+_BAND_BYTES = 256_000_000
+
+
+def plan(positions: list[tuple[float, float]],
+         shapes: list[tuple[int, int]], scale: float) -> dict:
+    """Output geometry and cost for a scale, without doing any work.
+
+    Exists so the operator is told "19716 × 13923, 275 MP, 1.6 GB" *before*
+    committing, rather than discovering it when the machine starts swapping.
+    """
+    w0 = min(x - s[1] / 2 for (x, _), s in zip(positions, shapes))
+    h0 = min(y - s[0] / 2 for (_, y), s in zip(positions, shapes))
+    w1 = max(x + s[1] / 2 for (x, _), s in zip(positions, shapes))
+    h1 = max(y + s[0] / 2 for (_, y), s in zip(positions, shapes))
+    cw, ch = int((w1 - w0) * scale) + 2, int((h1 - h0) * scale) + 2
+    out_bytes = cw * ch * 3 * 2
+    return {"w": cw, "h": ch, "origin": (w0, h0),
+            "megapixels": cw * ch / 1e6, "bytes": out_bytes,
+            "fits": out_bytes < _TIFF_LIMIT}
+
+
 def composite(session: MosaicSession, positions: list[tuple[float, float]],
               scale: float = 0.25, pattern: str = "GBRG",
-              flat: np.ndarray | None = None) -> Path:
-    """Blend the tiles at their solved positions into one linear DNG."""
-    shapes = []
-    for t in session.tiles:
-        raw = read_bayer_dng(session.dir / t.filename)
-        shapes.append(raw.shape)
-        del raw
-    xs = [p[0] for p in positions]
-    ys = [p[1] for p in positions]
-    w0 = min(x - s[1] / 2 for x, s in zip(xs, shapes))
-    h0 = min(y - s[0] / 2 for y, s in zip(ys, shapes))
-    w1 = max(x + s[1] / 2 for x, s in zip(xs, shapes))
-    h1 = max(y + s[0] / 2 for y, s in zip(ys, shapes))
-    cw, ch = int((w1 - w0) * scale) + 2, int((h1 - h0) * scale) + 2
+              flat: np.ndarray | None = None,
+              shapes: list[tuple[int, int]] | None = None,
+              progress=None) -> Path:
+    """Blend the tiles at their solved positions into one linear DNG.
 
-    acc = np.zeros((ch, cw, 3), np.float32)
-    wacc = np.zeros((ch, cw), np.float32)
-    neutral = None
-    for tile, pos in zip(session.tiles, positions):
-        raw = read_bayer_dng(session.dir / tile.filename)
-        if neutral is None:
-            neutral = dng.grey_world_neutral(raw)
-        rgb = cv2.cvtColor(raw, _DEMOSAIC.get(pattern, cv2.COLOR_BayerGR2BGR))
-        th, tw = raw.shape
+    Composed in horizontal bands. A single full-resolution accumulator for a
+    275 MP mosaic is 3.3 GB of float32 plus another 1.1 GB of weights, and
+    that grows with the square of how much slide you cover -- so instead the
+    canvas is filled a band at a time and only the tiles that intersect the
+    band are ever loaded. Peak memory becomes the finished image plus one
+    band, and a 40-tile mosaic stops being a question of how much RAM the
+    machine has.
+
+    The cost is re-reading tiles that straddle a band boundary, which is
+    bounded and cheap next to not being able to do it at all.
+    """
+    if shapes is None:
+        shapes = []
+        for t in session.tiles:
+            raw = read_bayer_dng(session.dir / t.filename)
+            shapes.append(raw.shape)
+            del raw
+
+    geom = plan(positions, shapes, scale)
+    cw, ch = geom["w"], geom["h"]
+    if not geom["fits"]:
+        raise ValueError(
+            f"{geom['megapixels']:.0f} MP is {geom['bytes'] / 1e9:.1f} GB, "
+            f"past what a DNG can address (4 GB). Use a smaller scale.")
+    w0, h0 = geom["origin"]
+
+    # Where each tile lands, so a band knows what to ask for.
+    boxes = []
+    for pos, (th, tw) in zip(positions, shapes):
         sw, sh = max(2, int(tw * scale)), max(2, int(th * scale))
-        small = cv2.resize(rgb, (sw, sh), interpolation=cv2.INTER_AREA) \
-                   .astype(np.float32)
-        if flat is not None:
-            # Achromatic: the profile is measured on luma, so it corrects
-            # shading without inventing a colour cast it never measured.
-            small /= cv2.resize(flat, (sw, sh),
-                                interpolation=cv2.INTER_LINEAR)[:, :, None]
-        win = _window(sh, sw)
-        x = int(round((pos[0] - tw / 2 - w0) * scale))
-        y = int(round((pos[1] - th / 2 - h0) * scale))
-        x, y = max(0, x), max(0, y)
-        sh2, sw2 = min(sh, ch - y), min(sw, cw - x)
-        acc[y:y + sh2, x:x + sw2] += small[:sh2, :sw2] * win[:sh2, :sw2, None]
-        wacc[y:y + sh2, x:x + sw2] += win[:sh2, :sw2]
+        x = max(0, int(round((pos[0] - tw / 2 - w0) * scale)))
+        y = max(0, int(round((pos[1] - th / 2 - h0) * scale)))
+        boxes.append((x, y, sw, sh))
 
-    covered = wacc > 0
-    out = np.zeros_like(acc)
-    out[covered] = acc[covered] / wacc[covered, None]
-    result = np.clip(out, 0, 65535).astype(np.uint16)
-    # BGR from OpenCV back to the RGB a linear DNG expects.
-    result = result[:, :, ::-1]
+    band_h = max(64, min(ch, int(_BAND_BYTES / max(cw * 3 * 4, 1))))
+    result = np.zeros((ch, cw, 3), np.uint16)
+    neutral = None
+    bands = (ch + band_h - 1) // band_h
+
+    for bi, top in enumerate(range(0, ch, band_h)):
+        bot = min(ch, top + band_h)
+        acc = np.zeros((bot - top, cw, 3), np.float32)
+        wacc = np.zeros((bot - top, cw), np.float32)
+        for tile, (x, y, sw, sh) in zip(session.tiles, boxes):
+            if y >= bot or y + sh <= top:
+                continue                      # this tile misses the band
+            raw = read_bayer_dng(session.dir / tile.filename)
+            if neutral is None:
+                neutral = dng.grey_world_neutral(raw)
+            rgb = cv2.cvtColor(raw,
+                               _DEMOSAIC.get(pattern, cv2.COLOR_BayerGR2BGR))
+            del raw
+            small = cv2.resize(rgb, (sw, sh),
+                               interpolation=cv2.INTER_AREA).astype(np.float32)
+            del rgb
+            if flat is not None:
+                # Achromatic: the profile is measured on luma, so it corrects
+                # shading without inventing a colour cast it never measured.
+                small /= cv2.resize(flat, (sw, sh),
+                                    interpolation=cv2.INTER_LINEAR)[:, :, None]
+            win = _window(sh, sw)
+
+            # Intersect the tile with the band, in both coordinate frames.
+            y0 = max(y, top)
+            y1 = min(y + sh, bot)
+            sy0, sy1 = y0 - y, y1 - y
+            x1 = min(x + sw, cw)
+            sx1 = x1 - x
+            acc[y0 - top:y1 - top, x:x1] += (small[sy0:sy1, :sx1]
+                                             * win[sy0:sy1, :sx1, None])
+            wacc[y0 - top:y1 - top, x:x1] += win[sy0:sy1, :sx1]
+
+        covered = wacc > 0
+        blended = np.zeros_like(acc)
+        blended[covered] = acc[covered] / wacc[covered, None]
+        # BGR from OpenCV back to the RGB a linear DNG expects.
+        result[top:bot] = np.clip(blended, 0, 65535).astype(np.uint16)[:, :, ::-1]
+        del acc, wacc, blended
+        if progress is not None:
+            progress(bi + 1, bands)
 
     target = session.dir / "composite.dng"
     return dng.write_linear(target, result, neutral=neutral or (1, 1, 1))
 
 
-def stitch(directory: Path | str, scale: float = 0.25) -> tuple[Path, dict]:
+def survey(directory: Path | str) -> tuple[MosaicSession, list, list]:
+    """Geometry only: what a stitch *would* produce, without producing it."""
+    session = MosaicSession.load(directory)
+    shapes = []
+    for t in session.tiles:
+        raw = read_bayer_dng(session.dir / t.filename)
+        shapes.append(raw.shape)
+        del raw
+    positions = [(0.0, 0.0)] * len(shapes)
+    predicted = _predicted_raw_positions(session.tiles, shapes)
+    positions = [p if p is not None else (0.0, 0.0) for p in predicted]
+    return session, positions, shapes
+
+
+def stitch(directory: Path | str, scale: float = 0.25,
+           progress=None) -> tuple[Path, dict]:
     """The whole run: load, register, composite. Returns (path, report)."""
     session = MosaicSession.load(directory)
     if len(session.tiles) < 2:
@@ -377,8 +458,12 @@ def stitch(directory: Path | str, scale: float = 0.25) -> tuple[Path, dict]:
     positions, edges = register(session, lumas, shapes)
     flat = estimate_flat(lumas)
     del lumas
-    path = composite(session, positions, scale=scale, flat=flat)
+    geom = plan(positions, shapes, scale)
+    path = composite(session, positions, scale=scale, flat=flat,
+                     shapes=shapes, progress=progress)
     report = {
+        "width": geom["w"], "height": geom["h"],
+        "megapixels": round(geom["megapixels"], 1),
         "tiles": len(session.tiles),
         "edges": len(edges),
         "refined": sum(1 for e in edges if e.refined),

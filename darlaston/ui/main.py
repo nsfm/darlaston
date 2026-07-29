@@ -37,6 +37,7 @@ from .capture_ui import SettingsDialog, ShutterButton, SubjectField
 from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
+from .stitch_ui import StitchDialog
 from .timelapse_ui import TimelapseDialog
 from .widgets import CoverageMeter, FocusTraceView, Histogram, LiveView
 
@@ -58,6 +59,7 @@ class Bridge(QtCore.QObject):
     capture_state = QtCore.Signal(str)
     capture_result = QtCore.Signal(object)
     timelapse = QtCore.Signal(object)
+    stitch = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
@@ -103,6 +105,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     store=self.store, pipeline=self.pipeline)
         self.timelapse = Timelapse(self.capture, self.bridge.timelapse.emit)
         self.bridge.timelapse.connect(self._on_timelapse)
+        self.bridge.stitch.connect(self._on_stitch)
         self.mosaic: MosaicSession | None = None
         self._last_preview = None
         self.calibration = CalibrationService(self.session, self.store,
@@ -516,8 +519,27 @@ class MainWindow(QtWidgets.QMainWindow):
                     objective=obj.label if obj else None,
                     illumination=self.setup.illumination.display)
         else:
-            # The manifest is already current; closing is just letting go.
-            self.mosaic = None
+            # The manifest is already current, so closing is just letting go
+            # -- but a finished mosaic almost always wants stitching, and
+            # making the operator go hunting through a menu for the obvious
+            # next step is how a tool feels unfinished.
+            done, self.mosaic = self.mosaic, None
+            self.slidemap.set_mosaic(False)
+            if done is not None and len(done.tiles) >= 2:
+                box = QtWidgets.QMessageBox(self)
+                box.setWindowTitle("Mosaic finished")
+                box.setText(f"{len(done.tiles)} tiles in {done.dir.name}.")
+                box.setInformativeText("Stitch them now?")
+                later = box.addButton("Later",
+                                      QtWidgets.QMessageBox.ButtonRole.RejectRole)
+                now = box.addButton("Stitch…",
+                                    QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+                box.setDefaultButton(now)
+                box.setStyleSheet(theme.stylesheet())
+                box.exec()
+                if box.clickedButton() is now:
+                    self._stitch_mosaic(done.dir)
+            return
         self.slidemap.set_mosaic(on)
 
     def _on_undo_tile(self) -> None:
@@ -593,33 +615,50 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_timelapse(self, status: TimelapseStatus) -> None:
         self.strip.set_note(status.summary or status.message)
 
-    def _stitch_mosaic(self) -> None:
-        """Pick a tile session, stitch it off the UI thread, say how it went.
+    def _stitch_mosaic(self, directory=None) -> None:
+        """Pick a tile session and stitch it, off the UI thread.
 
         Defaults to the live session's folder when a mosaic is running --
         stitching mid-lay is a legitimate sanity check.
         """
-        start = str(self.mosaic.dir if self.mosaic else
-                    self.settings.capture_root)
-        chosen = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "Mosaic tile folder", start)
-        if not chosen:
-            return
-        self.strip.set_note("stitching…")
+        if directory is None:
+            start = str(self.mosaic.dir if self.mosaic else
+                        self.settings.capture_root)
+            directory = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Mosaic tile folder", start)
+            if not directory:
+                return
+        StitchDialog(directory, self._run_stitch, self).exec()
 
+    def _run_stitch(self, directory, scale, dialog) -> None:
         def work():
             from ..process.stitch import stitch
             try:
-                path, report = stitch(chosen)
-                note = (f"stitched {report['tiles']} tiles "
-                        f"({report['refined']}/{report['edges']} seams "
-                        f"refined) → {path.name}")
+                path, report = stitch(
+                    directory, scale=scale,
+                    progress=lambda d, t: self.bridge.stitch.emit(
+                        ("progress", d, t)))
+                self.bridge.stitch.emit(("done", (
+                    f"{report['megapixels']:.0f} MP · "
+                    f"{report['refined']}/{report['edges']} seams refined"
+                    + ("  · levelled" if report["flattened"] else "")
+                    + f" → {path.name}"), True))
             except Exception as exc:
-                note = f"stitch failed — {exc}"
-            self.bridge.timelapse.emit(TimelapseStatus(
-                running=False, shot=0, count=0, next_in=0, message=note))
+                self.bridge.stitch.emit(("done", f"failed — {exc}", False))
 
+        self._stitch_dialog = dialog
         threading.Thread(target=work, daemon=True, name="stitch").start()
+
+    @QtCore.Slot(object)
+    def _on_stitch(self, message) -> None:
+        dialog = getattr(self, "_stitch_dialog", None)
+        if dialog is None:
+            return
+        if message[0] == "progress":
+            dialog.set_progress(message[1], message[2])
+        else:
+            dialog.finished_with(message[1], message[2])
+            self.strip.set_note(message[1])
 
     def _on_sweep(self, on: bool) -> None:
         if on:

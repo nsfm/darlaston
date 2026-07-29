@@ -136,6 +136,33 @@ Ordered within each section by how much it would change what gets built.
       mosaic and re-run the comparison — this is the highest-value open
       question, because it may indicate a real defect in the calibration
       path rather than drift.
+- [ ] **Bake a thumbnail into our DNGs.** System thumbnailers refuse the big
+      files, and a 275 MP composite is unopenable-looking in a file manager.
+      Structural, not cosmetic: a conformant DNG puts a *reduced* image in
+      IFD0 (`NewSubfileType = 1`) and the real one in a SubIFD, but pidng
+      writes the full image directly into IFD0 with no SubIFDs tag at all —
+      verified by parsing our own output. So this cannot be done by adding a
+      tag; it needs the IFD tree restructured after pidng writes, or our own
+      writer. We already parse TIFF for `read_bayer_dng`, so writing one is
+      within reach and stays dependency-free. Do it for composites first,
+      where it hurts most.
+- [x] ~~**Output size is a knob now.**~~ Capture → Stitch mosaic… measures the
+      real geometry from the manifest and prices every choice before starting
+      (Nate's 17-tile run: full 19718 × 13925 = 275 MP / 1.65 GB, half 69 MP,
+      quarter 17 MP). Compositing is banded, so peak memory is the finished
+      image plus one band rather than a 3.3 GB float accumulator that grew
+      with the square of the area covered. Choices past the 4 GB a classic
+      TIFF can address are disabled rather than offered and then failed.
+- [ ] **The DNG writer is now the memory bottleneck.** Banding cut the
+      compositor to the finished image plus one band, and measurement then
+      showed the peak had moved: writing a 1.63 GB linear DNG through pidng
+      costs about 3.2 GB *on top of* the array — 272 MP peaked at 6.84 GB,
+      most of it in the write. Our own strip-based TIFF writer fixes this and
+      the thumbnail item above in one stroke, and removes the last thing
+      standing between us and a 40-tile mosaic.
+- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all — classic
+      TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for
+      viewing; the linear DNG stays the right output while it fits.
 - [ ] **Stitch, the rest.** Full-resolution composite streamed band-by-band
       (current default renders at 0.25 scale into RAM; fine to ~10 tiles,
       not at 40). Verify the GBRG→OpenCV demosaic code choice on real glass

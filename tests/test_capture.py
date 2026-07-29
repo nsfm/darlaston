@@ -4,6 +4,7 @@ Needs pidng (the DNG writer); skipped wholesale where only the analysis
 dependencies are installed.
 """
 import threading
+from pathlib import Path
 import types
 
 import cv2
@@ -364,3 +365,65 @@ def test_moved_verdict_flows_from_the_pipeline(tmp_path):
     assert r.moved_px == 40.0
     assert "moved during exposure" in r.summary
     assert r.path.exists(), "the moved shot must still be written"
+
+
+def test_banded_composite_matches_a_whole_canvas():
+    """Banding is an optimisation, so it must be invisible in the result.
+    Two band heights over the same tiles must agree pixel for pixel."""
+    from darlaston.capture.mosaic import MosaicSession
+    from darlaston.process import dng, stitch as S
+    import tempfile, struct
+
+    with tempfile.TemporaryDirectory() as td:
+        session = MosaicSession(td, "bands")
+        rng = np.random.default_rng(5)
+        shapes, positions = [], []
+        for i in range(3):
+            raw = (rng.integers(200, 3000, (120, 160))).astype(np.uint16)
+            p = Path(td) / f"c{i}.dng"
+            dng.write_bayer(p, raw)
+            session.adopt(p, (i * 120.0, 0.0), (160, 120))
+            shapes.append((120, 160))
+            positions.append((i * 120.0, 0.0))
+
+        def render(band_bytes):
+            old = S._BAND_BYTES
+            S._BAND_BYTES = band_bytes
+            try:
+                out = S.composite(session, positions, scale=1.0, shapes=shapes)
+                data = out.read_bytes()
+                (ifd,) = struct.unpack_from("<I", data, 4)
+                (n,) = struct.unpack_from("<H", data, ifd)
+                tags = {}
+                for k in range(n):
+                    t, _ty, _c, v = struct.unpack_from("<HHII", data,
+                                                       ifd + 2 + k * 12)
+                    tags[t] = v
+                w, h = tags[256], tags[257]
+                off = tags.get(324) or tags[273]
+                return np.frombuffer(data, np.uint16, count=w * h * 3,
+                                     offset=off).reshape(h, w, 3).copy()
+            finally:
+                S._BAND_BYTES = old
+
+        one_band = render(10_000_000_000)      # whole canvas at once
+        many = render(20_000)                  # forced into many bands
+        assert one_band.shape == many.shape
+        assert np.array_equal(one_band, many), "banding changed the result"
+
+
+def test_plan_prices_the_output_before_any_work():
+    from darlaston.process.stitch import plan
+
+    shapes = [(3648, 5440)] * 4
+    positions = [(0.0, 0.0), (4000.0, 0.0), (0.0, 2800.0), (4000.0, 2800.0)]
+    full = plan(positions, shapes, 1.0)
+    half = plan(positions, shapes, 0.5)
+    # 9440 x 6448 of tiles, plus the two pixels of rounding slack plan keeps.
+    assert full["w"] == 9442 and full["h"] == 6450
+    assert full["megapixels"] == pytest.approx(60.9, abs=0.1)
+    assert half["w"] == 4722
+    assert full["fits"] and half["fits"]
+    # A mosaic large enough to break classic TIFF must say so, not fail late.
+    huge = plan([(0.0, 0.0), (60000.0, 40000.0)], [(3648, 5440)] * 2, 1.0)
+    assert not huge["fits"]
