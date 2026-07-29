@@ -71,6 +71,7 @@ class Bridge(QtCore.QObject):
     capture_result = QtCore.Signal(object)
     timelapse = QtCore.Signal(object)
     stitch = QtCore.Signal(object)
+    stack_merge = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
@@ -117,6 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timelapse = Timelapse(self.capture, self.bridge.timelapse.emit)
         self.bridge.timelapse.connect(self._on_timelapse)
         self.bridge.stitch.connect(self._on_stitch)
+        self.bridge.stack_merge.connect(self._on_stack_merge)
         self.mosaic: MosaicSession | None = None
         self.stack_session: StackSession | None = None
         self.stack_trigger = StackTrigger(self._fire_stack_slice)
@@ -199,6 +201,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # feedback -- soft regions in this composite are regions the stack
         # has not visited yet.
         self.assembly = StackAssembly()
+        self.assembly.finish_requested.connect(self._finish_stack)
+        self.assembly.discard_requested.connect(self._discard_stack)
         self.stack_window = FloatingPanel("stack — assembling", self.view)
         self.stack_window.set_relative(0.55, 0.55)
         _fill(self.stack_window, self.assembly)
@@ -786,23 +790,60 @@ class MainWindow(QtWidgets.QMainWindow):
             self.strip.set_note("stack armed — rack to the first plane and "
                                "hold")
         else:
+            # The chip going off without Finish being pressed keeps the
+            # slices and skips the merge -- the folder is complete and can
+            # be merged later from its manifest. Finish and Discard are the
+            # explicit endings, and they live in the window.
             self.stack_trigger.disarm()
-            self.stack_window.hide()
-            done, self.stack_session = self.stack_session, None
-            if done is not None and len(done.slices) >= 2:
-                box = QtWidgets.QMessageBox(self)
-                box.setWindowTitle("Stack finished")
-                box.setText(f"{len(done.slices)} slices in {done.dir.name}.")
-                box.setInformativeText("Merge them into one image now?")
-                later = box.addButton("Later",
-                                      QtWidgets.QMessageBox.ButtonRole.RejectRole)
-                now = box.addButton("Merge",
-                                    QtWidgets.QMessageBox.ButtonRole.AcceptRole)
-                box.setDefaultButton(now)
-                box.setStyleSheet(theme.stylesheet())
-                box.exec()
-                if box.clickedButton() is now:
-                    self._run_stack_merge(done.dir)
+            if not self._stack_ending:
+                self.stack_window.hide()
+                self.stack_session = None
+
+    _stack_ending = False
+
+    def _finish_stack(self) -> None:
+        """Finish & merge, from the window. The window stays: the progress
+        bar and the result belong where the operator was already looking."""
+        if self.stack_session is None or len(self.stack_session.slices) < 2:
+            self.assembly.set_merging(None, None,
+                                      "need at least two slices")
+            return
+        self.stack_trigger.disarm()
+        done, self.stack_session = self.stack_session, None
+        self._stack_ending = True
+        self.focus.stack.setChecked(False)
+        self._stack_ending = False
+        self.assembly.finish.setEnabled(False)
+        self.assembly.discard.setEnabled(False)
+        self._run_stack_merge(done.dir)
+
+    def _discard_stack(self) -> None:
+        """Delete the stack, slices and all. Confirmed, because this is the
+        one button in the window that destroys data."""
+        if self.stack_session is None:
+            return
+        n = len(self.stack_session.slices)
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Discard stack")
+        box.setText(f"Delete all {n} slices?")
+        keep = box.addButton("Keep",
+                             QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        kill = box.addButton("Discard",
+                             QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(keep)
+        box.setStyleSheet(theme.stylesheet())
+        box.exec()
+        if box.clickedButton() is not kill:
+            return
+        import shutil
+        done, self.stack_session = self.stack_session, None
+        self.stack_trigger.disarm()
+        shutil.rmtree(done.dir, ignore_errors=True)
+        self._stack_ending = True
+        self.focus.stack.setChecked(False)
+        self._stack_ending = False
+        self.stack_window.hide()
+        self.strip.set_note("stack discarded")
 
     def _fire_stack_slice(self) -> bool:
         """The trigger pulling the shutter. Runs on the UI thread, from the
@@ -813,20 +854,37 @@ class MainWindow(QtWidgets.QMainWindow):
                                     slide=self.subject.slide_note)
 
     def _run_stack_merge(self, directory) -> None:
-        self.strip.set_note("merging stack…")
-
         def work():
             from ..process.stack import merge
             try:
-                path, report = merge(directory)
-                note = (f"stacked {report['slices']} slices, "
-                        f"{report['depth_levels']} depth levels → {path.name}")
+                path, report = merge(
+                    directory,
+                    progress=lambda stage, i, n: self.bridge.stack_merge.emit(
+                        ("progress", stage, i, n)))
+                self.bridge.stack_merge.emit(("done", (
+                    f"stacked {report['slices']} slices · "
+                    f"{report['depth_levels']} depth levels → {path.name}"),
+                    True))
             except Exception as exc:
-                note = f"stack merge failed — {exc}"
-            self.bridge.timelapse.emit(TimelapseStatus(
-                running=False, shot=0, count=0, next_in=0, message=note))
+                self.bridge.stack_merge.emit(("done",
+                                              f"merge failed — {exc}", False))
 
         threading.Thread(target=work, daemon=True, name="stack-merge").start()
+
+    @QtCore.Slot(object)
+    def _on_stack_merge(self, message) -> None:
+        if message[0] == "progress":
+            _kind, stage, i, n = message
+            # Three stages of n slices each, as one bar: honest and smooth.
+            offset = {"reading": 0, "measuring": 1, "blending": 2}.get(stage, 0)
+            self.assembly.set_merging(offset * n + i, 3 * n,
+                                      f"{stage} {i}/{n}…")
+            return
+        _kind, note, ok = message
+        self.assembly.set_merging(None, None, note)
+        self.assembly.finish.setEnabled(True)
+        self.assembly.discard.setEnabled(True)
+        self.strip.set_note(note)
 
     def _on_mosaic_requested(self, on: bool) -> None:
         if on:

@@ -137,6 +137,74 @@ def read_bayer_dng(path: Path | str) -> np.ndarray:
     return flat.reshape(h, w).copy()
 
 
+def read_metadata(path: Path | str):
+    """Recover a CaptureMetadata from a DNG darlaston wrote.
+
+    The merge outputs carry the provenance of their sources -- who took it,
+    through what, at what settings -- and the sources are our own files, so
+    the tags are exactly where we put them. Parsing them back beats
+    threading metadata through every session manifest, because the file is
+    the one artefact guaranteed to still be there.
+    """
+    from .metadata import CaptureMetadata
+
+    data = Path(path).read_bytes()
+    if data[:4] != b"II\x2a\x00":
+        return None
+    (first,) = struct.unpack_from("<I", data, 4)
+    ifd0 = _read_ifd(data, first)
+
+    def ascii_of(entry):
+        if entry is None:
+            return ""
+        typ, cnt, val = entry
+        raw = data[val:val + cnt] if cnt > 4 else struct.pack("<I", val)[:cnt]
+        return raw.split(b"\x00")[0].decode("ascii", "replace")
+
+    def rational(entry):
+        if entry is None:
+            return None
+        _t, _c, val = entry
+        num, den = struct.unpack_from("<II", data, val)
+        return num / den if den else None
+
+    exif = {}
+    # A file written without capture metadata still carries the EXIF pointer
+    # tag, patched to zero -- following that read garbage past the end of
+    # the buffer. Zero is not an offset.
+    if 34665 in ifd0 and 0 < ifd0[34665][2] < len(data) - 2:
+        exif = _read_ifd(data, ifd0[34665][2])
+
+    comment = ""
+    if 37510 in exif:
+        _t, cnt, val = exif[37510]
+        raw = data[val:val + cnt]
+        if raw.startswith(b"ASCII\x00\x00\x00"):
+            comment = raw[8:].split(b"\x00")[0].decode("ascii", "replace")
+
+    iso = exif.get(34855)
+    return CaptureMetadata(
+        make=ascii_of(ifd0.get(271)) or "ToupTek",
+        model=ascii_of(ifd0.get(272)),
+        unique_camera_model=ascii_of(ifd0.get(50708)),
+        serial=ascii_of(ifd0.get(50735)),
+        lens_model=ascii_of(exif.get(42036)),
+        lens_make=ascii_of(exif.get(42035)),
+        lens_serial=ascii_of(exif.get(42037)),
+        exposure_seconds=rational(exif.get(33434)),
+        iso=iso[2] if iso else None,
+        focal_length_mm=rational(exif.get(37386)),
+        f_number=rational(exif.get(33437)),
+        focal_plane_per_mm=((rational(exif.get(41486)) or 0) / 10) or None,
+        subject_distance_m=rational(exif.get(37382)),
+        light_source=(exif[37384][2] if 37384 in exif else None),
+        description=ascii_of(ifd0.get(270)),
+        artist=ascii_of(ifd0.get(315)),
+        copyright=ascii_of(ifd0.get(33432)),
+        comment=comment,
+    )
+
+
 def luma_half(raw: np.ndarray) -> np.ndarray:
     """Half-resolution luma: the mean of each 2x2 Bayer cell. Pattern-free,
     which matters -- the mosaic itself correlates at even offsets."""
@@ -516,10 +584,15 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
     grey = tuple(m / max(means[1], 1e-6) for m in means)
     preview = dng.make_preview(thumb, bayer=False, neutral=grey,
                                white=int(max(result.max(), 1)))
+    try:
+        meta = read_metadata(
+            session.dir / session.tiles[len(session.tiles) // 2].filename)
+    except Exception:
+        meta = None                    # provenance is a bonus, never a gate
     return dng.write_linear_streamed(
         target, lambda s, c: result[s:s + c], ch, cw,
         preview=preview, neutral=neutral or (1.0, 1.0, 1.0),
-        white=4095 * 16)
+        white=4095 * 16, meta=meta)
 
 
 def survey(directory: Path | str) -> tuple[MosaicSession, list, list]:

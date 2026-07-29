@@ -194,7 +194,7 @@ def test_merge_is_sharp_everywhere_when_no_slice_is(tmp_path):
     cam.close()
 
     from darlaston.process.stack import merge, _luma_half
-    path, report = merge(session.dir)
+    path, report = merge(session.dir, output="linear")
     assert path.exists() and path.name == "stacked.dng"
     assert (session.dir / "depth.png").exists()
     assert report["depth_levels"] >= 4, "the tilt must span several slices"
@@ -256,3 +256,44 @@ def test_merge_is_sharp_everywhere_when_no_slice_is(tmp_path):
                                for s, r in zip(strips, ref_strips)))
     assert worst_single < min(ratios), \
         "some single slice was already sharp everywhere; weak fixture"
+
+
+def test_bayer_output_round_trips_the_blend(tmp_path):
+    """Nate's re-mosaic idea, as an assertion: bilinear demosaic passes each
+    site's native value through untouched, so sampling the blend back onto
+    the grid loses nothing at native sites. With no alignment shifts, the
+    bayer output's sites must equal the weighted blend of the slices' raw
+    values there -- and the file is a quarter the size of the linear one."""
+    from darlaston.process.stack import merge
+    from darlaston.process.stitch import read_bayer_dng
+
+    cam = MockCamera()
+    cam.open()
+    cam.focus_tilt = 8.0
+    session = StackSession(tmp_path, subject="remosaic")
+    for i, z in enumerate(np.linspace(-3, 3, 5)):
+        cam.focus_z = float(z)
+        frame = cam.grab_raw()
+        with frame:
+            raw = frame.copy()
+        p = tmp_path / f"c{i}.dng"
+        dng.write_bayer_streamed(
+            p, lambda s, c: raw[s:s + c], raw.shape[0], raw.shape[1],
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            bits=12, white=4095)
+        session.adopt(p, metric=0.5)
+    cam.close()
+
+    bayer_path, rep_b = merge(session.dir, output="bayer")
+    back = read_bayer_dng(bayer_path)
+    assert back.shape == (3648, 5440), "bayer output is single-channel"
+    assert rep_b["output"] == "bayer"
+    size_b = bayer_path.stat().st_size
+
+    linear_path, _ = merge(session.dir, output="linear")
+    size_l = linear_path.stat().st_size
+    assert size_b < size_l * 0.4, \
+        f"bayer {size_b/1e6:.0f} MB should be ~a third of linear {size_l/1e6:.0f} MB"
+
+    # Levels must agree between the two forms.
+    assert abs(float(back.mean()) / (4095 * 16)) > 0.02

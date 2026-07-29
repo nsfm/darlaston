@@ -7,6 +7,11 @@ merge -- winner-takes-all, no alignment -- and that is fine, because its job
 is not accuracy. Its job is to show that the thing is working and to make
 racking through a diatom feel like developing a photograph: the subject
 emerges.
+
+The panel is also the stack's control surface: finish and discard live here,
+with the merge's progress, because this window is where the operator is
+already looking. A second view tints each region by the slice that won it --
+the depth data showing itself off while it is still being collected.
 """
 from __future__ import annotations
 
@@ -22,24 +27,88 @@ WIDTH = 456
 
 
 class StackAssembly(QtWidgets.QWidget):
-    """The running composite, a slice count, and nothing else."""
+    """The running composite, its depth view, and the stack's controls."""
+
+    finish_requested = QtCore.Signal()
+    discard_requested = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self._rgb: np.ndarray | None = None
         self._sharp: np.ndarray | None = None
+        self._which: np.ndarray | None = None      # winning slice per pixel
         self._image: QtGui.QImage | None = None
         self._count = 0
-        self.setMinimumHeight(120)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                           QtWidgets.QSizePolicy.Policy.Expanding)
+        self._mode = "image"
+
+        self.canvas = _AssemblyCanvas(self)
+
+        self.view_toggle = QtWidgets.QPushButton("depth")
+        self.view_toggle.setCheckable(True)
+        self.view_toggle.setToolTip(
+            "Tint each region by the slice that won it — the depth data,\n"
+            "showing itself while it is still being collected.")
+        self.finish = QtWidgets.QPushButton("Finish && merge")
+        self.finish.setToolTip("Stop capturing and merge the slices into "
+                               "one all-in-focus image.")
+        self.discard = QtWidgets.QPushButton("Discard")
+        self.discard.setToolTip("Delete this stack — slices and all.")
+        for b in (self.view_toggle, self.finish, self.discard):
+            b.setProperty("role", "seg")
+        self.finish.clicked.connect(self.finish_requested)
+        self.discard.clicked.connect(self.discard_requested)
+        self.view_toggle.toggled.connect(self._on_view)
+
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(3)
+        self.progress.hide()
+        self.progress.setStyleSheet(
+            f"QProgressBar {{ border: 0; background: {theme.SUNK}; }}"
+            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}")
+
+        self.status = QtWidgets.QLabel("")
+        self.status.setProperty("role", "key")
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(4)
+        row.addWidget(self.view_toggle)
+        row.addWidget(self.status, 1)
+        row.addWidget(self.discard)
+        row.addWidget(self.finish)
+
+        col = QtWidgets.QVBoxLayout(self)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(5)
+        col.addWidget(self.canvas, 1)
+        col.addWidget(self.progress)
+        col.addLayout(row)
+
+    def _on_view(self, on: bool) -> None:
+        self._mode = "depth" if on else "image"
+        self._render()
+
+    def set_merging(self, done: int | None, total: int | None,
+                    message: str = "") -> None:
+        """Progress of the final merge, in the window already being watched."""
+        if done is None:
+            self.progress.hide()
+        else:
+            self.progress.show()
+            self.progress.setRange(0, total or 0)
+            self.progress.setValue(done)
+        self.status.setText(message)
 
     def reset(self) -> None:
         self._rgb = None
         self._sharp = None
+        self._which = None
         self._image = None
         self._count = 0
+        self.progress.hide()
+        self.status.setText("")
         self.update()
+        self.canvas.update()
 
     @property
     def count(self) -> int:
@@ -69,11 +138,18 @@ class StackAssembly(QtWidgets.QWidget):
         if self._rgb is None:
             self._rgb = rgb
             self._sharp = sharp
+            self._which = np.zeros(sharp.shape, np.uint8)
         else:
             better = sharp > self._sharp
             self._rgb[better] = rgb[better]
+            self._which[better] = self._count
             np.maximum(self._sharp, sharp, out=self._sharp)
         self._count += 1
+        self._render()
+
+    def _render(self) -> None:
+        if self._rgb is None:
+            return
 
         # Roughly balanced and gamma'd, or a raw microscope field shows as a
         # dark green rectangle.
@@ -83,29 +159,50 @@ class StackAssembly(QtWidgets.QWidget):
             show[:, :, c] *= means[1] / means[c]
         peak = float(np.percentile(show, 99.5)) or 1.0
         show = np.power(np.clip(show / peak, 0, 1), 1 / 2.2)
-        self._buf = np.ascontiguousarray((show * 255).astype(np.uint8))
+        out = (show * 255).astype(np.uint8)
+
+        if self._mode == "depth" and self._which is not None:
+            # Luma carries the structure, the colormap carries which slice
+            # won: the depth data as a living image rather than a by-product.
+            luma = out.mean(axis=2).astype(np.uint8)
+            idx = (self._which.astype(np.float32)
+                   / max(self._count - 1, 1) * 255).astype(np.uint8)
+            tint = cv2.applyColorMap(idx, cv2.COLORMAP_VIRIDIS)
+            out = ((luma[:, :, None].astype(np.uint16) * tint) // 255)                 .astype(np.uint8)
+
+        self._buf = np.ascontiguousarray(out)
         hh, ww = self._buf.shape[:2]
         self._image = QtGui.QImage(self._buf.data, ww, hh,
                                    self._buf.strides[0],
                                    QtGui.QImage.Format.Format_BGR888)
-        self.update()
+        self.canvas.update()
+
+
+class _AssemblyCanvas(QtWidgets.QWidget):
+    def __init__(self, owner: "StackAssembly") -> None:
+        super().__init__()
+        self._owner = owner
+        self.setMinimumHeight(120)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                           QtWidgets.QSizePolicy.Policy.Expanding)
 
     def paintEvent(self, _event) -> None:
+        o = self._owner
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(theme.SUNK))
-        if self._image is None:
+        if o._image is None:
             p.setPen(QtGui.QColor(theme.DIM))
             p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
                        "rack, pause — the first slice starts it")
             p.end()
             return
-        scaled = self._image.size().scaled(
+        scaled = o._image.size().scaled(
             self.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
         x = (self.width() - scaled.width()) // 2
         y = (self.height() - scaled.height()) // 2
         p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         p.drawImage(QtCore.QRect(x, y, scaled.width(), scaled.height()),
-                    self._image)
+                    o._image)
         p.setPen(QtGui.QColor(theme.INK))
         f = p.font()
         f.setPointSizeF(8.5)
@@ -114,5 +211,5 @@ class StackAssembly(QtWidgets.QWidget):
                    QtGui.QColor(0, 0, 0, 150))
         p.drawText(QtCore.QRect(x + 10, y + 6, 68, 18),
                    QtCore.Qt.AlignmentFlag.AlignVCenter,
-                   f"{self._count} slice{'s' if self._count != 1 else ''}")
+                   f"{o._count} slice{'s' if o._count != 1 else ''}")
         p.end()

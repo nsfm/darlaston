@@ -156,6 +156,23 @@ Ordered within each section by how much it would change what gets built.
       colormap. Depth + all-in-focus is everything DIBR needs: synthesise two
       or three parallax views and emit an anaglyph or a wobble GIF. The data
       is already on disk after every merge.
+- [x] ~~**Stack output re-mosaicked, 119 → 40 MB.**~~ Nate asked whether the
+      merge could be re-mosaicked, and the answer is better than yes:
+      bilinear demosaic passes each site's native value through untouched, so
+      sampling the blended RGB back onto the GBRG grid recovers exactly the
+      per-site blend of aligned raw values. Nothing meaningful is lost, and
+      the developer's demosaic — better than ours — does the final
+      interpolation. Default output now; linear stays as an option. Tested:
+      bayer round-trips and is under 40% of the linear size.
+- [x] ~~**Composites carry provenance.**~~ The stacked and stitched outputs
+      read the EXIF back out of a middle slice/tile — photographer, optics,
+      exposure — because it is one photograph made of many exposures and it
+      should say who took it and through what.
+- [x] ~~**The stack window is the control surface.**~~ Finish & merge and
+      Discard (confirmed — it is the one button that destroys data) live in
+      the assembly window, with the merge's three-stage progress bar. The
+      "depth" toggle tints each region by the slice that won it — the
+      depth data as a living image while it is still being collected.
 - [ ] **Halo at depth edges.** Nate reports edge glow survives the merge on
       real diatoms — the classic depth-map artefact where the pooled
       sharpness of an in-focus edge bleeds its vote over the out-of-focus

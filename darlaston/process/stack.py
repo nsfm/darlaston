@@ -29,7 +29,7 @@ import numpy as np
 
 from ..capture.stack import StackSession
 from . import dng
-from .stitch import read_bayer_dng
+from .stitch import read_bayer_dng, read_metadata
 
 #: Per-slice alignment beyond this many half-res pixels is not focus
 #: breathing, it is the stage having been bumped; the shift is refused and
@@ -77,8 +77,21 @@ def _register(lumas: list[np.ndarray]) -> list[tuple[float, float]]:
     return shifts
 
 
-def merge(directory: Path | str, progress=None) -> tuple[Path, dict]:
-    """The whole run: load, align, map depth, blend, write. (path, report)."""
+def merge(directory: Path | str, progress=None,
+          output: str = "bayer") -> tuple[Path, dict]:
+    """The whole run: load, align, map depth, blend, write. (path, report).
+
+    `output` is "bayer" or "linear", and bayer is the default because of an
+    observation Nate made sound obvious: the composite can be *re-mosaicked*.
+    Demosaic was only ever forced by alignment -- a Bayer pattern cannot
+    survive a sub-pixel warp -- but nothing stops sampling the blended RGB
+    back onto the grid afterwards. And bilinear demosaic passes each site's
+    native value through untouched, so the round trip recovers exactly the
+    per-site blend of aligned raw values: nothing meaningful is lost, the
+    file is a quarter the size, and the developer's own demosaic -- better
+    than ours -- does the final interpolation. Linear stays for the cases
+    that want it.
+    """
     session = StackSession.load(directory)
     n = len(session.slices)
     if n < 2:
@@ -147,24 +160,49 @@ def merge(directory: Path | str, progress=None) -> tuple[Path, dict]:
     # into the declared range instead, which also keeps the sub-LSB
     # precision the weighted blend just created, exactly as the
     # frame-averaging path does.
-    result = np.clip(acc * 16.0 + 0.5, 0, 65520).astype(np.uint16)[:, :, ::-1]
+    if output == "bayer":
+        # Sample the blended RGB back onto the GBRG grid. acc is BGR.
+        mosaic = np.empty((h, w), np.float32)
+        mosaic[0::2, 0::2] = acc[0::2, 0::2, 1]      # G
+        mosaic[0::2, 1::2] = acc[0::2, 1::2, 0]      # B
+        mosaic[1::2, 0::2] = acc[1::2, 0::2, 2]      # R
+        mosaic[1::2, 1::2] = acc[1::2, 1::2, 1]      # G
+        result = np.clip(mosaic * 16.0 + 0.5, 0, 65520).astype(np.uint16)
+    else:
+        result = np.clip(acc * 16.0 + 0.5,
+                         0, 65520).astype(np.uint16)[:, :, ::-1]
     del acc
 
     neutral = dng.grey_world_neutral(raws[len(raws) // 2])
+    # Provenance rides along: the middle slice's own tags -- photographer,
+    # optics, exposure -- become the composite's. It is one photograph made
+    # of many exposures, and it should say who took it and through what.
+    try:
+        meta = read_metadata(
+            session.dir / session.slices[len(raws) // 2].filename)
+    except Exception:
+        meta = None                    # provenance is a bonus, never a gate
     del raws
 
-    step = max(1, h // 400, w // 400)
-    thumb = result[::step, ::step]
-    means = [float(thumb[:, :, c][thumb[:, :, c] > 0].mean() or 1.0)
-             for c in range(3)]
-    grey = tuple(m / max(means[1], 1e-6) for m in means)
-    preview = dng.make_preview(thumb, bayer=False, neutral=grey,
-                               white=int(max(result.max(), 1)))
-
     target = session.dir / "stacked.dng"
-    written = dng.write_linear_streamed(
-        target, lambda s, c: result[s:s + c], h, w,
-        preview=preview, neutral=neutral, white=4095 * 16)
+    if output == "bayer":
+        preview = dng.make_preview(result, bayer=True, white=4095 * 16,
+                                   neutral=neutral)
+        written = dng.write_bayer_streamed(
+            target, lambda s, c: result[s:s + c], h, w,
+            preview=preview, neutral=neutral, white=4095 * 16, meta=meta,
+            bits=16)
+    else:
+        step = max(1, h // 400, w // 400)
+        thumb = result[::step, ::step]
+        means = [float(thumb[:, :, c][thumb[:, :, c] > 0].mean() or 1.0)
+                 for c in range(3)]
+        grey = tuple(m / max(means[1], 1e-6) for m in means)
+        preview = dng.make_preview(thumb, bayer=False, neutral=grey,
+                                   white=int(max(result.max(), 1)))
+        written = dng.write_linear_streamed(
+            target, lambda s, c: result[s:s + c], h, w,
+            preview=preview, neutral=neutral, white=4095 * 16, meta=meta)
 
     # The depth map, twice. depth.png is the *data*: plain grayscale, near
     # slices dark and far slices light, the conventional encoding every
@@ -177,6 +215,7 @@ def merge(directory: Path | str, progress=None) -> tuple[Path, dict]:
                 cv2.applyColorMap(dmap, cv2.COLORMAP_VIRIDIS))
 
     report = {
+        "output": output,
         "slices": n,
         "width": w, "height": h,
         "max_breathing_px": round(max(abs(v) for s in shifts for v in s) * 2,
