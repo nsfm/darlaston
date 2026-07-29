@@ -173,7 +173,7 @@ class StillCapture:
                 applied.append(f"avg{frames}")
 
             self._on_state("writing")
-            path = self._destination(setup, subject)
+            path, sequence, when = self._destination(setup, subject)
             info = backend.info
             pattern = info.bayer_pattern if info else "GBRG"
 
@@ -189,11 +189,23 @@ class StillCapture:
                 applied = [a for a in applied if a != "wb"]
 
             if setup is not None:
+                # The sensor pitch comes from the SDK and is the file's only
+                # link to real-world scale: pitch over magnification is how
+                # much slide one pixel covers.
+                pixel_um = None
+                if info and info.resolutions:
+                    full = min(info.resolutions, key=lambda r: r.index)
+                    pixel_um = full.pixel_um
                 meta = from_setup(setup, exposure_us=exposure_us,
                                   gain_pct=gain_pct, subject=subject,
                                   slide=slide,
                                   calibration="+".join(applied) or "none",
-                                  app_version=_version())
+                                  app_version=_version(),
+                                  pixel_um=pixel_um, sequence=sequence,
+                                  when=when,
+                                  artist=self._settings.artist,
+                                  copyright=self._settings.copyright,
+                                  unique_id=_fingerprint(corrected))
 
             if frames > 1:
                 # The mean carries real precision below one 12-bit LSB.
@@ -291,15 +303,32 @@ class StillCapture:
                                 white_level=dng.WHITE_LEVEL)
         return corrected.astype(raw.dtype), applied, neutral, black
 
-    def _destination(self, setup, subject: str) -> Path:
+    def _destination(self, setup, subject: str) -> tuple[Path, int, object]:
+        """The path, its sequence number and the moment -- all three, because
+        the file's own metadata should say which capture it is and when."""
         when = datetime.now()
         # Sequence comes from what is on disk, so it survives a crash, a manual
         # file move, and two copies of the app running at once.
         folder = self._settings.resolve(setup=setup, seq=1, subject=subject,
                                         when=when).parent
         seq = next_sequence(folder, self._settings.filename_pattern)
-        return self._settings.resolve(setup=setup, seq=seq, subject=subject,
-                                      when=when)
+        return (self._settings.resolve(setup=setup, seq=seq, subject=subject,
+                                       when=when), seq, when)
+
+
+def _fingerprint(raw) -> str:
+    """A stable identity for the pixels.
+
+    Hashes a strided sample rather than forty megabytes: two captures of the
+    same field differ in noise everywhere, so a sample is as decisive as the
+    whole and does not cost a second per file. This tells a renamed copy from
+    a genuinely different frame, which is what EXIF ImageUniqueID is for.
+    """
+    import hashlib
+    a = raw[::16, ::16]
+    h = hashlib.md5(np.ascontiguousarray(a).tobytes())
+    h.update(str(raw.shape).encode())
+    return h.hexdigest()
 
 
 def _version() -> str:

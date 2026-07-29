@@ -59,13 +59,41 @@ class CaptureMetadata:
     #: diffraction limit at the pixel. Seeing f/27 in a raw editor is the
     #: honest explanation for why more magnification stops adding detail.
     f_number: float | None = None
+    #: Sensor pixels per millimetre, for EXIF FocalPlaneX/YResolution.
+    #:
+    #: The most useful number in the file and the one we had been throwing
+    #: away: the SDK reports the pitch, and pitch over magnification is the
+    #: object-space scale. At 40x with 2.40 um pixels a capture samples the
+    #: slide every 0.060 um, and without this nothing in the file says how
+    #: big anything is.
+    focal_plane_per_mm: float | None = None
+    #: Free working distance in metres, for EXIF SubjectDistance. Literally
+    #: what the tag means: how far the front element is from the subject.
+    subject_distance_m: float | None = None
+    lens_make: str = ""
+    lens_serial: str = ""
+    #: Capture sequence within its folder, for EXIF ImageNumber.
+    image_number: int | None = None
+    #: Fractional part of the capture time. A timelapse at one frame a
+    #: second orders wrongly without it.
+    subsec: str = ""
+    #: EXIF LightSource. Every mode on this stand is the same halogen lamp,
+    #: so this is Tungsten and not a guess.
+    light_source: int | None = None
+    #: A stable identity for the pixels, so a file can be recognised after
+    #: being renamed, and two copies can be told apart from two captures.
+    unique_id: str = ""
+    artist: str = ""
+    copyright: str = ""
     description: str = ""             # human sentence
     comment: str = ""                 # structured key=value, machine-readable
     software: str = ""
 
     def __post_init__(self) -> None:
         for f in ("make", "model", "unique_camera_model", "serial",
-                  "lens_model", "description", "comment", "software"):
+                  "lens_model", "description", "comment", "software",
+                  "lens_make", "lens_serial", "artist", "copyright",
+                  "unique_id", "subsec"):
             object.__setattr__(self, f, ascii_safe(getattr(self, f)))
 
     def as_exif(self) -> dict:
@@ -89,9 +117,20 @@ class CaptureMetadata:
         return {k: v for k, v in out.items() if v not in ("", None)}
 
 
+#: EXIF LightSource: 3 is Tungsten. Every illumination mode on a classical
+#: stand is the same halogen lamp behind different optics -- darkfield and
+#: phase change the path, not the emitter -- so this is a fact rather than a
+#: default. LED and fluorescence stands would need their own values, which is
+#: why it hangs off the illumination mode rather than being hard-coded here.
+_LIGHT_SOURCE_TUNGSTEN = 3
+
+
 def from_setup(setup, *, exposure_us: int, gain_pct: int,
                subject: str = "", slide: str = "", calibration: str = "",
-               app_version: str = "") -> CaptureMetadata:
+               app_version: str = "", pixel_um: float | None = None,
+               sequence: int | None = None, when=None,
+               artist: str = "", copyright: str = "",
+               unique_id: str = "") -> CaptureMetadata:
     """Build metadata from the live setup."""
     cam, scope = setup.camera, setup.scope
     obj = scope.turret.objective
@@ -136,12 +175,32 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
             # reciprocal of twice that.
             fnum = total / (2.0 * obj.na)
 
+    # Sensor scale. EXIF wants pixels per unit rather than a pitch, and the
+    # unit that keeps the number readable for a 2.40 um pixel is the
+    # millimetre: 416.67 px/mm.
+    per_mm = (1000.0 / pixel_um) if pixel_um else None
+
+    subsec = ""
+    if when is not None:
+        subsec = f"{when.microsecond // 10000:02d}"
+
     return CaptureMetadata(
         model=cam.model or cam.name,
         unique_camera_model=cam.model,
         serial=cam.serial,
         # The objective, in the field a photographer reads as "lens".
         lens_model=obj.label if obj else "",
+        lens_make=obj.maker if obj else "",
+        lens_serial=obj.serial if obj else "",
+        subject_distance_m=((obj.working_distance_mm / 1000.0)
+                            if obj and obj.working_distance_mm else None),
+        focal_plane_per_mm=per_mm,
+        image_number=sequence,
+        subsec=subsec,
+        light_source=_LIGHT_SOURCE_TUNGSTEN,
+        unique_id=unique_id,
+        artist=artist,
+        copyright=copyright,
         exposure_seconds=exposure_us / 1e6,
         # Gain is a multiplier on an already-collected signal, which is exactly
         # what ISO describes. 100% gain reads as ISO 100.

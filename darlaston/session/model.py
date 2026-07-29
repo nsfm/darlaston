@@ -69,6 +69,16 @@ class Objective:
     na: float | None = None
     kind: str = ""               # "Planapo", "Achromat", ...
     immersion: str = ""          # "", "oil", "water", "glycerol"
+    #: Who made it. Goes into EXIF LensMake, because a raw developer treats
+    #: the objective as the lens and this is where it looks for the maker.
+    maker: str = ""              # "Carl Zeiss", "Leitz", ...
+    #: Engraved on most objectives, and the only way to tell two otherwise
+    #: identical ones apart in an archive.
+    serial: str = ""
+    #: Free working distance in millimetres. This is EXIF SubjectDistance,
+    #: and it is the literal truth: the distance from the front element to
+    #: the thing being photographed.
+    working_distance_mm: float | None = None
 
     @property
     def label(self) -> str:
@@ -170,6 +180,12 @@ class ScopeProfile:
     #: tube *lens* focal length takes the same place (165 Zeiss, 200 Nikon
     #: and Leica, 180 Olympus), so the field carries that instead.
     tube_length_mm: float = 160.0
+    #: Which way a darkening left edge means the turret index moved. Not
+    #: derivable -- it depends on how the turret is mounted and the order
+    #: the positions were entered -- so it is a property of the stand. A
+    #: stand where detection is consistently one position out has this
+    #: the wrong way round.
+    rotation_sign: int = 1
 
     @property
     def optovar_factor(self) -> float:

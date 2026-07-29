@@ -213,6 +213,25 @@ Ordered within each section by how much it would change what gets built.
       estimated for the preview even when the file itself carries no measured
       neutral, because a raw microscope field rendered flat is a green
       rectangle that tells the operator nothing.
+- [x] ~~**The full EXIF set.**~~ 76 tags now. The one that matters most is
+      `FocalPlaneXResolution` — the SDK reports a 2.40 µm pitch and we had
+      been discarding it, so nothing in the file said how big anything was.
+      Also: lens make/serial/specification, working distance as
+      SubjectDistance, ImageNumber, sub-second timestamps for timelapse
+      ordering, LightSource (Tungsten — every mode on this stand is the same
+      halogen lamp), a pixel fingerprint as ImageUniqueID, Artist and
+      Copyright, and the manual/no-flash/one-chip constants that stop a
+      reader guessing. Verified with exiv2, not by inspection.
+- [ ] **A caught mistake worth remembering.** EXIF and TIFF/EP both define
+      focal-plane resolution at *different* tag numbers (0xA20E vs 0x920E).
+      The TIFF/EP numbers produce structurally valid tags that exiv2 silently
+      skips — the scale metadata was in the file and unreadable. Any future
+      tag should be verified by reading it back with an outside tool, never
+      by checking the writer's own output.
+- [x] ~~**Photographer identity.**~~ Session → Photographer…, with a licence
+      picker because typing a CC string from memory is how it gets wrong.
+      Empty writes no tag: an unset copyright notice looks like a claim the
+      work is unowned.
 - [ ] **Confirm the system thumbnailer is happy.** The preview is in the
       right place and extracts correctly, but whether a given file manager
       picks it up depends on that thumbnailer. Nate to check.
@@ -269,9 +288,38 @@ Ordered within each section by how much it would change what gets built.
       computed **usable field fraction** that derives the crop radius instead
       of leaving it to judgement. Also settles AmScope adapter vs planar relay
       eyepiece with numbers.
-- [ ] **Turret auto-detection.** `live/turret.py` exists and is unproven
-      against real optics. Needs a magnification axis in the mock to test
-      properly, then real turret rotations.
+- [x] ~~**Turret auto-detection, wired.**~~ 6/6 single-step rotations
+      identified on the mock, with the measured field-of-view ratio inside
+      15% of truth rather than merely ranking the right answer first. Costs
+      1.1 ms a frame. A proposal bar appears over the live view and expires
+      after twenty seconds — doing nothing is a valid answer and means no,
+      because the objective keys every calibration lookup and being quietly
+      wrong would attach the wrong flat to everything after.
+      Four bugs found by testing it, all of which had been sitting unexercised:
+      `cv2.logPolar` was removed in OpenCV 4 (it is `warpPolar` with
+      `WARP_POLAR_LOG`, and its scale constant is defined differently); the
+      measured ratio and the expected one were reciprocals, so the comparison
+      could never have matched; the reference frame was captured *after*
+      darkening began, so the magnification was measured against a
+      third-occluded frame and came out threefold wrong; and agreement was
+      declared without checking the fit was good, so a badly measured ratio
+      that happened to rank correctly produced a confident corroboration out
+      of noise.
+- [ ] **Turret detection on real optics.** The mock's rotation is clean:
+      perfectly parcentric, uniform occlusion, no defocus on arrival. Real
+      objectives are none of those. Expect the magnification measurement to
+      be the fragile half — log-polar correlation assumes a shared centre,
+      and a badly parcentric turret breaks that assumption directly.
+- [ ] **Which way does the Zeiss turn?** `ScopeProfile.rotation_sign` exists
+      because the mapping from "the left edge darkened" to "the index went
+      up" depends on how the turret is mounted and the order positions were
+      entered. There is no way to derive it. If detection is consistently one
+      position out in the wrong direction, that field is the fix — and it
+      wants a UI, or better, a one-rotation calibration step.
+- [ ] **Empty vs capped slots, now testable.** The mock can occlude the field
+      on demand, so the two cases can finally be simulated: an empty slot
+      passes light and a capped one blocks it, which the darkness sweep reads
+      as opposite events.
 - [ ] Re-measure sensor dust after cleaning the C-mount adapter. Baseline is
       0.93% overall, 1.02% at fine scale, 57 features near the cover glass.
 

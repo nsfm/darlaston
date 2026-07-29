@@ -51,7 +51,31 @@ NEUTRAL_MATRIX = [[int(round(v * 10000)), 10000] for v in _XYZ_TO_SRGB]
 
 
 def _ratio(value: float) -> list[int]:
-    return [int(round(value * 10000)), 10000]
+    """A rational with enough denominator to survive the value.
+
+    A fixed 1/10000 is fine for an f-number and destroys a working distance:
+    0.6 mm is 0.0006 m, which rounds to 6/10000 and reads as "0.00 m" in
+    every viewer. The denominator scales with how small the number is, and
+    stays inside the unsigned 32 bits TIFF allows for both halves.
+    """
+    if value == 0:
+        return [0, 1]
+    magnitude = abs(value)
+    if magnitude >= 1000:
+        den = 100
+    elif magnitude >= 1:
+        den = 10000
+    elif magnitude >= 0.001:
+        den = 10_000_000
+    else:
+        den = 1_000_000_000
+    num = int(round(value * den))
+    # Trim the common factors of ten so the stored form is the tidiest one
+    # that still says the same thing.
+    while den > 1 and num % 10 == 0 and den % 10 == 0:
+        num //= 10
+        den //= 10
+    return [num, den]
 
 
 def grey_world_neutral(raw: np.ndarray) -> tuple[float, float, float]:
@@ -114,8 +138,71 @@ def _our_tags(w: DngWriter, black: int, white: int,
         w.add(T.F_NUMBER, T.RATIONAL, [_ratio(meta.f_number)], where="exif")
     if meta.lens_model:
         w.add(T.LENS_MODEL, T.ASCII, meta.lens_model, where="exif")
-    w.add(T.DATETIME_ORIGINAL, T.ASCII,
-          datetime.now().strftime("%Y:%m:%d %H:%M:%S"), where="exif")
+    if meta.lens_make:
+        w.add(T.LENS_MAKE, T.ASCII, meta.lens_make, where="exif")
+    if meta.lens_serial:
+        w.add(T.LENS_SERIAL, T.ASCII, meta.lens_serial, where="exif")
+    if meta.focal_length_mm and meta.f_number:
+        # A prime, so both ends of the zoom range are the same number. The
+        # tag is four rationals: min focal, max focal, min f, max f.
+        f, n = meta.focal_length_mm, meta.f_number
+        w.add(T.LENS_SPECIFICATION, T.RATIONAL,
+              [_ratio(f), _ratio(f), _ratio(n), _ratio(n)], where="exif")
+
+    # The scale of the thing. Pixels per millimetre at the sensor, which
+    # divided by magnification is how much slide one pixel covers.
+    if meta.focal_plane_per_mm:
+        # Written per centimetre with unit 3. Unit 4 (millimetre) exists and
+        # would take the number as it stands, but centimetre is the value
+        # every reader honours, and a scale nobody can read is not a scale.
+        per_cm = meta.focal_plane_per_mm * 10.0
+        w.add(T.FOCAL_PLANE_X_RES, T.RATIONAL, [_ratio(per_cm)], where="exif")
+        w.add(T.FOCAL_PLANE_Y_RES, T.RATIONAL, [_ratio(per_cm)], where="exif")
+        w.add(T.FOCAL_PLANE_RES_UNIT, T.SHORT, 3, where="exif")
+    if meta.subject_distance_m:
+        w.add(T.SUBJECT_DISTANCE, T.RATIONAL,
+              [_ratio(meta.subject_distance_m)], where="exif")
+    if meta.light_source:
+        w.add(T.LIGHT_SOURCE, T.SHORT, int(meta.light_source), where="exif")
+    if meta.image_number is not None:
+        # IFD0, not the Exif IFD: ImageNumber is TIFF/EP, and readers look
+        # for it beside Make and Model rather than beside ExposureTime.
+        w.add(T.IMAGE_NUMBER, T.LONG, int(meta.image_number))
+    if meta.unique_id:
+        w.add(T.IMAGE_UNIQUE_ID, T.ASCII, meta.unique_id, where="exif")
+
+    # Constants that are true of every capture this application makes, and
+    # each one stops a reader guessing. Auto-exposure and auto-white-balance
+    # are switched off deliberately -- they would make frames incomparable,
+    # which breaks stacking and mosaicking both -- so "manual" is a fact.
+    w.add(T.EXPOSURE_PROGRAM, T.SHORT, 1, where="exif")           # manual
+    w.add(T.EXPOSURE_MODE, T.SHORT, 1, where="exif")              # manual
+    w.add(T.WHITE_BALANCE_MODE, T.SHORT, 1, where="exif")         # manual
+    w.add(T.FLASH, T.SHORT, 0x20, where="exif")                   # none fitted
+    w.add(T.SENSING_METHOD, T.SHORT, 2, where="exif")             # one-chip
+    w.add(T.FILE_SOURCE, T.UNDEFINED, b"\x03", where="exif")      # DSC
+    w.add(T.SCENE_TYPE, T.UNDEFINED, b"\x01", where="exif")       # direct
+    w.add(T.CUSTOM_RENDERED, T.SHORT, 0, where="exif")            # normal
+    w.add(T.METERING_MODE, T.SHORT, 0, where="exif")              # unknown
+    if meta.iso:
+        # 0 none, 1 low gain up, 2 high gain up. Above 4x is "high" by any
+        # reading, and this is the field that warns a developer the noise
+        # floor is lifted.
+        w.add(T.GAIN_CONTROL, T.SHORT,
+              0 if meta.iso <= 100 else (1 if meta.iso < 400 else 2),
+              where="exif")
+
+    stamp = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
+    w.add(T.DATETIME_ORIGINAL, T.ASCII, stamp, where="exif")
+    w.add(T.DATETIME_DIGITIZED, T.ASCII, stamp, where="exif")
+    if meta.subsec:
+        # A timelapse at one frame a second orders wrongly without this.
+        w.add(T.SUBSEC_TIME_ORIGINAL, T.ASCII, meta.subsec, where="exif")
+        w.add(T.SUBSEC_TIME_DIGITIZED, T.ASCII, meta.subsec, where="exif")
+    if meta.artist:
+        w.add(T.ARTIST, T.ASCII, meta.artist)
+    if meta.copyright:
+        w.add(T.COPYRIGHT, T.ASCII, meta.copyright)
     if meta.comment:
         w.add(T.USER_COMMENT, T.UNDEFINED,
               _ASCII_PREFIX + meta.comment.encode("ascii", "ignore"),

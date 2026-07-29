@@ -83,6 +83,12 @@ class Settings:
     raw_format: str = "dng"          # dng | tiff
     keep_slices: bool = False        # Z-stack slices after the EDF is built
     sequence_resets_daily: bool = True
+    #: Written into every file as EXIF Artist and Copyright. Empty writes
+    #: neither -- an empty copyright notice is worse than none, because it
+    #: looks like a claim that the work is unowned. These matter the moment
+    #: a slide photograph is published, which for this field is often.
+    artist: str = ""
+    copyright: str = ""
 
     def __post_init__(self) -> None:
         if not self.capture_root:

@@ -93,6 +93,23 @@ class MockCamera(CameraBackend):
         #: focus coverage at all, because everything focuses at once.
         self.focus_tilt = 0.0
 
+        #: Objective magnification, and the magnification at which the frame
+        #: covers the whole available crop. Higher magnification narrows the
+        #: field of view by exactly the ratio, which is the signal turret
+        #: detection measures by log-polar correlation.
+        #:
+        #: The reference is the *lowest* objective on purpose, so every other
+        #: position zooms in. Zooming out would need a scene larger than the
+        #: sensor by the full magnification range, which is hundreds of
+        #: megabytes for a test fixture.
+        self.magnification = 10.0
+        self.mag_reference = 10.0
+        #: Turret occlusion, signed. Magnitude is the fraction of the frame
+        #: the rotating turret currently blocks; the sign is which edge it
+        #: swept in from, positive for the left. That direction is the other
+        #: half of what turret detection reads.
+        self.occlusion = 0.0
+
         # One RNG, reused. Constructing a generator per frame is pure waste.
         self._rng = np.random.default_rng()
 
@@ -290,7 +307,24 @@ class MockCamera(CameraBackend):
         small = self._small_scene
         sx = int(px * ratio) % small.shape[1]
         sy = int(py * ratio) % small.shape[0]
-        crop = self._wrap_crop_of(small, sy, sx, h, w)
+
+        # Magnification narrows the window into the scene by exactly its
+        # ratio to the reference, which is what a real turret rotation does
+        # to the field of view.
+        zoom = max(1.0, self.magnification / max(self.mag_reference, 1e-6))
+        cw = max(8, int(round(w / zoom)))
+        ch = max(8, int(round(h / zoom)))
+        # Centred on the same point of the slide at every magnification.
+        # Cropping from the corner instead would move the optical axis as the
+        # turret turns, and log-polar correlation -- which is how the
+        # magnification change gets measured -- assumes a shared centre. A
+        # real turret is parcentric to within a fraction of a field; cropping
+        # from the corner is not remotely.
+        cy = (sy + (h - ch) // 2) % small.shape[0]
+        cx = (sx + (w - cw) // 2) % small.shape[1]
+        crop = self._wrap_crop_of(small, cy, cx, ch, cw)
+        if (cw, ch) != (w, h):
+            crop = cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
         img = crop.astype(np.float32) / 255.0
         return self._defocus(img, ratio)
 
@@ -323,6 +357,18 @@ class MockCamera(CameraBackend):
         img *= self._scale_field(h, w)
         img += self._noise((h, w)) * (0.004 * np.sqrt(self._gain_pct / 100.0))
 
+        # The turret, mid-rotation: an opaque edge sweeping across the field.
+        # Not quite black, because a real turret leaks a little light around
+        # the bore and a detector that only works against pure black would
+        # not survive contact with glass.
+        if self.occlusion:
+            covered = int(w * min(abs(self.occlusion), 1.0))
+            if covered:
+                if self.occlusion > 0:
+                    img[:, :covered] *= 0.015
+                else:
+                    img[:, w - covered:] *= 0.015
+
         u8 = np.clip(img * 255.0, 0, 255).astype(np.uint8)
         buf[:, :, 0] = u8
         buf[:, :, 1] = u8
@@ -336,6 +382,25 @@ class MockCamera(CameraBackend):
                            * (self._exposure_us / 8330.0)
                            * (self._gain_pct / 100.0)).astype(np.float32)
         return self._scale
+
+    def rotate_turret(self, to_magnification: float, direction: int = 1,
+                      steps: int = 8):
+        """Yield the stages of a turret rotation, for tests and demos.
+
+        A real rotation is: the outgoing objective sweeps out of the light
+        path from one side, the field is dark for a moment, then the incoming
+        one sweeps in and the field of view has changed. Driving that by hand
+        in every test invites each one to simulate it slightly differently.
+        """
+        for k in range(1, steps + 1):
+            self.occlusion = direction * (k / steps)
+            yield "closing"
+        self.magnification = float(to_magnification)
+        for k in range(steps, 0, -1):
+            self.occlusion = direction * (k / steps)
+            yield "opening"
+        self.occlusion = 0.0
+        yield "open"
 
     def grab_raw(self, timeout_ms: int = 8000) -> Frame:
         """Full-resolution 12-bit frame, rendered natively rather than upscaled."""

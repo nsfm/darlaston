@@ -33,6 +33,7 @@ from .coverage import FocusCoverage
 from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
                     Region, measure, region_rect)
 from .tracker import StageTracker
+from .turret import TurretDetector, TurretEvent
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,10 @@ class LiveSignals:
     coverage_remaining: np.ndarray | None = None
     #: Complete means covered *and* no longer finding new structure.
     coverage_complete: bool = False
+    #: A proposal that the objective changed, or None. Never a decision:
+    #: a silent misdetection would poison every calibration lookup, so the
+    #: UI asks and the operator confirms.
+    turret_event: TurretEvent | None = None
     stats: dict = field(default_factory=dict)
 
 
@@ -113,6 +118,11 @@ class LivePipeline:
         self._custom: tuple[float, float, float, float] | None = None
         self._xy = StageTracker()
         self._confidence = 0.0
+        self._turret_det = TurretDetector()
+        # An opaque handle, set by the UI. The live pipeline deliberately
+        # does not import the session model -- it only passes this back to
+        # the detector, which duck-types it.
+        self._turret = None
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
         self._analysed = 0
@@ -171,6 +181,13 @@ class LivePipeline:
     def reset_focus_peak(self) -> None:
         with self._lock:
             self._trace.reset_peak()
+
+    def set_turret(self, turret, rotation_sign: int = 1) -> None:
+        """Tell the detector what positions exist. None disables detection."""
+        with self._lock:
+            self._turret = turret
+            if rotation_sign != self._turret_det._sign:
+                self._turret_det = TurretDetector(rotation_sign=rotation_sign)
 
     def reset_tracking(self) -> None:
         """New origin. Required when the objective changes -- magnification
@@ -344,6 +361,13 @@ class LivePipeline:
         self._still_for = 0 if moving else self._still_for + 1
         settled = self._still_for >= 8
 
+        # Turret watch. Cheap per frame -- a 256-square resize and a mean --
+        # and the expensive log-polar step only runs on the one frame where a
+        # rotation finishes.
+        turret_event = None
+        if self._turret is not None:
+            turret_event = self._turret_det.feed(gray, self._turret)
+
         if self._blank is None:
             from .blank import BlankDetector
             self._blank = BlankDetector()
@@ -405,6 +429,7 @@ class LivePipeline:
             coverage=coverage,
             coverage_remaining=coverage_remaining,
             coverage_complete=coverage_done,
+            turret_event=turret_event,
             stats={"analysed_fps": self._rate, "delivered": delivered,
                    "dropped": dropped, "exposure_us": frame.exposure_us,
                    "gain_pct": frame.gain_pct},

@@ -38,18 +38,26 @@ from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
 from .stitch_ui import StitchDialog
+from .photographer_ui import PhotographerDialog
+from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .widgets import FocusGroup, Histogram, LiveView
 
-#: Until the setup editor exists, a plausible stand so the chrome has something
-#: real to show. Replaced by the library as soon as a camera is recognised.
-_PROVISIONAL_SCOPE = ScopeProfile(
-    id="unconfigured", name="Microscope",
-    turret=Turret([Objective(10, 0.30), Objective(20, 0.50),
-                   Objective(40, 0.75), Objective(100, 1.30, immersion="oil")],
-                  current=2),
-    optovar=[1.0, 1.25, 1.6, 2.0], optovar_current=0)
+def _provisional_scope() -> ScopeProfile:
+    """A plausible stand, for a camera we have never seen on one.
+
+    Built fresh each time rather than shared. As a module-level constant it
+    was a mutable singleton that the setup editor wrote through, so the
+    placeholder quietly became whatever was last configured -- and, worse,
+    kept the id "unconfigured" while doing it.
+    """
+    return ScopeProfile(
+        id="unconfigured", name="Microscope",
+        turret=Turret([Objective(10, 0.30), Objective(20, 0.50),
+                       Objective(40, 0.75),
+                       Objective(100, 1.30, immersion="oil")], current=2),
+        optovar=[1.0, 1.25, 1.6, 2.0], optovar_current=0)
 
 
 class Bridge(QtCore.QObject):
@@ -127,6 +135,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # every name having to change when the third tool appears.
         instrument = self.toolbar.add_menu("Instrument")
         instrument.addAction("Microscope setup…", self._open_setup)
+        # Its own menu rather than a corner of Capture: attribution is the
+        # one part of a file's provenance the instrument cannot supply, and
+        # burying it is how photographs get published uncredited.
+        session = self.toolbar.add_menu("Session")
+        session.addAction("Photographer…", self._open_photographer)
         capture_menu = self.toolbar.add_menu("Capture")
         capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
@@ -176,6 +189,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_window.set_relative(0.04, 0.06)
         _fill(self.calib_window, self.calib_panel)
         self.calib_window.hide()
+
+        # Turret proposals appear over the image, where the operator's eyes
+        # already are when they have just turned the turret.
+        self.proposal = ProposalBar(self.view)
+        self.proposal.accepted.connect(self._accept_turret)
 
         self.view.installEventFilter(self)
         self.slidemap.show()
@@ -306,6 +324,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show):
             self.map_window.place(self.slidemap.preferred_size(self.view))
             self.calib_window.place((330, 190))
+            if self.proposal.isVisible():
+                self.proposal.place()
         return super().eventFilter(obj, event)
 
     # ---- session ---------------------------------------------------------
@@ -315,9 +335,16 @@ class MainWindow(QtWidgets.QMainWindow):
         info = status.info
         if info is not None and self.setup is None:
             profile = self.library.remember_camera(info.serial, info.model)
-            self.setup = Setup(camera=profile, scope=_PROVISIONAL_SCOPE,
+            # The stand this camera was last on, if we know it. Without this
+            # lookup the setup editor wrote to disk correctly and was then
+            # ignored on every subsequent launch -- a configured Zeiss
+            # reverting to a placeholder turret every time the app started.
+            scope = (self.library.scope_or_default(profile.last_scope)
+                     or _provisional_scope())
+            self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
             self.objective.set_turret(self.setup.scope.turret)
+            self.pipeline.set_turret(self.setup.scope.turret)
 
         self.strip.update_status(status, self.setup)
         self.strip.select_resolution(self.session.preview_resolution)
@@ -403,6 +430,44 @@ class MainWindow(QtWidgets.QMainWindow):
         # The scene scale changes with the mode, so tracked positions in the
         # old mode's pixels no longer measure anything.
         self.session.set_preview_resolution(int(index))
+        self.pipeline.reset_tracking()
+        self.slidemap.clear()
+        self.pipeline.reset_focus_peak()
+
+    def _on_turret_event(self, event) -> None:
+        """A rotation was detected. Say what we think and wait to be told."""
+        if self.setup is None:
+            return
+        turret = self.setup.scope.turret
+        index = event.suggested_index
+        if index is None or not (0 <= index < len(turret.positions)):
+            self.strip.set_note("objective changed — position unclear")
+            return
+        objective = turret.positions[index]
+        if objective is None:
+            return
+        # Even a corroborated reading is offered rather than applied. The
+        # objective keys every calibration lookup, so being quietly wrong
+        # here would attach the wrong flat to everything that followed.
+        certainty = ("direction and magnification agree" if event.agree
+                     else event.reason)
+        self.proposal.propose(f"Objective now {objective.label}?",
+                              f"{certainty} · {event.confidence * 100:.0f}% sure",
+                              index)
+
+    def _accept_turret(self, index: int) -> None:
+        if self.setup is None:
+            return
+        self.setup.scope.turret.current = int(index)
+        self.objective.set_turret(self.setup.scope.turret)
+        self._on_objective_changed()
+
+    def _on_objective_changed(self) -> None:
+        """Everything keyed on magnification is now stale."""
+        self.strip.update_status(self.session.status, self.setup)
+        self.opportunist.set_key(flat_key(self.setup, self.subject.slide_note))
+        self._refresh_calibration()
+        # Scale changed, so tracked positions no longer measure anything.
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
@@ -589,6 +654,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup = dialog.result_setup
             self.setup.illumination = self._illumination
             self.objective.set_turret(self.setup.scope.turret)
+            self.pipeline.set_turret(self.setup.scope.turret,
+                                     self.setup.scope.rotation_sign)
             self.strip.update_status(self.session.status, self.setup)
             # The optical stack changed, so anything banked for the old one is
             # no longer a flat for this one.
@@ -606,6 +673,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_window.place((330, 190))
         self.calib_window.show()
         self.calib_window.raise_()
+
+    def _open_photographer(self) -> None:
+        PhotographerDialog(self.settings, self).exec()
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self.setup, self)
@@ -707,6 +777,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_frame(s.preview, s.peaking)
         self.slidemap.update_live(s)
         self._last_preview = s.preview
+        if s.turret_event is not None:
+            self._on_turret_event(s.turret_event)
 
         # The instruments repaint at a third of the frame rate. A histogram
         # and a focus trace are read as trends, not as individual frames, and
