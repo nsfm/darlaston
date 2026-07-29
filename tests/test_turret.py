@@ -562,3 +562,72 @@ def test_the_constraint_rescues_a_confusable_pair():
     event = det._decide(None, turret, level_ratio=0.30, level=0.3,
                         signatures=signatures, learned=[True] * 4)
     assert event.suggested_index in (0, 2), "must pick a neighbour"
+
+
+def test_the_sweep_direction_is_read_from_the_first_dimming_half():
+    """An occlusion crosses the whole frame: the leading half darkens, and
+    then the trailing half darkens as the edge continues. Both give a large
+    differential and the second is often marginally larger, so keeping the
+    strongest reads the sweep backwards."""
+    det = TurretDetector()
+    lit = np.full((256, 256), 140.0, np.float32)
+    det._observe_sweep(lit)
+
+    # Left goes first.
+    step1 = lit.copy()
+    step1[:, :128] = 40.0
+    det._observe_sweep(step1)
+    assert det._sweep_side == -1
+
+    # Then the right follows, more strongly. The reading must not flip.
+    step2 = step1.copy()
+    step2[:, 128:] = 2.0
+    det._observe_sweep(step2)
+    assert det._sweep_side == -1, "the first half to darken is the answer"
+
+
+def test_uneven_illumination_does_not_bias_the_direction():
+    """Reading which half is *darker* is biased by whatever the illumination
+    already does. Reading which half *fell more* is not, because the standing
+    unevenness sits in both frames and cancels.
+
+    The case that separates them: a field already much brighter on the left,
+    with the occlusion entering from that same left side. Early in the sweep
+    the left has darkened but is still the brighter half in absolute terms,
+    so the absolute reading names the wrong side while the differential
+    names the right one.
+    """
+    det = TurretDetector()
+    lopsided = np.empty((256, 256), np.float32)
+    lopsided[:, :128] = 200.0
+    lopsided[:, 128:] = 80.0
+    det._observe_sweep(lopsided)
+
+    entering_left = lopsided.copy()
+    entering_left[:, :30] = 5.0            # a narrow bite out of the left
+    det._observe_sweep(entering_left)
+
+    assert det._sweep_side == -1, "the left fell; the left is the answer"
+    # The absolute test still sees the left as the brighter half and says
+    # the opposite, which is why it is only a fallback.
+    assert TurretDetector._which_side(entering_left) == +1
+
+
+def test_the_objective_position_is_written_on_every_change(tmp_path):
+    """The schema always carried it; nothing reliably wrote it, so stepping
+    the objective by hand did not survive a restart."""
+    from darlaston.session.model import CameraProfile, Library, ScopeProfile
+
+    path = tmp_path / "library.json"
+    lib = Library(path)
+    scope = ScopeProfile(id="z", name="Zeiss", turret=_turret(0))
+    lib.scopes["z"] = scope
+    lib.cameras["CAM"] = CameraProfile(serial="CAM", last_scope="z")
+
+    scope.turret.current = 3
+    lib.scopes["z"] = scope
+    lib.save()
+
+    again = Library(path)
+    assert again.scope_or_default("z").turret.current == 3, \
+        "the last objective is the best guess for the next launch"

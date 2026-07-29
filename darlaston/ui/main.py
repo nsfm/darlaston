@@ -587,8 +587,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.strip.set_note(
             "turret direction learned — proposals should be right from now on")
 
+    def _remember_objective(self) -> None:
+        """Persist which objective is in the light path.
+
+        The schema always carried it; nothing reliably wrote it. Position
+        changes only reached disk when something *else* happened to save --
+        a brightness signature being learned, or the handedness being
+        settled -- so stepping the objective by hand usually did not stick,
+        and the next launch came back on whatever was last written. It is
+        the best guess there is for the starting state, so it is worth a
+        write every time it moves.
+        """
+        if self.setup is None:
+            return
+        self.library.scopes[self.setup.scope.id] = self.setup.scope
+        self.library.cameras[self.setup.camera.serial] = self.setup.camera
+        self.library.bind(self.setup.camera.serial, self.setup.scope.id)
+        self.library.save()
+
     def _on_objective_changed(self) -> None:
         """Everything keyed on magnification is now stale."""
+        self._remember_objective()
         self.strip.update_status(self.session.status, self.setup)
         self.opportunist.set_key(flat_key(self.setup, self.subject.slide_note))
         self._refresh_calibration()

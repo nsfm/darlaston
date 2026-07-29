@@ -157,6 +157,9 @@ class TurretDetector:
         self._learned = None
         self._entering: int | None = None
         self._raw_direction: int | None = None
+        self._halves: tuple[float, float] | None = None
+        self._sweep_side: int | None = None
+        self._sweep_strength = 0.0
 
     # ---- entry point -----------------------------------------------------
 
@@ -186,6 +189,8 @@ class TurretDetector:
         small = cv2.resize(gray, (self._size, self._size),
                            interpolation=cv2.INTER_AREA).astype(np.float32)
         mean = float(small.mean())
+        # Every frame, in every phase: the sweep can be over in two.
+        self._observe_sweep(small)
 
         if self._phase is Phase.STABLE:
             return self._when_stable(small, mean)
@@ -212,6 +217,10 @@ class TurretDetector:
             self._reference = small.copy()
             self._pre_level = mean / self._scale
             self._entering = None
+            # Fully lit and steady: whatever sweep was recorded belonged to
+            # something that did not become a rotation.
+            self._sweep_side = None
+            self._sweep_strength = 0.0
         elif mean < self._stable_mean * 0.75:
             # Already dimming but not yet dark. Read the asymmetry here too.
             #
@@ -239,10 +248,55 @@ class TurretDetector:
             self._dark_levels = []
             # Carry any reading taken on the way in, so a sweep too fast to
             # sample mid-darkness still has a direction.
-            if self._entering:
-                self._raw_direction = self._entering
-                self._direction = self._entering * self._sign
+            side = self._sweep_side or self._entering
+            if side:
+                self._raw_direction = side
+                self._direction = side * self._sign
         return None
+
+    def _observe_sweep(self, small) -> None:
+        """Record which half of the frame is darkening fastest.
+
+        Reading which half is *darker* is the obvious test and a poor one.
+        It is biased by whatever the illumination already does -- a field
+        that is brighter on one side reads as though the occlusion always
+        came from the other -- and it needs the edge to have travelled far
+        enough to make a large absolute difference, which at 24 fps and a
+        sweep of two or three frames it may never do.
+
+        Which half *fell more since the last frame* has neither problem. Any
+        standing unevenness cancels, because it is present in both frames,
+        and a flat edge crossing the field produces a clear differential from
+        its first frame onward. The strongest observation of the transition
+        is kept, so one good frame is enough.
+        """
+        half = small.shape[1] // 2
+        left = float(small[:, :half].mean())
+        right = float(small[:, half:].mean())
+        previous = self._halves
+        self._halves = (left, right)
+        if previous is None:
+            return
+        drop_left = previous[0] - left
+        drop_right = previous[1] - right
+        total = max(previous[0] + previous[1], 1e-6)
+        # Only a real dimming says anything; noise around a steady level does
+        # not, and neither does the field getting brighter.
+        if (drop_left + drop_right) / total < 0.02:
+            return
+        # The *first* asymmetric dimming, not the strongest.
+        #
+        # An occlusion crosses the whole frame: the leading half darkens,
+        # and then once it is dark the trailing half darkens as the edge
+        # continues. Both produce a large differential and the second is
+        # often marginally the larger, so keeping the strongest reads the
+        # sweep backwards -- measured, and the reason six tests failed the
+        # moment this was tried. Which side went first is the question, so
+        # the first answer is kept and not overwritten.
+        strength = abs(drop_left - drop_right) / total
+        if self._sweep_side is None and strength > 0.03:
+            self._sweep_strength = strength
+            self._sweep_side = -1 if drop_left > drop_right else +1
 
     @staticmethod
     def _has_image(small) -> bool:
@@ -297,7 +351,7 @@ class TurretDetector:
         if self._direction is None:
             # Raw reading: the darker half is the side the occlusion came
             # from. The stand's sign turns that into an index direction.
-            side = self._which_side(small)
+            side = self._sweep_side or self._which_side(small)
             if side:
                 self._raw_direction = side
                 self._direction = side * self._sign
@@ -350,6 +404,8 @@ class TurretDetector:
         self._phase = Phase.STABLE
         self._stable_mean = mean
         self._reference = small.copy()
+        self._sweep_side = None
+        self._sweep_strength = 0.0
         return event
 
     # ---- measurement -----------------------------------------------------
