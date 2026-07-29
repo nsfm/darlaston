@@ -40,6 +40,7 @@ import numpy as np
 
 from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
+from .errors import is_retryable
 
 _toupcam = None
 
@@ -307,15 +308,55 @@ class ToupcamBackend(CameraBackend):
     def grab_raw(self, timeout_ms: int = 8000) -> Frame:
         """One full-resolution 12-bit frame, canonical orientation.
 
-        Stops the preview stream, reconfigures, grabs, and leaves the caller to
-        restart streaming -- the SDK will not accept mode changes while running.
+        Stops the preview stream, reconfigures, grabs, and restores the
+        preview -- **whatever happens**. The failure this structure exists to
+        prevent: a throw inside the pull left the camera stopped in raw
+        trigger mode with the preview never restarted, so one timeout on the
+        tenth tile of a mosaic killed capture for the rest of the session. The
+        restore is in a `finally`, and the mode is re-stated in full by
+        `start_stream`, so no error path can leave the camera half-configured.
+
+        A transient failure buys one retry. The capture path never drops
+        (ARCHITECTURE.md §3.1), and a timeout on a link that has worked nine
+        times is worth asking twice before troubling the operator.
         """
-        t, cam = self._t, self._cam
         was_streaming = self._pool is not None
         on_frame = self._on_frame
         if was_streaming:
             self.stop_stream()
+        try:
+            try:
+                return self._pull_full(timeout_ms)
+            except Exception as exc:
+                if not is_retryable(exc):
+                    raise
+                # Put the camera down properly before asking again: whatever
+                # state the failed attempt left it in, a fresh pull must
+                # start from stopped.
+                self._quiesce()
+                return self._pull_full(timeout_ms)
+        finally:
+            if was_streaming and on_frame is not None:
+                self._quiesce()
+                try:
+                    self.start_stream(on_frame)
+                except Exception:
+                    # Reported by the session's own health checks; raising
+                    # here would mask the original capture error.
+                    import traceback
+                    traceback.print_exc()
 
+    def _quiesce(self) -> None:
+        """Stop the camera, ignoring the state it was in. Idempotent."""
+        try:
+            self._cam.Stop()
+        except Exception:
+            pass
+
+    def _pull_full(self, timeout_ms: int) -> Frame:
+        """The pull itself. Assumes the camera is stopped; leaves it stopped
+        on success and in any state at all on failure -- the caller restores."""
+        t, cam = self._t, self._cam
         cam.put_eSize(0)
         w, h = cam.get_Size()
         cam.put_Option(t.TOUPCAM_OPTION_RAW, 1)
@@ -340,9 +381,6 @@ class ToupcamBackend(CameraBackend):
         buf = pool.acquire()
         buf[:] = canonical
         self._seq += 1
-
-        if was_streaming and on_frame is not None:
-            self.start_stream(on_frame)
 
         return Frame(data=buf, seq=self._seq, timestamp=time.time(),
                      exposure_us=self._exposure_us, gain_pct=self._gain_pct,

@@ -49,6 +49,20 @@ Ordered within each section by how much it would change what gets built.
       oppositely for visual detection — an empty slot passes light, a capped
       one blocks it — so the darkness sweep would read them as different
       events entirely.
+- [x] ~~**SDK errors were unreadable and left the camera broken.**~~ Found on
+      real hardware: the tenth tile of a mosaic failed and showed only
+      "-2147417825". The vendor's Linux exception carries no message at all,
+      just the signed HRESULT as its sole argument — and our matcher looked
+      for the hex string, which could never match. Codes are now decoded from
+      `.hr` into advice. Worse than the message: a throw inside `grab_raw`
+      skipped `Stop()` and the preview restart, leaving the camera stopped in
+      raw trigger mode, so *every later capture that session would also fail*.
+      Restore is now in a `finally`, and transient codes (timeout, pending)
+      buy exactly one retry.
+- [ ] **Which error was the tenth tile?** Unknown — the old message threw the
+      code away. Next occurrence will name it. If it was E_TIMEOUT the retry
+      may now paper over it silently; if it repeats, suspect the cable or a
+      hub before anything in the app.
 - [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a
       guess rather than a mistake, but a matrix measured from a colour target
       would be better than assuming sRGB primaries.
@@ -58,20 +72,96 @@ Ordered within each section by how much it would change what gets built.
       denominator, a meter, and an overlay showing *where* to keep racking.
       Verified against a synthetic tilted focal plane. Still needs trying on a
       real thick subject.
+- [x] ~~**Stage tracking and the slide map.**~~ The image is the encoder:
+      per-frame phase-correlation offsets integrate into a position, thumbnails
+      bank passively at their tracked positions while hunting, pins mark points
+      of interest with a fields-and-compass readout for the return trip. The
+      foundation for mosaic anchoring, hold-still, and Z auto-trigger.
+      Verified end to end against the mock stage (sign, scale, gating).
+- [ ] **Tracker on real glass.** The confidence gate (0.10) and the hold-on-
+      blank behaviour are tuned against the mock; darkfield and phase will
+      stress both differently. Also worth measuring whether static overlays
+      (vignette, sensor-window dust) bias the offsets on real optics — on the
+      mock they measurably do not, so a high-pass prefilter was tried and
+      reverted rather than shipped on theory.
+- [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept
+      is wired; the objective *stepper* and future turret auto-detection are
+      not. When magnification becomes known per objective, positions could be
+      rescaled instead of discarded.
 - [ ] **Z-stacks.** Movement detection, settle, auto-trigger. Depends on
       coverage to know when a sweep is done.
-- [ ] **"Hold still" during a capture.** A full-resolution pull takes over a
-      second, and the operator has no reason to know that — carrying on racking
-      mid-shot smears the slice. Needs an unmissable state during the exposure,
-      and probably a discard-and-retry if motion is detected while it runs.
-- [ ] **Mosaic.** Overview anchoring, minimap, coverage, undo-last-tile.
+- [x] ~~**"Hold still" during a capture.**~~ A banner over the frozen preview
+      for exactly the window where motion does damage, and a measured verdict
+      afterwards: the tracker's position before the pull vs the first
+      correlation across the preview gap. Moved shots stay on disk and offer
+      discard-and-reshoot, with Keep as the default button. The guard only
+      arms above 0.5 correlation confidence (measured: structure ≥ 0.85,
+      featureless ≤ 0.3) so a blank field is never falsely accused. End to
+      end on the mock: a mid-exposure crank of 451.3 px read as 451.1.
+- [x] ~~**Mosaic capture.**~~ Toggle on the map panel; every capture becomes
+      `tile_NNN.dng` in a session folder with `manifest.json` rewritten after
+      each change (a mosaic interrupted at tile 23 is still a mosaic). Tiles
+      paint brass-outlined on the map at their tracked positions; the status
+      line reads out overlap with the nearest tile (steer for 15–25%, green
+      when there); undo-last-tile deletes file and record. Positions recorded
+      as registration *constraints*, dead-reckoned — measured 0.15% against
+      the mock's commanded motion. A discarded moved shot never becomes a
+      tile. `MosaicSession.load()` reopens an interrupted session.
+- [x] ~~**Mosaic stitch, first light.**~~ `process/stitch.py`: minimal reader
+      for our own DNGs (60 lines, refuses anything we did not write),
+      registration by phase correlation on overlap strips *constrained* to a
+      window around manifest positions (it never searches — that is why
+      panorama software fails on diatoms and this cannot), global least
+      squares anchored at tile 0, raised-cosine composite to a linear DNG.
+      Capture-menu action stitches any session folder off the UI thread.
+      Proven on the mock: ±45 raw px of injected manifest drift, recovered
+      within 3 px; five tiles, 6/6 seams refined, seams invisible.
+- [x] ~~**First light on real glass.**~~ Nine brightfield tiles at 40×/0.75,
+      hand-laid: 11/11 seams refined, 3.8 s, positions from a 60-field
+      hand-cranked map. Tracking holds at a modest pace and loses lock when
+      cranked fast — expected, and the map shows it rather than lying.
+- [x] ~~**Composite-time flat from the tiles themselves.**~~ Per-tile median
+      normalisation, across-tile median, then a robust degree-4 surface fit.
+      The fit is not decoration: a plain median grows *holes* where subject
+      covers a pixel in more than half the tiles (measured: 1.8% of pixels),
+      and dividing by a hole puts a bright blob in the composite — a surface
+      cannot do that. Recovers a known 25% vignette to 0.014 sparse / 0.024
+      dense, where the plain median gave 0.044 / 0.365. On real tiles that
+      already had `calibration=flat+wb` applied it still found 18.7% residual
+      shading and cut mean seam mismatch 10.9% → 6.0%.
+- [ ] **Why does a capture-time flat leave 18.7%?** The tiles carried
+      `flat+wb` and still showed strong residual shading. Either the stored
+      flat was built under different lamp/condenser state, or the flat path
+      is not doing what it claims. Measure a fresh flat immediately before a
+      mosaic and re-run the comparison — this is the highest-value open
+      question, because it may indicate a real defect in the calibration
+      path rather than drift.
+- [ ] **Stitch, the rest.** Full-resolution composite streamed band-by-band
+      (current default renders at 0.25 scale into RAM; fine to ~10 tiles,
+      not at 40). Verify the GBRG→OpenCV demosaic code choice on real glass
+      (`_DEMOSAIC` in stitch.py — the mock is grey and cannot catch a channel
+      swap). Real darkfield tiles are the acid test. Undo does not yet
+      re-anchor if tile 1 is undone (edge case: undoing the origin tile).
 
 ## Capture features
 
-- [ ] **Timelapse.** Interval capture. Interacts with calibration (dark drift
-      over a long run) and with disk budgeting.
-- [ ] **Frame averaging**, hero shots only, on its own control — √N SNR, and
-      the reason this sensor can beat the A6700 despite smaller pixels.
+- [x] ~~**Timelapse.**~~ Capture menu → dialog (interval, count or
+      until-stopped, GB-and-duration estimate before starting). Each shot is
+      an ordinary StillCapture — same calibration, metadata, sequence and
+      moved verdict. Start-to-start scheduling so the run does not drift; an
+      overrun fires immediately rather than skipping. Status strip carries
+      progress, GB written, free space, and a dark-gone-stale warning past
+      eight hours. The moved-shot dialog is suppressed during a run — an
+      unattended timelapse must never park behind a modal question.
+      Composes with averaging (each slot can be a burst).
+- [x] ~~**Frame averaging**~~, on its own control beside the shutter (— / ×4 /
+      ×16, not persisted: a hero shot is a decision, not a mode). The mean is
+      scaled ×16 into 16-bit with the white level tag raised to match, so the
+      sub-LSB precision the burst paid for survives the file. The hold-still
+      guard spans the whole burst; the shutter counts frames so sixteen
+      exposures never look like a hang. Averaging arithmetic verified end to
+      end through the written DNG. Still to check on real glass: that
+      darktable honours the 65520 white level (it should — it is just a tag).
 - [ ] **Inverted brightfield** native in the live view. Display and export
       transform only; the raw stays linear positive.
 - [ ] Optovar position in the UI, feeding total magnification and metadata.

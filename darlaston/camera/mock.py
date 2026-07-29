@@ -179,11 +179,25 @@ class MockCamera(CameraBackend):
             time.sleep(max(0.0, interval - (time.perf_counter() - t0)))
 
     def _noise(self, shape: tuple[int, int]) -> np.ndarray:
+        """Read noise, uncorrelated between consecutive frames.
+
+        Several pre-generated fields cycled per frame, plus a random crop.
+        One field alone is not noise to a tracker: the same texture at a
+        randomly jumped offset every frame is a *trackable pattern*, and it
+        gave phase correlation a confident lock on a featureless scene that
+        real per-readout noise could never provide. Generating fresh noise
+        each frame is the honest thing and costs ~25 ms; four cycled fields
+        cost the memory of four and the honesty of none of it matters to
+        consecutive-frame correlation, which is all the tracker measures.
+        """
         h, w = shape
-        field = getattr(self, "_noise_field", None)
-        if field is None or field.shape[0] < h + 64 or field.shape[1] < w + 64:
-            field = self._rng.standard_normal((h + 64, w + 64)).astype(np.float32)
-            self._noise_field = field
+        fields = getattr(self, "_noise_fields", None)
+        if fields is None or fields[0].shape[0] < h + 64 \
+                or fields[0].shape[1] < w + 64:
+            fields = [self._rng.standard_normal((h + 64, w + 64))
+                      .astype(np.float32) for _ in range(4)]
+            self._noise_fields = fields
+        field = fields[self._seq % len(fields)]
         dy = int(self._rng.integers(0, 64))
         dx = int(self._rng.integers(0, 64))
         return field[dy:dy + h, dx:dx + w]
@@ -237,9 +251,13 @@ class MockCamera(CameraBackend):
         """
         full = _RESOLUTIONS[0]
         # Stage position selects a window into the scene, in sensor pixels.
-        px = int(self.stage_xy[0] / full.pixel_um) % (self._scene.shape[1] - full.width)
-        py = int(self.stage_xy[1] / full.pixel_um) % (self._scene.shape[0] - full.height)
-        view = self._scene[py:py + full.height, px:px + full.width]
+        # The scene is treated as periodic: the window wraps rather than
+        # clamping, so the stage can travel indefinitely in any direction --
+        # which slide navigation and mosaic work actually exercise, and which
+        # a crop that teleports at the canvas edge cannot stand in for.
+        px = int(self.stage_xy[0] / full.pixel_um) % self._scene.shape[1]
+        py = int(self.stage_xy[1] / full.pixel_um) % self._scene.shape[0]
+        view = self._wrap_crop(py, px, full.height, full.width)
 
         native = (w, h) == (full.width, full.height)
 
@@ -263,6 +281,17 @@ class MockCamera(CameraBackend):
             self._crop = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
         img = self._crop.astype(np.float32) / 255.0
         return self._defocus(img, w / full.width)
+
+    def _wrap_crop(self, y0: int, x0: int, h: int, w: int) -> np.ndarray:
+        """Window into the scene with wraparound. Zero-copy when the window
+        does not cross an edge, which is most frames."""
+        s = self._scene
+        sh, sw = s.shape
+        rows = (s[y0:y0 + h] if y0 + h <= sh
+                else np.concatenate((s[y0:], s[:y0 + h - sh]), axis=0))
+        return (rows[:, x0:x0 + w] if x0 + w <= sw
+                else np.concatenate((rows[:, x0:], rows[:, :x0 + w - sw]),
+                                    axis=1))
 
     def _render_into(self, buf: np.ndarray, res: Resolution) -> None:
         h, w = res.height, res.width

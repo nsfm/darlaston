@@ -18,6 +18,7 @@ boundary is not present-day speed; it is optionality.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from .cell import LatestFrame
 from .coverage import FocusCoverage
 from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
                     Region, measure, region_rect)
+from .tracker import StageTracker
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,14 @@ class LiveSignals:
     settled: bool = False
     xy_offset: tuple[float, float] | None = None
     xy_confidence: float = 0.0
+    #: Integrated view position over the slide, in preview pixels, origin
+    #: where tracking began. None until the tracker first locks. Navigation
+    #: quality only: drift accumulates, blank glass is a gap -- the mosaic
+    #: path uses this as a constraint for registration, never as registration.
+    stage_pos: tuple[float, float] | None = None
+    #: Did this frame's offset actually integrate? False over featureless
+    #: ground, where the position is held rather than trusted.
+    stage_tracking: bool = False
     peaking: np.ndarray | None = None
     #: Normalised (x, y, w, h) of the region the metric was taken from, so the
     #: view can show what is actually being measured.
@@ -101,9 +111,12 @@ class LivePipeline:
         self._coverage = FocusCoverage()
         self._sweeping = False
         self._custom: tuple[float, float, float, float] | None = None
+        self._xy = StageTracker()
+        self._confidence = 0.0
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
         self._analysed = 0
+        self._tick = threading.Event()
         self._t_last = time.perf_counter()
         self._rate = 0.0
 
@@ -158,6 +171,70 @@ class LivePipeline:
     def reset_focus_peak(self) -> None:
         with self._lock:
             self._trace.reset_peak()
+
+    def reset_tracking(self) -> None:
+        """New origin. Required when the objective changes -- magnification
+        changes the pixels-per-micron scale and old positions become lies."""
+        with self._lock:
+            self._xy.reset()
+
+    # ---- the hold-still guard --------------------------------------------
+    #
+    # A full-resolution pull freezes the preview for over a second, and any
+    # cranking during it smears the frame invisibly. The tracker's previous
+    # frame survives the gap, so the first analysis after the stream resumes
+    # correlates straight across it -- displacement across the gap *is* the
+    # motion during the shot.
+
+    #: The guard needs a better lock than navigation does. Measured on the
+    #: mock: structured scenes correlate at 0.85+, featureless ones under 0.3
+    #: -- and below that line the integrated position is a noise walk that
+    #: would accuse a still stage of moving.
+    GUARD_CONFIDENCE = 0.5
+
+    def stage_position(self) -> tuple[float, float] | None:
+        """The tracker's current position, lock or no lock. Mosaic tiles want
+        a position even when it is only navigation-grade -- it is a seed for
+        registration, and a rough seed beats none."""
+        with self._lock:
+            return self._xy.position
+
+    def guard_begin(self) -> dict | None:
+        """Snapshot for a capture about to start. None when the tracker has no
+        quality lock on the current scene (a blank field, say) -- a guard that
+        cannot measure must stay silent rather than guess."""
+        with self._lock:
+            if (not self._xy.tracking or self._xy.position is None
+                    or self._confidence < self.GUARD_CONFIDENCE):
+                return None
+            return {"pos": self._xy.position, "analysed": self._analysed,
+                    "gated": self._xy.gated}
+
+    def guard_measure(self, token: dict, timeout: float = 3.0) -> float | None:
+        """How far did the view move since guard_begin, in preview pixels?
+
+        Waits for two fresh analyses so the measurement spans the capture gap.
+        Returns None when it cannot say (no frames arrived, or the scene lost
+        lock for reasons that are not motion), and math.inf when the view
+        changed by more than phase correlation can measure -- which for a
+        capture is the strongest possible yes.
+        """
+        deadline = time.perf_counter() + timeout
+        target = token["analysed"] + 2
+        while self._analysed < target:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return None
+            self._tick.clear()
+            self._tick.wait(min(0.25, remaining))
+        with self._lock:
+            if self._xy.gated > token["gated"]:
+                return math.inf
+            if not self._xy.tracking or self._xy.position is None:
+                return None
+            bx, by = token["pos"]
+            x, y = self._xy.position
+            return math.hypot(x - bx, y - by)
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -241,6 +318,10 @@ class LivePipeline:
         small = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_AREA)
         small_f = small.astype(np.float32)
         offset, confidence = self._track(small_f, gray.shape)
+        with self._lock:
+            stage_pos, stage_tracking = self._xy.advance(
+                offset, confidence, gray.shape)
+            self._confidence = confidence
 
         # Stillness, from the tracker we already run. Two pixels of drift is
         # hand tremor on a manual stage, not movement.
@@ -275,6 +356,7 @@ class LivePipeline:
                 coverage_remaining = coverage_acc.overlay((rh, rw))
 
         self._analysed += 1
+        self._tick.set()
         now = time.perf_counter()
         dt = now - self._t_last
         self._t_last = now
@@ -297,6 +379,8 @@ class LivePipeline:
             focus_trace=trace.normalised,
             xy_offset=offset,
             xy_confidence=confidence,
+            stage_pos=stage_pos,
+            stage_tracking=stage_tracking,
             peaking=peak_map,
             focus_rect=norm_rect,
             coverage=coverage,

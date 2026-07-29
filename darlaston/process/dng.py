@@ -65,7 +65,8 @@ def _ratio(value: float) -> list[int]:
 
 
 def _base_tags(w: int, h: int, black: int, meta: CaptureMetadata | None,
-               neutral: tuple[float, float, float]) -> DNGTags:
+               neutral: tuple[float, float, float],
+               white: int = WHITE_LEVEL) -> DNGTags:
     t = DNGTags()
     t.set(Tag.ImageWidth, w)
     t.set(Tag.ImageLength, h)
@@ -73,7 +74,7 @@ def _base_tags(w: int, h: int, black: int, meta: CaptureMetadata | None,
     t.set(Tag.TileLength, h)
     t.set(Tag.Orientation, Orientation.Horizontal)
     t.set(Tag.BlackLevel, black)
-    t.set(Tag.WhiteLevel, WHITE_LEVEL)
+    t.set(Tag.WhiteLevel, white)
     t.set(Tag.ColorMatrix1, NEUTRAL_MATRIX)
     t.set(Tag.CalibrationIlluminant1, CalibrationIlluminant.Standard_Light_A)
     t.set(Tag.AsShotNeutral, [_ratio(neutral[0]), _ratio(neutral[1]),
@@ -123,12 +124,20 @@ def grey_world_neutral(raw: np.ndarray) -> tuple[float, float, float]:
 
 def write_bayer(path: Path, raw: np.ndarray, *, pattern: str = "GBRG",
                 black: int = 0, neutral: tuple[float, float, float] | None = None,
-                meta: CaptureMetadata | None = None) -> Path:
-    """One sensor frame, mosaic intact. `raw` must already be canonical."""
+                meta: CaptureMetadata | None = None,
+                white: int = WHITE_LEVEL) -> Path:
+    """One sensor frame, mosaic intact. `raw` must already be canonical.
+
+    `white` exists for averaged captures: the mean of N frames carries real
+    precision below one 12-bit LSB, and scaling it up rather than rounding it
+    back to 12 bits is the difference between keeping the SNR that was just
+    paid for and quantising it away.
+    """
     if raw.dtype != np.uint16:
         raise ValueError(f"expected 16-bit data, got {raw.dtype}")
     h, w = raw.shape
-    t = _base_tags(w, h, black, meta, neutral or grey_world_neutral(raw))
+    t = _base_tags(w, h, black, meta, neutral or grey_world_neutral(raw),
+                   white=white)
     t.set(Tag.PhotometricInterpretation,
           PhotometricInterpretation.Color_Filter_Array)
     t.set(Tag.SamplesPerPixel, 1)

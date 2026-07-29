@@ -25,6 +25,14 @@ class ShutterButton(QtWidgets.QPushButton):
 
     LABELS = {"idle": "Capture", "exposing": "Exposing…", "writing": "Writing…"}
 
+    @staticmethod
+    def _label(state: str) -> str:
+        # Burst states arrive as "exposing 3/16" -- show them as they are,
+        # because a sixteen-frame average with a mute progress readout looks
+        # exactly like a hang.
+        return (ShutterButton.LABELS.get(state)
+                or state[:1].upper() + state[1:] + "…")
+
     def __init__(self) -> None:
         super().__init__("Capture")
         self._state = "idle"
@@ -34,7 +42,7 @@ class ShutterButton(QtWidgets.QPushButton):
 
     def set_state(self, state: str) -> None:
         self._state = state
-        self.setText(self.LABELS.get(state, "Capture"))
+        self.setText(self._label(state))
         self.setEnabled(state == "idle" and self.isEnabled() or state == "idle")
         self._restyle()
 

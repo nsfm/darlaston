@@ -88,6 +88,16 @@ class LiveView(QtWidgets.QWidget):
         self._peaking = None
         self.update()
 
+    def set_notice(self, text: str | None) -> None:
+        """A message that cannot be missed, over the frozen preview.
+
+        Exists for the exposure: the pull freezes the live view for over a
+        second and the operator has no reason to know that racking during it
+        smears the frame. The screen is the viewfinder, so the screen says so.
+        """
+        self._notice = text
+        self.update()
+
     def paintEvent(self, _event) -> None:
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor("#111110"))
@@ -120,6 +130,19 @@ class LiveView(QtWidgets.QWidget):
         if self._drag_from is not None and self._drag_to is not None:
             p.setPen(QtGui.QPen(BRASS, 1))
             p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
+
+        notice = getattr(self, "_notice", None)
+        if notice:
+            band = QtCore.QRect(0, self.height() // 2 - 34,
+                                self.width(), 68)
+            p.fillRect(band, QtGui.QColor(0, 0, 0, 170))
+            f = p.font()
+            f.setPointSizeF(17.0)
+            f.setBold(True)
+            f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.5)
+            p.setFont(f)
+            p.setPen(WARN)
+            p.drawText(band, QtCore.Qt.AlignmentFlag.AlignCenter, notice)
 
     # ---- drawing a region ------------------------------------------------
 

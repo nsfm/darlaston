@@ -38,6 +38,17 @@ class CaptureResult:
     #: because a file whose provenance has to be inferred is one that will
     #: eventually be trusted wrongly.
     applied: tuple[str, ...] = ()
+    #: Did the view move during the exposure? None when the guard could not
+    #: measure (no tracker lock -- a blank field, say). The file is written
+    #: regardless: data on disk until someone explicitly discards it beats a
+    #: guard that throws away exposures on its own judgement.
+    moved: bool | None = None
+    #: Measured displacement in preview pixels. math.inf when the view changed
+    #: by more than phase correlation can measure.
+    moved_px: float | None = None
+    #: Tracker position at the moment of capture, for mosaic tiles. Preview
+    #: pixels, tracker frame; None when the tracker never locked.
+    position: tuple[float, float] | None = None
 
     @property
     def summary(self) -> str:
@@ -48,6 +59,8 @@ class CaptureResult:
         bits.append("+".join(self.applied) if self.applied else "uncalibrated")
         if self.clipped_fraction > 0.0005:
             bits.append(f"{self.clipped_fraction * 100:.1f}% clipped")
+        if self.moved:
+            bits.append("moved during exposure")
         return "   ".join(bits)
 
 
@@ -59,15 +72,22 @@ class StillCapture:
     never what anybody meant.
     """
 
+    #: Displacement across the exposure beyond which the frame is presumed
+    #: smeared. Hand tremor on a manual stage measures under two pixels
+    #: per frame; a deliberate crank is tens. Preview pixels.
+    HOLD_STILL_PX = 8.0
+
     def __init__(self, session, settings: Settings,
                  on_state: Callable[[str], None] | None = None,
                  on_result: Callable[[CaptureResult], None] | None = None,
-                 store: CalibrationStore | None = None) -> None:
+                 store: CalibrationStore | None = None,
+                 pipeline=None) -> None:
         self._session = session
         self._settings = settings
         self._store = store or CalibrationStore()
         self._on_state = on_state or (lambda _s: None)
         self._on_result = on_result or (lambda _r: None)
+        self._pipeline = pipeline
         self._busy = threading.Lock()
 
     @property
@@ -75,33 +95,71 @@ class StillCapture:
         return self._busy.locked()
 
     def trigger(self, setup=None, subject: str = "",
-                slide: str = "") -> bool:
-        """Start a capture. Returns False if one is already running."""
+                slide: str = "", frames: int = 1) -> bool:
+        """Start a capture. Returns False if one is already running.
+
+        `frames` above one averages a burst into a single file -- the hero
+        shot. Noise falls as the square root: sixteen frames buy two stops of
+        SNR, which is how this sensor's small pixels beat a camera whose
+        single frame is cleaner.
+        """
         if not self._busy.acquire(blocking=False):
             return False
-        threading.Thread(target=self._run, args=(setup, subject, slide),
+        threading.Thread(target=self._run, args=(setup, subject, slide, frames),
                          daemon=True, name="capture").start()
         return True
 
     # ---- the work --------------------------------------------------------
 
-    def _run(self, setup, subject: str, slide: str = "") -> None:
+    def _run(self, setup, subject: str, slide: str = "",
+             frames: int = 1) -> None:
         started = time.perf_counter()
+        frames = max(1, int(frames))
         try:
             backend = self._session.backend
             if backend is None:
                 raise RuntimeError("No camera connected.")
 
-            self._on_state("exposing")
-            frame = backend.grab_raw()
-            with frame:
-                raw = frame.copy()          # explicit: outlives the pool
-                exposure_us = frame.exposure_us
-                gain_pct = frame.gain_pct
+            # The hold-still guard: position before the pull, measured again
+            # across the preview gap once the stream resumes. Only armed when
+            # the tracker is locked on the scene -- on a blank field there is
+            # nothing to measure against and the guard stays quiet. For a
+            # burst it spans the whole run, because motion between frames
+            # ghosts the average just as surely as motion during one.
+            guard = (self._pipeline.guard_begin()
+                     if self._pipeline is not None else None)
+            position = (self._pipeline.stage_position()
+                        if self._pipeline is not None else None)
+
+            acc: np.ndarray | None = None
+            exposure_us = gain_pct = 0
+            for i in range(frames):
+                self._on_state("exposing" if frames == 1
+                               else f"exposing {i + 1}/{frames}")
+                frame = backend.grab_raw()
+                with frame:
+                    if acc is None:
+                        # float32 holds sums of 12-bit frames exactly to
+                        # N=4096; drift starts about nine stops past caring.
+                        acc = frame.data.astype(np.float32)
+                        exposure_us = frame.exposure_us
+                        gain_pct = frame.gain_pct
+                    else:
+                        acc += frame.data
+            raw = acc / frames if frames > 1 else acc.astype(np.uint16)
+
+            moved: bool | None = None
+            moved_px: float | None = None
+            if guard is not None:
+                moved_px = self._pipeline.guard_measure(guard)
+                if moved_px is not None:
+                    moved = moved_px > self.HOLD_STILL_PX
 
             self._on_state("calibrating")
             corrected, applied, neutral, black = self._apply_calibration(
                 raw, setup, exposure_us, gain_pct, slide)
+            if frames > 1:
+                applied.append(f"avg{frames}")
 
             self._on_state("writing")
             path = self._destination(setup, subject)
@@ -116,15 +174,27 @@ class StillCapture:
                                   calibration="+".join(applied) or "none",
                                   app_version=_version())
 
-            written = dng.write_bayer(path, corrected, pattern=pattern,
-                                      black=black, neutral=neutral, meta=meta)
+            if frames > 1:
+                # The mean carries real precision below one 12-bit LSB.
+                # Scaled into 16 bits, the file keeps the SNR the burst just
+                # paid for; rounded back to 12, it would be quantised away.
+                white = dng.WHITE_LEVEL * 16
+                out = np.clip(corrected * 16.0 + 0.5, 0, white) \
+                        .astype(np.uint16)
+            else:
+                white = dng.WHITE_LEVEL
+                out = corrected
+            written = dng.write_bayer(path, out, pattern=pattern,
+                                      black=black, neutral=neutral, meta=meta,
+                                      white=white)
 
             clipped = float((raw >= dng.WHITE_LEVEL).sum()) / raw.size
             self._on_state("idle")
             self._on_result(CaptureResult(
                 ok=True, path=written, elapsed=time.perf_counter() - started,
                 width=raw.shape[1], height=raw.shape[0],
-                clipped_fraction=clipped, applied=tuple(applied)))
+                clipped_fraction=clipped, applied=tuple(applied),
+                moved=moved, moved_px=moved_px, position=position))
         except Exception as exc:
             self._on_state("idle")
             self._on_result(CaptureResult(
@@ -200,7 +270,18 @@ def _version() -> str:
 
 
 def _explain(exc: Exception) -> str:
-    """Say what to do, not just what broke."""
+    """Say what to do, not just what broke.
+
+    SDK failures are decoded from their numeric code rather than matched on
+    their text: the vendor's Linux exception carries no message at all, and
+    what `str()` produces is the *signed* form of a code the SDK documents in
+    hex — so string matching could never have recognised one. That is how a
+    real capture failure once reached the operator as "-2147417825".
+    """
+    from ..camera.errors import hresult_of
+    if hresult_of(exc) is not None:
+        from ..camera.errors import explain as explain_sdk
+        return explain_sdk(exc)
     text = str(exc).lower()
     if "no camera" in text:
         return "No camera connected."
@@ -208,7 +289,4 @@ def _explain(exc: Exception) -> str:
         return "The disk is full. A full-resolution frame needs about 40 MB."
     if "permission" in text:
         return "Cannot write there. Check the capture folder in Settings."
-    if "timeout" in text or "0x8001011f" in text:
-        return ("The camera did not deliver a frame in time. If this repeats, "
-                "the link may have dropped to USB 2.0 — usually the cable.")
     return str(exc) or exc.__class__.__name__

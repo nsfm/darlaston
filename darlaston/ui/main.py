@@ -13,6 +13,7 @@ import argparse
 import math
 import signal
 import sys
+import threading
 
 from PySide6 import QtCore, QtWidgets
 
@@ -22,6 +23,8 @@ from ..calib import (CalibrationService, CalibrationStore, Opportunist,
                      Progress)
 from ..calib.store import flat_key
 from ..capture import CaptureResult, StillCapture
+from ..capture.mosaic import MosaicSession
+from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..live.focus import Illumination, Region
 from ..live.pipeline import LivePipeline, LiveSignals
 from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
@@ -31,8 +34,10 @@ from . import theme
 from .about import AboutDialog
 from .calib_ui import CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterButton, SubjectField
+from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
+from .timelapse_ui import TimelapseDialog
 from .widgets import CoverageMeter, FocusTraceView, Histogram, LiveView
 
 #: Until the setup editor exists, a plausible stand so the chrome has something
@@ -52,6 +57,7 @@ class Bridge(QtCore.QObject):
     status = QtCore.Signal(object)
     capture_state = QtCore.Signal(str)
     capture_result = QtCore.Signal(object)
+    timelapse = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
@@ -94,7 +100,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.capture = StillCapture(self.session, self.settings,
                                     self.bridge.capture_state.emit,
                                     self.bridge.capture_result.emit,
-                                    store=self.store)
+                                    store=self.store, pipeline=self.pipeline)
+        self.timelapse = Timelapse(self.capture, self.bridge.timelapse.emit)
+        self.bridge.timelapse.connect(self._on_timelapse)
+        self.mosaic: MosaicSession | None = None
+        self._last_preview = None
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
@@ -115,6 +125,8 @@ class MainWindow(QtWidgets.QMainWindow):
         instrument.addAction("Microscope setup…", self._open_setup)
         capture_menu = self.toolbar.add_menu("Capture")
         capture_menu.addAction("Location and naming…", self._open_settings)
+        capture_menu.addAction("Timelapse…", self._open_timelapse)
+        capture_menu.addAction("Stitch mosaic…", self._stitch_mosaic)
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -124,6 +136,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.region_drawn.connect(self._on_custom_region)
         self.histogram = Histogram()
         self.trace = FocusTraceView()
+
+        # The slide map overlays the view's bottom-left corner: a map is only
+        # meaningful in reference to the image, and the rail squashed it.
+        self.slidemap = SlideMapPanel()
+        self.slidemap.setParent(self.view)
+        self.slidemap.reset_requested.connect(self.pipeline.reset_tracking)
+        self.slidemap.mosaic_requested.connect(self._on_mosaic_requested)
+        self.slidemap.undo_tile.connect(self._on_undo_tile)
+        self.view.installEventFilter(self)
+        self.slidemap.show()
 
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(self.waiting)
@@ -247,6 +269,35 @@ class MainWindow(QtWidgets.QMainWindow):
         optics.addWidget(self.illumination)
         col.addLayout(optics)
 
+        # Frame averaging, next to the shutter it modifies. Noise falls as
+        # √N: sixteen frames are two stops of SNR, and the reason this
+        # sensor's small pixels can beat a camera whose single frame is
+        # cleaner. Not persisted -- a hero shot is a decision, not a mode
+        # to be surprised by tomorrow.
+        self._avg_frames = 1
+        avg_row = QtWidgets.QHBoxLayout()
+        avg_row.setSpacing(4)
+        avg_label = QtWidgets.QLabel("average")
+        avg_label.setProperty("role", "key")
+        avg_label.setToolTip(
+            "Average several exposures into one file.\n"
+            "Noise falls as the square root: ×16 is two stops cleaner.\n"
+            "Hold still for the whole burst — motion between frames\n"
+            "ghosts the average.")
+        avg_row.addWidget(avg_label)
+        avg_row.addStretch(1)
+        self._avg_buttons: dict[int, QtWidgets.QPushButton] = {}
+        for n in (1, 4, 16):
+            b = QtWidgets.QPushButton("—" if n == 1 else f"×{n}")
+            b.setCheckable(True)
+            b.setProperty("role", "seg")
+            b.setFixedWidth(40)
+            b.setChecked(n == 1)
+            b.clicked.connect(lambda _=False, n=n: self._on_average(n))
+            self._avg_buttons[n] = b
+            avg_row.addWidget(b)
+        col.addLayout(avg_row)
+
         self.shutter = ShutterButton()
         self.shutter.clicked.connect(self._on_capture)
         self.shutter.set_available(False)
@@ -258,6 +309,12 @@ class MainWindow(QtWidgets.QMainWindow):
         col.addWidget(self.last_capture)
 
         return rail
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.view and event.type() in (
+                QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show):
+            self.slidemap.place_in(self.view)
+        return super().eventFilter(obj, event)
 
     # ---- session ---------------------------------------------------------
 
@@ -397,23 +454,110 @@ class MainWindow(QtWidgets.QMainWindow):
                                     live=self.session.status.is_live
                                     and not self.calibration.busy)
 
+    def _on_average(self, n: int) -> None:
+        self._avg_frames = n
+        for count, b in self._avg_buttons.items():
+            b.setChecked(count == n)
+
     def _on_capture(self) -> None:
         if not self.capture.trigger(self.setup, subject=self.subject.subject,
-                                    slide=self.subject.slide_note):
+                                    slide=self.subject.slide_note,
+                                    frames=self._avg_frames):
             return
         self.shutter.set_state("exposing")
 
     @QtCore.Slot(str)
     def _on_capture_state(self, state: str) -> None:
         self.shutter.set_state(state)
+        # The notice spans exactly the window where motion does damage. Once
+        # the frame is pulled, cranking is harmless and the message would be
+        # a lie that teaches people to ignore it.
+        self.view.set_notice(f"hold still — {state}"
+                             if state.startswith("exposing") else None)
         if state == "idle":
             self.shutter.set_available(self.session.status.is_live)
 
     @QtCore.Slot(object)
     def _on_capture_result(self, result: CaptureResult) -> None:
         self.last_capture.setText(result.summary)
-        colour = theme.DIM if result.ok else theme.BAD
+        colour = theme.BAD if (not result.ok or result.moved) else theme.DIM
         self.last_capture.setStyleSheet(f"color: {colour};")
+        if result.ok and self.timelapse.running:
+            try:
+                self.timelapse.note_written(result.path.stat().st_size)
+            except OSError:
+                pass
+        # Not during a timelapse: an unattended run must never park itself
+        # behind a modal question. The summary already says it moved.
+        discarded = False
+        if result.ok and result.moved and not self.timelapse.running:
+            discarded = self._offer_retry(result)
+        # The moved question comes first: a discarded shot must never
+        # become a tile.
+        if result.ok and not discarded and self.mosaic is not None:
+            self._adopt_tile(result)
+
+    def _adopt_tile(self, result: CaptureResult) -> None:
+        h, w = ((self._last_preview.shape[:2])
+                if self._last_preview is not None else (0, 0))
+        tile = self.mosaic.adopt(result.path, result.position, (w, h))
+        self.slidemap.tile_added(result.position, self._last_preview)
+        note = "" if result.position is not None else " (no position!)"
+        self.last_capture.setText(
+            f"tile {tile.index} · {tile.filename}{note}")
+
+    def _on_mosaic_requested(self, on: bool) -> None:
+        if on:
+            self.mosaic = MosaicSession(self.settings.capture_root,
+                                        self.subject.subject)
+            if self.setup is not None:
+                obj = self.setup.scope.turret.objective
+                self.mosaic.set_meta(
+                    objective=obj.label if obj else None,
+                    illumination=self.setup.illumination.display)
+        else:
+            # The manifest is already current; closing is just letting go.
+            self.mosaic = None
+        self.slidemap.set_mosaic(on)
+
+    def _on_undo_tile(self) -> None:
+        if self.mosaic is None:
+            return
+        tile = self.mosaic.undo()
+        if tile is not None:
+            self.slidemap.tile_removed()
+            self.last_capture.setText(f"tile {tile.index} deleted")
+            self.last_capture.setStyleSheet(f"color: {theme.DIM};")
+
+    def _offer_retry(self, result: CaptureResult) -> bool:
+        """The shot is on disk either way; the question is whether to keep it.
+
+        Keep is the default: a dialog that deletes data on its default button
+        will eventually delete something irreplaceable. Returns True when the
+        operator chose to discard.
+        """
+        px = result.moved_px or 0.0
+        amount = ("more than could be measured" if math.isinf(px)
+                  else f"about {px:.0f} pixels")
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Moved during exposure")
+        box.setText(f"The view moved {amount} while the frame was being "
+                    f"exposed, so it is probably smeared.")
+        box.setInformativeText(result.path.name)
+        keep = box.addButton("Keep it",
+                             QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        retry = box.addButton("Discard and reshoot",
+                              QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(keep)
+        box.setStyleSheet(theme.stylesheet())
+        box.exec()
+        if box.clickedButton() is retry:
+            result.path.unlink(missing_ok=True)
+            self.last_capture.setText("discarded — hold still this time")
+            self.last_capture.setStyleSheet(f"color: {theme.DIM};")
+            self._on_capture()
+            return True
+        return False
 
     def _open_setup(self) -> None:
         if self.setup is None:
@@ -429,10 +573,53 @@ class MainWindow(QtWidgets.QMainWindow):
             self.opportunist.set_key(flat_key(self.setup,
                                               self.subject.slide_note))
             self._refresh_calibration()
+            # And the map's scale changed with it: positions in old-objective
+            # pixels no longer measure anything on the new one.
+            self.slidemap.clear()
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self.setup, self)
         dialog.exec()
+
+    def _open_timelapse(self) -> None:
+        def start(interval: int, count: int) -> bool:
+            return self.timelapse.start(
+                interval, count, setup=self.setup,
+                subject=self.subject.subject, slide=self.subject.slide_note,
+                frames=self._avg_frames)
+        TimelapseDialog(self.timelapse, start, self).exec()
+
+    @QtCore.Slot(object)
+    def _on_timelapse(self, status: TimelapseStatus) -> None:
+        self.strip.set_note(status.summary or status.message)
+
+    def _stitch_mosaic(self) -> None:
+        """Pick a tile session, stitch it off the UI thread, say how it went.
+
+        Defaults to the live session's folder when a mosaic is running --
+        stitching mid-lay is a legitimate sanity check.
+        """
+        start = str(self.mosaic.dir if self.mosaic else
+                    self.settings.capture_root)
+        chosen = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Mosaic tile folder", start)
+        if not chosen:
+            return
+        self.strip.set_note("stitching…")
+
+        def work():
+            from ..process.stitch import stitch
+            try:
+                path, report = stitch(chosen)
+                note = (f"stitched {report['tiles']} tiles "
+                        f"({report['refined']}/{report['edges']} seams "
+                        f"refined) → {path.name}")
+            except Exception as exc:
+                note = f"stitch failed — {exc}"
+            self.bridge.timelapse.emit(TimelapseStatus(
+                running=False, shot=0, count=0, next_in=0, message=note))
+
+        threading.Thread(target=work, daemon=True, name="stitch").start()
 
     def _on_sweep(self, on: bool) -> None:
         if on:
@@ -471,6 +658,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_remaining(s.coverage_remaining, s.focus_rect)
         self.coverage.set_value(s.coverage, s.coverage_complete)
         self.view.set_frame(s.preview, s.peaking)
+        self.slidemap.update_live(s)
+        self._last_preview = s.preview
         self.histogram.set_data(s.histogram, s.clipped_fraction,
                                 s.black_fraction, s.channel_clipped)
         self.trace.set_data(s.focus_trace, s.focus_fraction_of_peak)
@@ -482,6 +671,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_shut", False):
             return
         self._shut = True
+        self.timelapse.stop()
         self.session.stop()
         self.pipeline.stop()
 

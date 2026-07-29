@@ -1,0 +1,398 @@
+"""Stitching a mosaic: registration first, composition second.
+
+The design rests on one measured fact (DISCOVERY.md 10a): phase correlation's
+confidence cannot detect a *wrong* match -- a decoy scored 0.80 against the
+true match's 0.91. So nothing here searches. The manifest's dead-reckoned
+positions predict every pairwise offset; registration only *refines* within a
+bounded window around the prediction, and a refinement that wanders past the
+bound is discarded in favour of the prediction it failed to improve. Panorama
+software fails on diatoms precisely because it searches; this cannot, because
+it never looks anywhere the stage did not say it went.
+
+The tiles are read back by a deliberately minimal parser that handles exactly
+the files darlaston writes -- little-endian, uncompressed, 16-bit, one full-
+frame tile -- and refuses anything else by name. Reading arbitrary DNGs is a
+dependency's job; reading our own is sixty lines.
+
+Registration runs on half-resolution luma (the mean of each Bayer cell): no
+demosaic, no channel choice, and the 2x binning suppresses the mosaic pattern
+that would otherwise correlate with itself at even offsets.
+
+Composition weights each tile by a raised-cosine window, so tile centres --
+where the optics are honest -- dominate every seam, and the field-curvature
+softness at tile edges never wins a blend. Weights normalise away where only
+one tile covers a pixel.
+"""
+from __future__ import annotations
+
+import struct
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from ..capture.mosaic import MosaicSession, Tile
+from . import dng
+
+#: Refinement beyond this fraction of the overlap strip is not a refinement,
+#: it is the wraparound or a decoy. The prediction stands instead.
+MAX_RESIDUAL = 0.25
+#: Below this correlation response the strip had nothing to say (blank
+#: overlap, say); the prediction stands.
+MIN_RESPONSE = 0.12
+#: Tile pairs predicted to share less than this fraction of a frame are not
+#: neighbours; there is nothing to register.
+MIN_OVERLAP = 0.04
+
+
+# ---- reading our own files -------------------------------------------------
+
+def read_bayer_dng(path: Path | str) -> np.ndarray:
+    """Read a DNG that darlaston wrote. Nothing else is attempted."""
+    data = Path(path).read_bytes()
+    if data[:4] != b"II\x2a\x00":
+        raise ValueError(f"{path}: not a little-endian TIFF darlaston wrote")
+    (ifd,) = struct.unpack_from("<I", data, 4)
+    (count,) = struct.unpack_from("<H", data, ifd)
+    tags: dict[int, int] = {}
+    for i in range(count):
+        tag, _typ, _cnt, val = struct.unpack_from("<HHII", data, ifd + 2 + i * 12)
+        tags[tag] = val
+    w, h = tags.get(256, 0), tags.get(257, 0)
+    if tags.get(259, 1) != 1 or tags.get(258) != 16:
+        raise ValueError(f"{path}: compressed or non-16-bit; not ours")
+    offset = tags.get(324) or tags.get(273)      # one full-frame tile
+    if not w or not h or not offset:
+        raise ValueError(f"{path}: missing geometry tags")
+    return np.frombuffer(data, np.uint16, count=w * h,
+                         offset=offset).reshape(h, w).copy()
+
+
+def luma_half(raw: np.ndarray) -> np.ndarray:
+    """Half-resolution luma: the mean of each 2x2 Bayer cell. Pattern-free,
+    which matters -- the mosaic itself correlates at even offsets."""
+    f = raw.astype(np.float32)
+    return (f[0::2, 0::2] + f[0::2, 1::2] + f[1::2, 0::2] + f[1::2, 1::2]) / 4
+
+
+# ---- registration -----------------------------------------------------------
+
+@dataclass
+class Edge:
+    i: int                       # tile indices into the session list
+    j: int
+    offset: tuple[float, float]  # refined pos_j - pos_i, raw pixels
+    response: float
+    refined: bool                # False when the prediction stood
+
+
+def _predicted_raw_positions(tiles: list[Tile], shapes: list[tuple[int, int]]
+                             ) -> list[tuple[float, float] | None]:
+    """Manifest positions are preview pixels; scale each to its tile's raw
+    geometry. The axes scale separately -- the preview is not an isotropic
+    resize of the sensor (5440/1824 != 3648/1216)."""
+    out = []
+    for tile, (h, w) in zip(tiles, shapes):
+        if tile.pos is None or not tile.frame[0]:
+            out.append(None)
+            continue
+        sx, sy = w / tile.frame[0], h / tile.frame[1]
+        out.append((tile.pos[0] * sx, tile.pos[1] * sy))
+    return out
+
+
+def _refine_pair(a: np.ndarray, b: np.ndarray,
+                 d: tuple[float, float]) -> tuple[tuple[float, float], float] | None:
+    """Refine predicted offset d (raw px, b relative to a) on the overlap.
+
+    Works on half-res luma; returns (refined_offset, response) or None when
+    the overlap is degenerate.
+    """
+    h, w = a.shape
+    dx, dy = d[0] / 2.0, d[1] / 2.0          # half-res coordinates
+    x0, x1 = max(0.0, dx), min(float(w), dx + w)
+    y0, y1 = max(0.0, dy), min(float(h), dy + h)
+    if x1 - x0 < 32 or y1 - y0 < 32:
+        return None
+    ax0, ay0 = int(x0), int(y0)
+    aw, ah = int(x1 - x0), int(y1 - y0)
+    bx0, by0 = int(round(ax0 - dx)), int(round(ay0 - dy))
+    bx0, by0 = max(0, bx0), max(0, by0)
+    aw = min(aw, w - bx0, w - ax0)
+    ah = min(ah, h - by0, h - ay0)
+    if aw < 32 or ah < 32:
+        return None
+    sa = a[ay0:ay0 + ah, ax0:ax0 + aw]
+    sb = b[by0:by0 + ah, bx0:bx0 + aw]
+
+    # Bound the strip so a 40-tile run stays quick; the residual scales back.
+    down = max(1, int(np.ceil(max(aw, ah) / 768)))
+    if down > 1:
+        sa = cv2.resize(sa, (aw // down, ah // down),
+                        interpolation=cv2.INTER_AREA)
+        sb = cv2.resize(sb, (aw // down, ah // down),
+                        interpolation=cv2.INTER_AREA)
+    hann = cv2.createHanningWindow((sa.shape[1], sa.shape[0]), cv2.CV_32F)
+    (rx, ry), response = cv2.phaseCorrelate(sa, sb, hann)
+
+    limit = MAX_RESIDUAL * min(sa.shape)
+    if abs(rx) > limit or abs(ry) > limit or response < MIN_RESPONSE:
+        return None
+    # sb sits at prediction; content shifted +r in b means b is really at
+    # prediction - r. Half-res residual, times the extra downsample, times
+    # two back to raw pixels.
+    scale = 2.0 * down
+    return (d[0] - rx * scale, d[1] - ry * scale), float(response)
+
+
+def register(session: MosaicSession, lumas: list[np.ndarray],
+             shapes: list[tuple[int, int]]) -> tuple[list, list[Edge]]:
+    """All neighbour pairs refined, then one global least squares.
+
+    Positions are anchored at tile 0. Every edge contributes
+    (p_j - p_i = offset) weighted by its correlation response; the solve is
+    dense and tiny (2N unknowns for N tiles).
+    """
+    predicted = _predicted_raw_positions(session.tiles, shapes)
+    n = len(session.tiles)
+    edges: list[Edge] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if predicted[i] is None or predicted[j] is None:
+                continue
+            h, w = shapes[i]
+            d = (predicted[j][0] - predicted[i][0],
+                 predicted[j][1] - predicted[i][1])
+            if (max(0.0, w - abs(d[0])) * max(0.0, h - abs(d[1]))) \
+                    < MIN_OVERLAP * w * h:
+                continue
+            refined = _refine_pair(lumas[i], lumas[j], d)
+            if refined is None:
+                edges.append(Edge(i, j, d, 0.0, refined=False))
+            else:
+                edges.append(Edge(i, j, refined[0], refined[1], refined=True))
+
+    # Least squares over x and y independently; anchor tile 0.
+    positions = [list(p) if p is not None else [0.0, 0.0] for p in predicted]
+    if edges:
+        for axis in (0, 1):
+            rows, rhs, wts = [], [], []
+            rows.append([1.0 if k == 0 else 0.0 for k in range(n)])
+            rhs.append(positions[0][axis])
+            wts.append(10.0)                      # the anchor
+            for e in edges:
+                row = [0.0] * n
+                row[e.i], row[e.j] = -1.0, 1.0
+                rows.append(row)
+                rhs.append(e.offset[axis])
+                wts.append(max(e.response, 0.05))
+            A = np.asarray(rows) * np.asarray(wts)[:, None]
+            b = np.asarray(rhs) * np.asarray(wts)
+            solved, *_ = np.linalg.lstsq(A, b, rcond=None)
+            for k in range(n):
+                positions[k][axis] = float(solved[k])
+    return [tuple(p) for p in positions], edges
+
+
+# ---- composition ------------------------------------------------------------
+
+#: Width the illumination profile is estimated at. Illumination is smooth by
+#: physics, so nothing is lost, and the decimation is the first line of
+#: defence against subject detail.
+_FLAT_W = 64
+#: Fewer tiles than this and the across-tile median is not robust enough to
+#: separate illumination from subject; better no correction than a wrong one.
+_FLAT_MIN_TILES = 4
+#: Order of the surface fitted to the median. High enough for a real lamp and
+#: condenser, far too low to describe a diatom.
+_FLAT_DEGREE = 4
+
+
+def _poly_basis(gx: np.ndarray, gy: np.ndarray, degree: int) -> np.ndarray:
+    return np.stack([gx ** i * gy ** j for i in range(degree + 1)
+                     for j in range(degree + 1 - i)], axis=-1)
+
+
+def estimate_flat(lumas: list[np.ndarray]) -> np.ndarray | None:
+    """The illumination profile, from the tiles themselves.
+
+    Every tile saw different slide through the same optics, so the one thing
+    they share is how the field is lit. Normalise each tile by its own median
+    (exposure and subject density drop out), take the per-pixel median across
+    tiles (structure mostly drops out, because no diatom is in the same place
+    twice), then **fit a smooth surface** to what remains.
+
+    The fit is the load-bearing step, and it is not decoration. The plain
+    median alone fails in a way that looks fine and is not: where a pixel is
+    covered by subject in more than half the tiles, the median returns a dark
+    value, so the profile grows *holes* -- and dividing by a hole puts a
+    bright blob in the composite. Measured on synthetic tiles with a dense
+    subject, 1.8% of pixels went that way and the resulting profile still
+    passed a plain range check. A low-order surface cannot have holes at all:
+    the worst it can do is be gently wrong, which shades a composite rather
+    than spotting it.
+
+    Outliers are rejected iteratively against a robust scale, so the
+    contaminated pixels are dropped rather than averaged in. Measured against
+    a known 25% vignette: 0.014 worst-case error with sparse subject and
+    0.024 with dense, where the plain median gave 0.044 and 0.365.
+
+    This is a *cosmetic* correction applied at composite time. The tiles on
+    disk are untouched, and a flat from the calibration store remains the
+    better answer -- but even tiles captured with one keep some residual
+    shading if the lamp or condenser has moved since, which is exactly what
+    this removes.
+    """
+    if len(lumas) < _FLAT_MIN_TILES:
+        return None
+    stack = []
+    for luma in lumas:
+        h, w = luma.shape
+        small = cv2.resize(luma, (_FLAT_W, max(2, round(_FLAT_W * h / w))),
+                           interpolation=cv2.INTER_AREA)
+        mid = float(np.median(small))
+        if mid <= 1e-6:
+            continue
+        stack.append(small / mid)
+    if len(stack) < _FLAT_MIN_TILES:
+        return None
+    median = np.median(np.stack(stack), axis=0).astype(np.float64)
+
+    h, w = median.shape
+    gy, gx = np.mgrid[0:h, 0:w].astype(np.float64)
+    gx = gx / (w - 1) * 2 - 1
+    gy = gy / (h - 1) * 2 - 1
+    terms = ((_FLAT_DEGREE + 1) * (_FLAT_DEGREE + 2)) // 2
+    A = _poly_basis(gx, gy, _FLAT_DEGREE).reshape(-1, terms)
+    b = median.ravel()
+
+    keep = np.ones(b.size, bool)
+    coeffs = None
+    for _ in range(4):
+        coeffs, *_ = np.linalg.lstsq(A[keep], b[keep], rcond=None)
+        resid = b - A @ coeffs
+        centre = np.median(resid[keep])
+        scale = 1.4826 * np.median(np.abs(resid[keep] - centre))
+        nxt = np.abs(resid - centre) < max(2.5 * scale, 1e-4)
+        if nxt.sum() < terms * 4:
+            break
+        keep = nxt
+    if coeffs is None:
+        return None
+
+    flat = (A @ coeffs).reshape(h, w).astype(np.float32)
+    mean = float(flat.mean())
+    if mean <= 1e-6:
+        return None
+    # Normalised to unity so dividing by it changes shading, not exposure.
+    flat /= mean
+    # A profile this extreme is not illumination; it is a subject that
+    # outvoted the median. Refuse rather than invent.
+    if float(flat.min()) < 0.4 or float(flat.max()) > 2.5:
+        return None
+    return flat
+
+
+def _window(h: int, w: int) -> np.ndarray:
+    """Raised cosine, floored: centres dominate seams, edges never win, and
+    the floor keeps mosaic borders (where only one tile exists) defined."""
+    wy = 0.5 - 0.5 * np.cos(2 * np.pi * (np.arange(h) + 0.5) / h)
+    wx = 0.5 - 0.5 * np.cos(2 * np.pi * (np.arange(w) + 0.5) / w)
+    return np.maximum(np.outer(wy, wx), 1e-4).astype(np.float32)
+
+
+#: OpenCV demosaic code for a GBRG sensor. Per the OpenCV docs, the two
+#: letters name the second and third columns of the *second* row -- GBRG's
+#: second row is R G R G, columns two and three are G, R.
+_DEMOSAIC = {"GBRG": cv2.COLOR_BayerGR2BGR, "GRBG": cv2.COLOR_BayerGB2BGR,
+             "RGGB": cv2.COLOR_BayerBG2BGR, "BGGR": cv2.COLOR_BayerRG2BGR}
+
+
+def composite(session: MosaicSession, positions: list[tuple[float, float]],
+              scale: float = 0.25, pattern: str = "GBRG",
+              flat: np.ndarray | None = None) -> Path:
+    """Blend the tiles at their solved positions into one linear DNG."""
+    shapes = []
+    for t in session.tiles:
+        raw = read_bayer_dng(session.dir / t.filename)
+        shapes.append(raw.shape)
+        del raw
+    xs = [p[0] for p in positions]
+    ys = [p[1] for p in positions]
+    w0 = min(x - s[1] / 2 for x, s in zip(xs, shapes))
+    h0 = min(y - s[0] / 2 for y, s in zip(ys, shapes))
+    w1 = max(x + s[1] / 2 for x, s in zip(xs, shapes))
+    h1 = max(y + s[0] / 2 for y, s in zip(ys, shapes))
+    cw, ch = int((w1 - w0) * scale) + 2, int((h1 - h0) * scale) + 2
+
+    acc = np.zeros((ch, cw, 3), np.float32)
+    wacc = np.zeros((ch, cw), np.float32)
+    neutral = None
+    for tile, pos in zip(session.tiles, positions):
+        raw = read_bayer_dng(session.dir / tile.filename)
+        if neutral is None:
+            neutral = dng.grey_world_neutral(raw)
+        rgb = cv2.cvtColor(raw, _DEMOSAIC.get(pattern, cv2.COLOR_BayerGR2BGR))
+        th, tw = raw.shape
+        sw, sh = max(2, int(tw * scale)), max(2, int(th * scale))
+        small = cv2.resize(rgb, (sw, sh), interpolation=cv2.INTER_AREA) \
+                   .astype(np.float32)
+        if flat is not None:
+            # Achromatic: the profile is measured on luma, so it corrects
+            # shading without inventing a colour cast it never measured.
+            small /= cv2.resize(flat, (sw, sh),
+                                interpolation=cv2.INTER_LINEAR)[:, :, None]
+        win = _window(sh, sw)
+        x = int(round((pos[0] - tw / 2 - w0) * scale))
+        y = int(round((pos[1] - th / 2 - h0) * scale))
+        x, y = max(0, x), max(0, y)
+        sh2, sw2 = min(sh, ch - y), min(sw, cw - x)
+        acc[y:y + sh2, x:x + sw2] += small[:sh2, :sw2] * win[:sh2, :sw2, None]
+        wacc[y:y + sh2, x:x + sw2] += win[:sh2, :sw2]
+
+    covered = wacc > 0
+    out = np.zeros_like(acc)
+    out[covered] = acc[covered] / wacc[covered, None]
+    result = np.clip(out, 0, 65535).astype(np.uint16)
+    # BGR from OpenCV back to the RGB a linear DNG expects.
+    result = result[:, :, ::-1]
+
+    target = session.dir / "composite.dng"
+    return dng.write_linear(target, result, neutral=neutral or (1, 1, 1))
+
+
+def stitch(directory: Path | str, scale: float = 0.25) -> tuple[Path, dict]:
+    """The whole run: load, register, composite. Returns (path, report)."""
+    session = MosaicSession.load(directory)
+    if len(session.tiles) < 2:
+        raise ValueError("a mosaic needs at least two tiles")
+    lumas, shapes = [], []
+    for t in session.tiles:
+        raw = read_bayer_dng(session.dir / t.filename)
+        shapes.append(raw.shape)
+        lumas.append(luma_half(raw))
+        del raw
+    positions, edges = register(session, lumas, shapes)
+    flat = estimate_flat(lumas)
+    del lumas
+    path = composite(session, positions, scale=scale, flat=flat)
+    report = {
+        "tiles": len(session.tiles),
+        "edges": len(edges),
+        "refined": sum(1 for e in edges if e.refined),
+        "flattened": flat is not None,
+        "falloff": (round(float(1.0 - flat.min() / flat.max()) * 100, 1)
+                    if flat is not None else None),
+        "positions": [tuple(round(v, 1) for v in p) for p in positions],
+    }
+    return path, report
+
+
+if __name__ == "__main__":
+    where = sys.argv[1]
+    how = float(sys.argv[2]) if len(sys.argv) > 2 else 0.25
+    path, report = stitch(where, scale=how)
+    print(f"{path}  ({report['refined']}/{report['edges']} edges refined, "
+          f"{report['tiles']} tiles)")
