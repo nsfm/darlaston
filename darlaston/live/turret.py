@@ -428,6 +428,30 @@ class TurretDetector:
         n = len(turret.positions)
         current = turret.current
 
+        # A turret is walked one detent at a time, so only the two
+        # neighbours are candidates.
+        #
+        # This is a strong prior and it earns its place twice over. It
+        # removes a whole class of wrong answers -- the magnification and
+        # brightness searches previously ranked *every* position and could
+        # nominate one two or three places away, which no hand movement
+        # produces. And it turns all three signals onto the same binary
+        # question, "which of the two neighbours", where before they were
+        # each picking one of five. Brightness in particular becomes
+        # decisive: on this stand 6.3x and 25x are 22% apart and were
+        # confusable, and they are never adjacent.
+        #
+        # A genuine two-position spin is named wrongly by this, and the
+        # "Other" menu is how that gets corrected. Being reliably right
+        # about the ordinary case beats being occasionally right about the
+        # rare one.
+        neighbours = set()
+        for delta in (+1, -1):
+            probe = type(turret)(list(turret.positions), current)
+            landed = probe.step(delta)
+            if landed != current:
+                neighbours.add(landed)
+
         # 1. Direction: one step round the ring, skipping empty positions.
         by_direction = None
         if self._direction is not None:
@@ -437,8 +461,8 @@ class TurretDetector:
         # 2. Magnification: which position's field-of-view ratio fits best.
         by_ratio, ratio_err = None, None
         if ratio is not None and ratio > 1e-6:
-            for i in range(n):
-                if i == current or turret.positions[i] is None:
+            for i in sorted(neighbours):
+                if turret.positions[i] is None:
                     continue
                 expected = turret.ratio_to(i)
                 if not expected:
@@ -453,8 +477,8 @@ class TurretDetector:
         by_level, level_err = None, None
         if (level_ratio and signatures and current < len(signatures)
                 and signatures[current]):
-            for i in range(n):
-                if i == current or turret.positions[i] is None:
+            for i in sorted(neighbours):
+                if turret.positions[i] is None:
                     continue
                 if i >= len(signatures) or not signatures[i]:
                     continue

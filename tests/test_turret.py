@@ -516,3 +516,49 @@ def test_a_stale_belief_makes_the_next_proposal_wrong():
     # Believing a stale 16x: the same reading lands on 10x.
     stale = Turret(list(positions), current=2)
     assert Turret(list(positions), stale.current).step(-1) == 1
+
+
+def test_only_the_two_neighbours_are_ever_candidates():
+    """A turret is walked one detent at a time. Before this, the
+    magnification and brightness searches ranked every position and could
+    nominate one two or three places away, which no hand movement produces.
+
+    Five positions, sitting at index 0, so that indices 2 and 3 are genuinely
+    distant -- a turret is a ring, and on a four-position one every position
+    is adjacent to every other, which is not a test of anything.
+    """
+    det = TurretDetector()
+    det._direction = None
+    turret = Turret([Objective(6.3, 0.16), Objective(10, 0.32),
+                     Objective(16, 0.40), Objective(25, 0.65),
+                     Objective(40, 1.00)], current=0)
+    neighbours = {1, 4}
+
+    # A brightness reading that fits a distant position best must not be
+    # allowed to name it.
+    signatures = [1.0, 0.9, 0.1, 0.11, 0.8]
+    event = det._decide(None, turret, level_ratio=0.1, level=0.1,
+                        signatures=signatures, learned=[True] * 5)
+    assert event.suggested_index is None or event.suggested_index in neighbours
+
+    # And the same for magnification: index 2 fits a halving field of view
+    # far better than either neighbour, and must still not be proposed.
+    event = det._decide(0.394, turret, level_ratio=None, level=None,
+                        signatures=None, learned=None)
+    assert event.suggested_index is None or event.suggested_index in neighbours
+
+
+def test_the_constraint_rescues_a_confusable_pair():
+    """Measured on the Zeiss in phase: 6.3x and 25x sit 22% apart in
+    brightness and were confusable, which cost 10x->6.3x its corroboration.
+    They are never adjacent, so restricting candidates to neighbours removes
+    the ambiguity outright."""
+    det = TurretDetector(rotation_sign=SIGN)
+    det._direction = -1
+    turret = _turret(1)
+    # Levels chosen so a distant position fits the ratio better than the
+    # neighbour does -- the situation that used to mislead it.
+    signatures = [0.30, 1.00, 0.20, 0.29]
+    event = det._decide(None, turret, level_ratio=0.30, level=0.3,
+                        signatures=signatures, learned=[True] * 4)
+    assert event.suggested_index in (0, 2), "must pick a neighbour"
