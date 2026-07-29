@@ -85,6 +85,11 @@ class TurretEvent:
     #: What each signal independently thought, for the UI and for debugging
     #: a stand where one of them is unreliable.
     votes: tuple = ()
+    #: The occlusion reading before the optical path's sign was applied:
+    #: -1 for a darkening left edge, +1 for a right. Kept so the application
+    #: can work out which sign *would* have been right when the operator
+    #: corrects a proposal, and stop asking.
+    raw_direction: int | None = None
     #: The level measured after settling, normalised. The application feeds
     #: this back once the operator confirms a position, which is how the
     #: signature gets learned in the first place.
@@ -105,6 +110,14 @@ class TurretDetector:
     DARK_FRACTION = 0.35       # of the running-stable mean
     SETTLE_FRAMES = 6
     SETTLE_TOLERANCE = 0.02
+    #: Rise above the darkest point that counts as the light returning.
+    #: Recovery must be judged against the *occlusion*, not against the
+    #: previous objective's level -- see _when_dark.
+    RECOVER_RISE = 2.5
+    #: Frames after which a stuck DARK gives up and re-baselines. Nothing
+    #: should be able to wedge this detector permanently; a missed rotation
+    #: is a nuisance, a detector that never works again is a fault.
+    DARK_PATIENCE = 400
 
     #: Which way a darkening left edge means the turret index moved.
     #:
@@ -115,6 +128,15 @@ class TurretDetector:
     #: There is no way to derive it, so it is a property of the stand, and a
     #: stand where detection is consistently one position out is a stand
     #: whose sign is -1.
+    #: How the occlusion reading maps onto the turret index.
+    #:
+    #: Not a property of the turret. Between the turret moving and a pixel
+    #: darkening the handedness passes through the objective (which inverts
+    #: the image), the head and any photo tube, however the camera happens to
+    #: be screwed onto its C-mount, and our own vertical flip of the raw
+    #: stream. Four stages, each able to reverse a sign, and their product is
+    #: not derivable from anything visible in the image. So it is measured
+    #: once from a correction rather than reasoned about.
     ROTATION_SIGN = 1
 
     def __init__(self, size: int = 256, rotation_sign: int = ROTATION_SIGN
@@ -133,6 +155,8 @@ class TurretDetector:
         self._pre_level: float | None = None
         self._scale = 1.0
         self._learned = None
+        self._entering: int | None = None
+        self._raw_direction: int | None = None
 
     # ---- entry point -----------------------------------------------------
 
@@ -187,29 +211,124 @@ class TurretDetector:
         if mean > self._stable_mean * 0.9:
             self._reference = small.copy()
             self._pre_level = mean / self._scale
+            self._entering = None
+        elif mean < self._stable_mean * 0.75:
+            # Already dimming but not yet dark. Read the asymmetry here too.
+            #
+            # The occlusion sweep is fast -- a few frames at most on a real
+            # stand, with a leading edge that reads almost flat -- so waiting
+            # until darkness is declared can mean sampling only frames that
+            # are already uniformly black, with no side to read. This catches
+            # the edge on its way in, and the DARK phase overrides it if it
+            # gets a cleaner look.
+            side = self._which_side(small)
+            if side:
+                self._entering = side
 
-        if mean < self._stable_mean * self.DARK_FRACTION:
+        # A baseline of essentially zero cannot meaningfully be dropped
+        # below, and testing against it makes a detector staring at a
+        # capped camera flip between phases every frame.
+        if (self._stable_mean > 1e-3
+                and mean < self._stable_mean * self.DARK_FRACTION):
             self._phase = Phase.DARK
             self._pre_dark = self._reference
             self._direction = None
+            self._dark_min = mean
+            self._raw_direction = None
+            self._dark_frames = 0
+            self._dark_levels = []
+            # Carry any reading taken on the way in, so a sweep too fast to
+            # sample mid-darkness still has a direction.
+            if self._entering:
+                self._raw_direction = self._entering
+                self._direction = self._entering * self._sign
         return None
 
+    @staticmethod
+    def _has_image(small) -> bool:
+        """Is there a picture here, or just a blocked light path?
+
+        Measured after averaging down to 32 squares. Sensor noise on a black
+        frame has a large spread relative to its near-zero mean, so testing
+        contrast at full resolution calls an occluded field "structured";
+        averaging removes the noise and leaves only real detail behind.
+        """
+        tiny = cv2.resize(small, (32, 32), interpolation=cv2.INTER_AREA)
+        mean = float(tiny.mean())
+        if mean <= 1e-6:
+            return False
+        return float(tiny.std()) / mean > 0.03
+
+    @staticmethod
+    def _which_side(small) -> int | None:
+        """Which half is darker: -1 for the left, +1 for the right, None if
+        the frame is too even to say."""
+        half = small.shape[1] // 2
+        left = float(small[:, :half].mean())
+        right = float(small[:, half:].mean())
+        spread = abs(left - right) / max(float(small.mean()), 1e-6)
+        if spread <= 0.15:
+            return None
+        return -1 if left < right else +1
+
     def _when_dark(self, small, mean):
+        """Mid-rotation. Read the direction, and work out when light returns.
+
+        Recovery used to be declared at 60% of the *previous objective's*
+        stable mean, which assumes the next objective is about as bright as
+        the last. On a real stand it is not: measured on a Zeiss in phase,
+        10x to 16x lands at 22% of the previous level and 16x to 25x at 39%,
+        because the phase annulus stops matching. Both are below the old
+        threshold, so the detector entered DARK and could never leave -- no
+        prompt for that rotation, and none for any rotation afterwards
+        either, since it stayed wedged.
+
+        Light returning is therefore judged against the *darkness*, not
+        against the old brightness. Anything meaningfully above the darkest
+        point is the objective arriving; and a level that simply goes quiet
+        without ever rising is a rotation whose occlusion we sampled too
+        briefly to see, which is equally an arrival.
+        """
+        self._dark_frames = getattr(self, "_dark_frames", 0) + 1
+        self._dark_min = min(getattr(self, "_dark_min", mean), mean)
+
         # Which half is darker *right now* tells us which side the occlusion
         # swept in from, and therefore the direction of rotation.
         if self._direction is None:
-            half = small.shape[1] // 2
-            left, right = small[:, :half].mean(), small[:, half:].mean()
-            spread = abs(left - right) / max(small.mean(), 1e-6)
-            if spread > 0.15:
-                # Raw reading: the darker half is the side the occlusion came
-                # from. The stand's sign turns that into an index direction.
-                raw = -1 if left < right else +1
-                self._direction = raw * self._sign
+            # Raw reading: the darker half is the side the occlusion came
+            # from. The stand's sign turns that into an index direction.
+            side = self._which_side(small)
+            if side:
+                self._raw_direction = side
+                self._direction = side * self._sign
 
-        if self._stable_mean and mean > self._stable_mean * 0.6:
+        levels = getattr(self, "_dark_levels", None)
+        if levels is None:
+            levels = self._dark_levels = []
+        levels.append(mean)
+        recent = levels[-self.SETTLE_FRAMES:]
+
+        risen = mean > self._dark_min * self.RECOVER_RISE
+        # A steady level is not the same as an arrival. A turret held
+        # mid-rotation is perfectly steady and perfectly black, so the quiet
+        # escape fired while the light path was still blocked and proposed an
+        # objective from an occluded frame. It has to see an actual image.
+        quiet = (len(recent) >= self.SETTLE_FRAMES
+                 and float(np.std(recent)) / max(float(np.mean(recent)), 1e-6)
+                 < self.SETTLE_TOLERANCE
+                 and self._has_image(small))
+        if risen or quiet:
             self._phase = Phase.SETTLING
             self._settle = []
+            return None
+
+        if self._dark_frames > self.DARK_PATIENCE:
+            # Give up rather than stay wedged: re-baseline on whatever is
+            # there now and watch again.
+            self._phase = Phase.STABLE
+            self._stable_mean = max(mean, 1e-6)
+            self._reference = small.copy()
+            self._pre_level = mean / self._scale
         return None
 
     def _when_settling(self, small, mean, turret, signatures=None):
@@ -303,7 +422,8 @@ class TurretDetector:
         if turret is None or not getattr(turret, "positions", None):
             return TurretEvent(self._direction, ratio, None, 0.3, False,
                                "objective change detected, turret unknown",
-                               level_ratio=level_ratio, level=level)
+                               level_ratio=level_ratio, level=level,
+                               raw_direction=self._raw_direction)
 
         n = len(turret.positions)
         current = turret.current
@@ -370,7 +490,8 @@ class TurretDetector:
                     self._direction, ratio, best,
                     0.95 if len(agreed) > 2 else 0.9, True,
                     " and ".join(agreed) + " agree",
-                    level_ratio=level_ratio, votes=named, level=level)
+                    level_ratio=level_ratio, votes=named, level=level,
+                    raw_direction=self._raw_direction)
 
             # Only one signal spoke. Say which, because a stand where the
             # same one is always alone is a stand with something to fix --
@@ -381,12 +502,15 @@ class TurretDetector:
                 return TurretEvent(
                     self._direction, ratio, None, 0.25, False,
                     "objective change detected, position unclear",
-                    level_ratio=level_ratio, votes=named, level=level)
+                    level_ratio=level_ratio, votes=named, level=level,
+                    raw_direction=self._raw_direction)
             return TurretEvent(self._direction, ratio, best, 0.5, False,
                                f"{only} only, unconfirmed",
                                level_ratio=level_ratio, votes=named,
-                               level=level)
+                               level=level,
+                               raw_direction=self._raw_direction)
 
         return TurretEvent(None, ratio, None, 0.2, False,
                            "objective change detected, position unclear",
-                           level_ratio=level_ratio, votes=named, level=level)
+                           level_ratio=level_ratio, votes=named, level=level,
+                    raw_direction=self._raw_direction)

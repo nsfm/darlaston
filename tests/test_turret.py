@@ -305,3 +305,154 @@ def test_a_confirmed_position_teaches_the_stand():
     # bright in brightfield and dark against a phase stop.
     values, known = scope.signatures("brightfield", [None] * 4)
     assert not any(known)
+
+
+# ---- the state machine surviving a real brightness step ---------------------
+
+def _levels_run(det, turret, before, after, drop_to, direction=+1):
+    """Feed steady/occluded/steady frames at given relative levels."""
+    import cv2
+    rng = np.random.default_rng(3)
+    texture = cv2.GaussianBlur((rng.random((256, 256)) * 255).astype(np.float32),
+                               (0, 0), 2.0)
+    out = None
+    for _ in range(25):
+        out = det.feed(texture * before, turret, 1.0) or out
+    for k in range(10):
+        img = (texture * before).copy()
+        cover = int(256 * (k + 1) / 10)
+        if direction > 0:
+            img[:, :cover] *= 0.015
+        else:
+            img[:, -cover:] *= 0.015
+        out = det.feed(img, turret, 1.0) or out
+    for _ in range(35):
+        out = det.feed(texture * drop_to, turret, 1.0) or out
+    return out
+
+
+def test_a_much_darker_objective_does_not_wedge_the_detector():
+    """Measured on a Zeiss in phase: 10x to 16x lands at 22% of the previous
+    level, and 16x to 25x at 39%, because the phase annulus stops matching.
+    Recovery used to be declared at 60% of the *old* level, so both were
+    below it -- the detector entered DARK, never left, and produced no
+    proposal for that rotation or for any rotation afterwards."""
+    for drop in (0.22, 0.39, 0.069):
+        det = TurretDetector(rotation_sign=SIGN)
+        turret = _turret(1)
+        event = _levels_run(det, turret, 1.0, None, drop)
+        assert event is not None, f"a drop to {drop:.0%} must still propose"
+        # And the detector must be watching again, not stuck.
+        assert det._phase.name == "STABLE"
+
+
+def test_a_much_brighter_objective_is_also_fine():
+    """The other direction: 6.3x to 10x is a fourteenfold rise in phase."""
+    det = TurretDetector(rotation_sign=SIGN)
+    event = _levels_run(det, _turret(0), 1.0, None, 14.5)
+    assert event is not None
+    assert det._phase.name == "STABLE"
+
+
+def test_the_detector_still_works_after_a_long_blackout():
+    """The requirement is not which phase it sits in while the lamp is off --
+    it is that turning the lamp back on and rotating still produces a
+    proposal. A detector that never works again is the fault to prevent."""
+    import cv2
+    det = TurretDetector(rotation_sign=SIGN)
+    det.DARK_PATIENCE = 30
+    turret = _turret(1)
+    rng = np.random.default_rng(2)
+    texture = cv2.GaussianBlur((rng.random((256, 256)) * 255).astype(np.float32),
+                               (0, 0), 2.0) + 150.0
+
+    for _ in range(25):
+        det.feed(texture, turret, 1.0)
+    for _ in range(200):                      # lamp off for a long while
+        det.feed(np.zeros((256, 256), np.float32), turret, 1.0)
+
+    event = _levels_run(det, turret, 1.0, None, 0.30)
+    assert event is not None, "must recover and detect again"
+
+
+def test_a_sweep_too_fast_to_sample_still_has_a_direction():
+    """Reported from the stand: the turret barely moves the image, then the
+    occlusion crosses in a few frames with an almost flat leading edge. If
+    every frame sampled during darkness is already uniformly black there is
+    no side left to read, so the edge is caught on its way in as well."""
+    import cv2
+    rng = np.random.default_rng(9)
+    texture = cv2.GaussianBlur((rng.random((256, 256)) * 255).astype(np.float32),
+                               (0, 0), 2.0) + 200.0
+
+    det = TurretDetector(rotation_sign=SIGN)
+    turret = _turret(1)
+    for _ in range(25):
+        det.feed(texture, turret, 1.0)
+
+    # One partly-covered frame, then straight to black: the whole sweep.
+    half_covered = texture.copy()
+    half_covered[:, :150] *= 0.015
+    det.feed(half_covered, turret, 1.0)
+    for _ in range(3):
+        det.feed(texture * 0.01, turret, 1.0)
+
+    assert det._direction is not None, \
+        "the single transitional frame must be enough"
+
+
+def test_relay_multiplies_into_total_magnification():
+    """A 1-2x C-mount adapter left at 2x doubles magnification at the sensor
+    exactly as the Optovar does, and leaving it out understated the f-number
+    and overstated how much slide a pixel covers."""
+    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
+                                         ScopeProfile, Setup)
+
+    scope = ScopeProfile(id="z", turret=_turret(2), optovar=[1.6],
+                         optovar_current=0)
+    plain = Setup(camera=CameraProfile(serial="x"), scope=scope,
+                  illumination=BUILTIN_ILLUMINATION[0])
+    relayed = Setup(camera=CameraProfile(serial="x", relay_factor=2.0),
+                    scope=scope, illumination=BUILTIN_ILLUMINATION[0])
+    assert plain.total_magnification == pytest.approx(40 * 1.6)
+    assert relayed.total_magnification == pytest.approx(40 * 1.6 * 2.0)
+
+
+def test_the_relay_does_not_disturb_turret_ratios():
+    """It is constant across positions, so it cancels in every comparison
+    detection makes -- which is why this was invisible until the metadata
+    was checked."""
+    turret = _turret(1)
+    assert turret.ratio_to(2) == pytest.approx(2.0)   # 20x -> 40x, relay free
+
+
+def test_the_raw_occlusion_reading_is_reported_separately():
+    """The application needs the reading *before* the optical path's sign is
+    applied, so that correcting a proposal can work out which sign was
+    right. Without it a correction teaches nothing."""
+    import cv2
+    rng = np.random.default_rng(6)
+    texture = cv2.GaussianBlur((rng.random((256, 256)) * 255).astype(np.float32),
+                               (0, 0), 2.0) + 200.0
+
+    seen = {}
+    for sign in (+1, -1):
+        det = TurretDetector(rotation_sign=sign)
+        turret = _turret(1)
+        for _ in range(25):
+            det.feed(texture, turret, 1.0)
+        covered = texture.copy()
+        covered[:, :150] *= 0.015
+        det.feed(covered, turret, 1.0)
+        for _ in range(4):
+            det.feed(texture * 0.01, turret, 1.0)
+        event = None
+        for _ in range(30):
+            event = det.feed(texture * 0.5, turret, 1.0) or event
+        assert event is not None
+        seen[sign] = event
+
+    # The raw reading is a fact about the image and does not move with the
+    # setting; the interpreted direction does.
+    assert seen[+1].raw_direction == seen[-1].raw_direction
+    assert seen[+1].direction == -seen[-1].direction

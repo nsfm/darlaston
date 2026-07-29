@@ -130,8 +130,23 @@ class SetupDialog(QtWidgets.QDialog):
                           "itself between sessions.")
 
         camera = QtWidgets.QFormLayout()
+        self.relay_factor = QtWidgets.QDoubleSpinBox()
+        self.relay_factor.setRange(0.1, 10.0)
+        self.relay_factor.setDecimals(2)
+        self.relay_factor.setSingleStep(0.1)
+        self.relay_factor.setPrefix("x ")
+        self.relay_factor.setValue(setup.camera.relay_factor or 1.0)
+        self.relay_factor.setToolTip(
+            "What the relay multiplies by, at the setting you use it.\n\n"
+            "It sits between the objective and the sensor, so it multiplies "
+            "into\ntotal magnification exactly as the Optovar does. A 1-2x "
+            "C-mount\nadapter left at 2x doubles the magnification at the "
+            "sensor, which\nchanges the f-number and how much slide each "
+            "pixel covers.")
+
         camera.addRow("Name", self.camera_name)
         camera.addRow("Relay / adapter", self.relay)
+        camera.addRow("Relay factor", self.relay_factor)
         camera.addRow("Serial", serial)
 
         # --- which stand. A camera that travels needs this; a camera that
@@ -178,17 +193,19 @@ class SetupDialog(QtWidgets.QDialog):
             "teaches the real value.")
 
         self.rotation_sign = QtWidgets.QComboBox()
-        self.rotation_sign.addItem("as entered", 1)
-        self.rotation_sign.addItem("reversed", -1)
+        self.rotation_sign.addItem("normal", 1)
+        self.rotation_sign.addItem("inverted", -1)
         self.rotation_sign.setCurrentIndex(
             0 if setup.scope.rotation_sign >= 0 else 1)
         self.rotation_sign.setToolTip(
-            "Which way round the turret detection counts.\n\nWhether a "
-            "darkening left edge means the next objective or the previous\n"
-            "one depends on how the turret is mounted and the order the\n"
-            "positions were entered here. There is no way to work it out from "
-            "the\nimage. If detection consistently names the objective on "
-            "the wrong side,\nswitch this.")
+            "How the image's handedness relates to the turret. Nothing to do "
+            "with\nwhether your turret is conventional.\n\nBetween the "
+            "turret moving and a pixel darkening, the handedness\npasses "
+            "through the objective (which inverts the image), the head and "
+            "any\nphoto tube, however the camera is screwed onto its "
+            "C-mount, and the\nraw stream arriving bottom-up. Four stages, "
+            "each able to flip a sign.\n\nYou should not need this: "
+            "correcting a wrong proposal once teaches it.")
 
         stand = QtWidgets.QFormLayout()
         stand.addRow("Microscope", picker_row)
@@ -196,7 +213,7 @@ class SetupDialog(QtWidgets.QDialog):
         stand.addRow("Condenser", self.condenser)
         stand.addRow("Condenser NA", self.condenser_na)
         stand.addRow("Optovar", self.optovar)
-        stand.addRow("Turret order", self.rotation_sign)
+        stand.addRow("Image handedness", self.rotation_sign)
 
         # --- turret, in physical order
         self.rows: list[ObjectiveRow] = []
@@ -342,7 +359,8 @@ class SetupDialog(QtWidgets.QDialog):
             serial=self._setup.camera.serial,
             name=self.camera_name.text().strip() or "Camera",
             model=self._setup.camera.model,
-            relay=self.relay.text().strip())
+            relay=self.relay.text().strip(),
+            relay_factor=self.relay_factor.value())
         positions = [row.value() for row in self.rows]
         while positions and positions[-1] is None:
             positions.pop()                     # trailing blanks are not gaps

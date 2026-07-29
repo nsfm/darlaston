@@ -310,13 +310,26 @@ Ordered within each section by how much it would change what gets built.
       objectives are none of those. Expect the magnification measurement to
       be the fragile half — log-polar correlation assumes a shared centre,
       and a badly parcentric turret breaks that assumption directly.
-- [x] ~~**Turret order is settable.**~~ Confirmed reversed on the Zeiss:
-      moving 6.3× → 10× proposed 40×, exactly one step the wrong way.
-      Instrument → Microscope setup… now has "Turret order: as entered /
-      reversed", alongside the condenser's working NA.
-- [ ] **A one-rotation sign calibration.** Better than a dropdown: turn the
-      turret once to a named position and let the app derive the sign. Small,
-      and removes the only setting whose meaning is hard to explain.
+- [x] ~~**Image handedness is settable, and self-teaching.**~~ Confirmed
+      inverted on the Zeiss: 6.3× → 10× proposed 40×, exactly one step the
+      wrong way. Settable in Microscope setup… beside the condenser's working
+      NA, but it should never need touching — one correction teaches it.
+- [x] ~~**Proposals fired mid-rotation.**~~ The settle-based escape from
+      darkness treated a *steady* level as an arrival, and a turret held
+      mid-turn is perfectly steady and perfectly black — so a proposal could
+      be made from an occluded frame, using measurements taken through the
+      turret body. Recovery now also requires an actual image, tested after
+      averaging down to 32 squares so that sensor noise on a black frame is
+      not mistaken for structure.
+- [x] ~~**The direction setting calibrates itself.**~~ Correcting one wrong
+      proposal now teaches it: the raw occlusion reading is reported
+      separately from the interpreted direction, so accepting a different
+      objective than the one suggested says exactly which sign was right, and
+      it is saved. Renamed from "turret order" to "image handedness", because
+      the old name implied a claim about the operator's turret when it is
+      really the product of four optical stages — the objective inverting the
+      image, the head and photo tube, however the camera is screwed onto its
+      C-mount, and our own vertical flip of the bottom-up raw stream.
 - [ ] **Brightness signatures on real glass.** The third signal is wired and
       learns from every confirmed rotation, per illumination mode — which
       matters most for the 6.3×, which has no phase ring and goes darkfield

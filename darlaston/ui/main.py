@@ -461,8 +461,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Even a corroborated reading is offered rather than applied. The
         # objective keys every calibration lookup, so being quietly wrong
         # here would attach the wrong flat to everything that followed.
-        certainty = ("direction and magnification agree" if event.agree
-                     else event.reason)
+        certainty = event.reason
+        # Kept so that correcting the proposal teaches the optical path's
+        # sign instead of asking the operator to reason about it.
+        self._last_proposal = event
         self.proposal.propose(f"Objective now {objective.label}?",
                               f"{certainty} · {event.confidence * 100:.0f}% sure",
                               (index, event.level))
@@ -471,6 +473,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.setup is None:
             return
         index, level = payload
+        self._learn_rotation_sign(int(index))
         # A confirmation is the only trustworthy label we ever get, so it is
         # also the moment to learn what that objective looks like.
         if level:
@@ -481,6 +484,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setup.scope.turret.current = int(index)
         self.objective.set_turret(self.setup.scope.turret)
         self._on_objective_changed()
+
+    def _learn_rotation_sign(self, actual: int) -> None:
+        """Work the sign out from a correction instead of asking.
+
+        Every confirmation is a labelled example: we know which side of the
+        frame darkened, and now we know which position the turret actually
+        reached. If the opposite sign would have predicted it and the current
+        one would not, the optical path is the other way round -- which is a
+        fact about prisms and how the camera is screwed on, not something the
+        operator should have to work out.
+        """
+        event = getattr(self, "_last_proposal", None)
+        self._last_proposal = None
+        if event is None or event.raw_direction is None or self.setup is None:
+            return
+        scope = self.setup.scope
+        turret = scope.turret
+        here = turret.current
+
+        def step(sign):
+            probe = type(turret)(list(turret.positions), here)
+            return probe.step(event.raw_direction * sign)
+
+        current_sign = 1 if scope.rotation_sign >= 0 else -1
+        if step(current_sign) == actual:
+            return                                   # already right
+        if step(-current_sign) != actual:
+            return                                   # neither; learn nothing
+        scope.rotation_sign = -current_sign
+        self.library.scopes[scope.id] = scope
+        self.library.save()
+        self.strip.set_note(
+            "turret direction learned — proposals should be right from now on")
 
     def _on_objective_changed(self) -> None:
         """Everything keyed on magnification is now stale."""

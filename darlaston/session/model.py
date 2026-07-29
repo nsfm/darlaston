@@ -141,6 +141,13 @@ class CameraProfile:
     name: str = "Camera"
     model: str = ""
     relay: str = ""              # travels with the camera, not the scope
+    #: What the relay actually multiplies by. It sits between the objective
+    #: and the sensor, so it belongs in the magnification chain like the
+    #: Optovar does -- and leaving it out understated total magnification by
+    #: exactly its factor, which then understated the f-number and overstated
+    #: how much slide each pixel covers. A 2x relay is two stops of
+    #: difference in the number a raw developer shows.
+    relay_factor: float = 1.0
     last_scope: str | None = None
 
     @property
@@ -257,8 +264,17 @@ class Setup:
 
     @property
     def total_magnification(self) -> float | None:
+        """Objective x Optovar x relay -- everything between slide and sensor.
+
+        All three multiply. The relay is easy to forget because it is bought
+        separately and screwed on once, but a 1-2x C-mount adapter set to 2x
+        doubles the magnification at the sensor as surely as the Optovar does.
+        """
         obj = self.scope.turret.objective
-        return obj.magnification * self.scope.optovar_factor if obj else None
+        if obj is None:
+            return None
+        return (obj.magnification * self.scope.optovar_factor
+                * max(self.camera.relay_factor, 1e-6))
 
     def calibration_key(self) -> str:
         """What a flat is valid for. Deliberately excludes the slide, which the
