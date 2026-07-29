@@ -43,10 +43,23 @@ Ordered within each section by how much it would change what gets built.
       its consumers are insensitive to that (16.6 → 4.9 ms at half size), and
       coverage recomputed its structure mask three times per update and used
       boolean-mask indexing to average (13.7 → 1.3 ms).
-- [ ] **Profile the UI thread too.** The analysis loop is now well inside
-      budget, so if frame rate still disappoints on hardware the next suspect
-      is painting — the map canvas redraws every banked thumbnail on every
-      position change, which is cheap at 20 fields and may not be at 200.
+- [x] ~~**UI thread profiled too.**~~ Qt was smooth-scaling a 2.2 MP frame to
+      the widget every paint (15.5 ms with the peaking overlay); the resize
+      moved to OpenCV in `set_frame` and painting became a blit, 15.5 → 1.7 ms.
+      The peaking overlay's `np.quantile` sorted the whole field to find one
+      element, 5.2 → 0.87 ms with a partition. Instruments repaint at a third
+      of frame rate. The mock camera itself cost 61 ms/frame while cranking
+      and had been the real bottleneck in every earlier measurement.
+- [x] ~~**Frame rate is adjustable.**~~ 60 was too much on real hardware:
+      25–45 fps with a quarter of frames discarded, and every dropped frame
+      was still pulled over USB with the driver holding the GIL. Default 40,
+      selectable in the status bar (15/24/30/40/60/uncapped) because the right
+      number depends on the machine, the link and the preview resolution — and
+      because pinning a CPU to render frames nobody sees is not a feature.
+- [ ] **Does 40 hold?** Watch the drop percentage in the status bar. If it is
+      still climbing, the next suspect is the map canvas, which redraws every
+      banked thumbnail on every position change — cheap at 20 fields, unknown
+      at 200.
 - [x] ~~**Calibration engine.**~~ Store keyed by product lifetime, dark
       averaging with a defect map, flat medianing with per-Bayer-phase
       normalisation, measured white balance, opportunistic blank banking, and
@@ -177,6 +190,20 @@ Ordered within each section by how much it would change what gets built.
       other four bits were always zeroes. Averaged frames stay 16-bit — the
       mean carries real sub-LSB precision and packing it would throw away
       exactly the SNR the burst paid for.
+- [x] ~~**pidng removed entirely.**~~ Nothing outside `camera/` now depends on
+      anything but numpy, OpenCV and Qt. `process/dng.py` is the DNG
+      vocabulary; `process/tiff.py` writes the bytes. The Software tag reads
+      `darlaston` alone — pidng was stamping itself into every file we made.
+- [x] ~~**Optics in the fields raw editors show.**~~ Both derived, neither
+      invented: focal length is the stand's tube length over the objective's
+      magnification (160/40 = 4 mm on a Zeiss Universal, and tube length is
+      now a scope property, since infinity stands use a tube *lens* focal
+      length instead), and the f-number is total magnification over twice the
+      NA, because the cone reaching the sensor has NA_image = NA_obj / M. A
+      40×/0.75 writes f/26.7 — which is the honest explanation for why more
+      magnification stops adding detail. Verified with exiv2: F27, 4.0 mm,
+      ISO 100, lens "40x/0.75". Missing NA writes no f-number rather than a
+      guess.
 - [ ] **Binned capture as a size option.** `grab_raw` hard-codes full
       resolution. The sensor's own binned modes would give 7.5 MB at
       2736×1824 and 3.3 MB at 1824×1216, packed — a real choice for survey

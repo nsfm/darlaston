@@ -84,12 +84,16 @@ class CameraSession:
         #: binding constraint rather than a sensible ceiling: a reported
         #: 27 fps was 90% of our own cap, not evidence of a bottleneck.
         #:
-        #: Raised to 60 with the caveat that the link may bind first: the
-        #: preview is 24-bit RGB, so 1824x1216 at 30 fps is already ~200 MB/s
-        #: and 60 would want ~400, which is past what USB 3 delivers in
-        #: practice. Where that bites, the honest lever is a smaller preview
-        #: resolution, which is now a control in the status bar. 0 disables.
-        self.framerate_cap = 60
+        #: 60 was tried and was too much: on real hardware it produced 25-45
+        #: fps with a quarter of frames discarded, which is the failure this
+        #: cap exists to prevent -- every dropped frame was still pulled over
+        #: USB with the SDK's thread holding the GIL. 40 asks for slightly
+        #: more than the loop sustains without paying for frames nobody sees,
+        #: and it is adjustable in the status bar because the right number
+        #: depends on the machine, the link and the preview resolution. It is
+        #: also a courtesy: pinning a CPU to render frames the eye cannot use
+        #: is not a feature. 0 disables the cap.
+        self.framerate_cap = 40
 
         self._status = SessionStatus(CameraState.DISCONNECTED,
                                      message="Waiting for a camera")
@@ -167,6 +171,19 @@ class CameraSession:
             # here would race with it.
             import traceback
             traceback.print_exc()
+            return False
+
+    def set_framerate_cap(self, fps: int) -> bool:
+        """Ask the camera for a different rate. No restart needed."""
+        self.framerate_cap = int(fps)
+        with self._lock:
+            backend = self._backend
+        if backend is None or not hasattr(backend, "set_framerate_cap"):
+            return False
+        try:
+            backend.set_framerate_cap(self.framerate_cap)
+            return True
+        except Exception:
             return False
 
     def set_exposure(self, microseconds: int) -> None:

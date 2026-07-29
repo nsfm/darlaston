@@ -156,6 +156,19 @@ class StatusBar(QtWidgets.QFrame):
             f"QComboBox:hover {{ color: {theme.INK}; }}"
             f"QComboBox::drop-down {{ border: 0; width: 12px; }}")
 
+        # Frame rate, beside resolution: the two knobs that trade preview
+        # quality against load, and the pair a person reaches for together.
+        self.rate = QtWidgets.QComboBox()
+        self.rate.setProperty("role", "sub")
+        self.rate.setToolTip(
+            "How many frames a second to ask the camera for.\n"
+            "Frames we cannot analyse in time are still pulled over USB with\n"
+            "the driver holding the interpreter, so asking for fewer beats\n"
+            "discarding more. Watch the drop percentage to the right.")
+        self.rate.setStyleSheet(self.preview.styleSheet())
+        for fps in (15, 24, 30, 40, 60, 0):
+            self.rate.addItem("uncapped" if fps == 0 else f"{fps} fps", fps)
+
         self.numbers = QtWidgets.QLabel("")
         self.numbers.setProperty("role", "sub")
 
@@ -167,10 +180,18 @@ class StatusBar(QtWidgets.QFrame):
         row.addWidget(self.context)
         row.addStretch(1)
         row.addWidget(self.preview)
+        row.addWidget(self.rate)
         row.addWidget(self.numbers)
         self._base = ""
         self._note = ""
         self._res_filled = False
+
+    def select_rate(self, fps: int) -> None:
+        at = self.rate.findData(int(fps))
+        if at >= 0 and at != self.rate.currentIndex():
+            self.rate.blockSignals(True)
+            self.rate.setCurrentIndex(at)
+            self.rate.blockSignals(False)
 
     def select_resolution(self, index: int) -> None:
         """Reflect the session's actual choice without re-firing the signal."""

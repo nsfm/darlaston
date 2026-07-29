@@ -163,6 +163,13 @@ class ScopeProfile:
     optovar: list[float] = field(default_factory=list)
     optovar_current: int = 0
     condenser: str = ""
+    #: Mechanical tube length, in millimetres. It is what turns an
+    #: objective's magnification into a focal length: f = tube / M. 160 is
+    #: the DIN finite-conjugate standard and what a 1960s Zeiss Universal
+    #: uses. Infinity-corrected stands have no tube length as such -- their
+    #: tube *lens* focal length takes the same place (165 Zeiss, 200 Nikon
+    #: and Leica, 180 Olympus), so the field carries that instead.
+    tube_length_mm: float = 160.0
 
     @property
     def optovar_factor(self) -> float:

@@ -193,6 +193,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.strip = StatusBar()
         self.strip.preview.currentIndexChanged.connect(self._on_preview_res)
+        self.strip.rate.currentIndexChanged.connect(self._on_rate)
 
         col = QtWidgets.QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
@@ -320,6 +321,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.strip.update_status(status, self.setup)
         self.strip.select_resolution(self.session.preview_resolution)
+        self.strip.select_rate(self.session.framerate_cap)
 
         if status.is_live and not self._synced:
             self._adopt_camera_settings()
@@ -404,6 +406,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
+
+    def _on_rate(self, at: int) -> None:
+        fps = self.strip.rate.itemData(at)
+        if fps is None:
+            return
+        self.session.set_framerate_cap(int(fps))
 
     def _on_region(self, region: Region) -> None:
         self.pipeline.set_focus_region(region)

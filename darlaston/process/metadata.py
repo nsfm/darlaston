@@ -45,6 +45,20 @@ class CaptureMetadata:
     lens_model: str = ""              # the objective
     exposure_seconds: float | None = None
     iso: int | None = None            # analogue gain, expressed photographically
+    #: The objective's own focal length, tube length / magnification. A real
+    #: physical property of the lens, and the field a raw editor shows most
+    #: prominently after exposure. Any "35mm equivalent" an editor computes
+    #: from it will be nonsense, but that is the editor inferring, not us
+    #: lying: a 40x objective on a 160 mm stand really is a 4 mm lens.
+    focal_length_mm: float | None = None
+    #: Image-side working f-number, M / (2·NA).
+    #:
+    #: This is the one that earns its place. The light cone reaching the
+    #: sensor has NA_image = NA_objective / M, so a 40x/0.75 delivers f/26.7
+    #: -- and that number, not the objective's NA, is what sets the
+    #: diffraction limit at the pixel. Seeing f/27 in a raw editor is the
+    #: honest explanation for why more magnification stops adding detail.
+    f_number: float | None = None
     description: str = ""             # human sentence
     comment: str = ""                 # structured key=value, machine-readable
     software: str = ""
@@ -109,6 +123,19 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     }
     comment = " ".join(f"{k}={v}" for k, v in fields.items() if v)
 
+    # Optics, in the fields a photographer reads. Both are derived rather
+    # than assumed: focal length needs the stand's tube length, f-number
+    # needs the objective's NA, and either being absent means we write
+    # nothing rather than a plausible guess.
+    focal = None
+    fnum = None
+    if obj and obj.magnification:
+        focal = scope.tube_length_mm / obj.magnification
+        if obj.na and total:
+            # NA at the image is NA_obj / M_total, and f-number is the
+            # reciprocal of twice that.
+            fnum = total / (2.0 * obj.na)
+
     return CaptureMetadata(
         model=cam.model or cam.name,
         unique_camera_model=cam.model,
@@ -119,6 +146,8 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         # Gain is a multiplier on an already-collected signal, which is exactly
         # what ISO describes. 100% gain reads as ISO 100.
         iso=int(round(gain_pct)),
+        focal_length_mm=focal,
+        f_number=fnum,
         description=description,
         comment=comment,
         software=f"darlaston {app_version}".strip(),

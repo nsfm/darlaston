@@ -1,8 +1,4 @@
-"""The capture path: bursts, averaging arithmetic, and the moved verdict.
-
-Needs pidng (the DNG writer); skipped wholesale where only the analysis
-dependencies are installed.
-"""
+"""The capture path: bursts, averaging arithmetic, and the moved verdict."""
 import threading
 from pathlib import Path
 import types
@@ -11,11 +7,20 @@ import cv2
 import numpy as np
 import pytest
 
-pytest.importorskip("pidng")
-
 from darlaston.camera.mock import MockCamera
 from darlaston.capture.still import CaptureResult, StillCapture
 from darlaston.session.settings import Settings
+
+
+def write_dng(path, raw, **kw):
+    """A one-shot Bayer DNG, for tests that just need a file on disk."""
+    from darlaston.process import dng
+    from darlaston.process.tiff import make_preview
+    h, w = raw.shape
+    return dng.write_bayer_streamed(
+        path, lambda s, c: raw[s:s + c], h, w,
+        preview=make_preview(raw, bayer=True, white=kw.pop("white", 4095)),
+        **kw)
 
 
 def _shoot(tmp_path, frames=1, pipeline=None, cam=None):
@@ -51,9 +56,8 @@ def test_burst_averages_and_says_so(tmp_path):
     assert r.ok, r.message
     assert len(grabs) == 4
     assert "avg4" in r.summary
-    # The averaged file is meaningfully larger than 12 bits of range: pidng
-    # writes uint16 either way, so size equality is expected -- what matters
-    # is that it exists and reported itself.
+    # What matters is that it exists and reported itself; the size
+    # question is covered properly in test_tiff.
     assert r.path.exists()
 
 
@@ -233,7 +237,7 @@ def test_dng_reader_roundtrips_our_own_files(tmp_path):
     from darlaston.process.stitch import read_bayer_dng
 
     raw = (np.arange(64 * 64, dtype=np.uint16) % 4096).reshape(64, 64)
-    path = dng.write_bayer(tmp_path / "t.dng", raw)
+    path = write_dng(tmp_path / "t.dng", raw)
     back = read_bayer_dng(path)
     assert back.shape == (64, 64)
     assert np.array_equal(back, raw)
@@ -260,7 +264,7 @@ def test_stitch_recovers_truth_from_a_drifted_manifest(tmp_path):
         with frame:
             raw = frame.copy()
         p = tmp_path / f"c{i}.dng"
-        dng.write_bayer(p, raw)
+        write_dng(p, raw)
         px = ux / 2.4 * (1824 / 5440) + drift[i][0]
         py = uy / 2.4 * (1216 / 3648) + drift[i][1]
         session.adopt(p, (px, py), (1824, 1216))
@@ -383,7 +387,7 @@ def test_banded_composite_matches_a_whole_canvas():
         for i in range(3):
             raw = (rng.integers(200, 3000, (120, 160))).astype(np.uint16)
             p = Path(td) / f"c{i}.dng"
-            dng.write_bayer(p, raw)
+            write_dng(p, raw)
             session.adopt(p, (i * 120.0, 0.0), (160, 120))
             shapes.append((120, 160))
             positions.append((i * 120.0, 0.0))

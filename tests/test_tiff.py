@@ -169,3 +169,49 @@ def test_linear_composite_round_trips(tmp_path):
     off = sub[273][2] if sub[273][1] == 1 else None
     counts = sub[279][1]
     assert counts >= 1
+
+
+# ---- the optics, in fields a photographer reads ----------------------------
+
+def test_objective_becomes_focal_length_and_f_number():
+    """A microscope objective *is* a lens, and both numbers are derivable
+    rather than invented: f = tube length / magnification, and the f-number
+    at the sensor is M / (2·NA) because NA_image = NA_objective / M."""
+    from darlaston.process.metadata import from_setup
+    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
+                                         Objective, ScopeProfile, Setup,
+                                         Turret)
+
+    scope = ScopeProfile(id="z", name="Zeiss Universal",
+                         turret=Turret([Objective(40, 0.75)], current=0),
+                         optovar=[1.0], optovar_current=0)
+    setup = Setup(camera=CameraProfile(serial="x", name="cam"), scope=scope,
+                  illumination=BUILTIN_ILLUMINATION[0])
+    meta = from_setup(setup, exposure_us=8330, gain_pct=100)
+
+    assert meta.focal_length_mm == pytest.approx(4.0)     # 160 / 40
+    assert meta.f_number == pytest.approx(26.667, rel=1e-3)
+    assert meta.iso == 100
+
+    # The Optovar multiplies total magnification, so it moves the f-number
+    # -- more magnification means a dimmer, more diffraction-limited cone --
+    # but not the objective's own focal length.
+    scope.optovar = [1.6]
+    meta = from_setup(setup, exposure_us=8330, gain_pct=100)
+    assert meta.focal_length_mm == pytest.approx(4.0)
+    assert meta.f_number == pytest.approx(64.0 / 1.5, rel=1e-3)
+
+
+def test_no_optics_means_no_invented_numbers():
+    """An objective with no NA recorded must leave the f-number empty rather
+    than guess one."""
+    from darlaston.process.metadata import from_setup
+    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
+                                         Objective, ScopeProfile, Setup,
+                                         Turret)
+    scope = ScopeProfile(id="z", turret=Turret([Objective(10)], current=0))
+    setup = Setup(camera=CameraProfile(serial="x"), scope=scope,
+                  illumination=BUILTIN_ILLUMINATION[0])
+    meta = from_setup(setup, exposure_us=1000, gain_pct=100)
+    assert meta.focal_length_mm == pytest.approx(16.0)
+    assert meta.f_number is None
