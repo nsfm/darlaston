@@ -203,8 +203,14 @@ class LivePipeline:
             coverage_acc = self._coverage
 
         data = frame.data
-        gray = (cv2.cvtColor(data, cv2.COLOR_BGR2GRAY) if data.ndim == 3
-                else data)
+        # Green rather than luminance, for the same reason the clipping
+        # warning uses it: the ISP boosts blue about three times to neutralise
+        # this sensor, so blue pins in the preview at roughly a fifth of full
+        # scale. Luminance carries that in, which makes the focus score sag
+        # from preview clipping that is not sensor clipping at all. Green
+        # saturates within a few percent of the sensor's own ceiling, and it
+        # carries most of the detail regardless.
+        gray = data[:, :, 1].copy() if data.ndim == 3 else data
 
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
         total = float(gray.size)

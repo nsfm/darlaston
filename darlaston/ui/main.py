@@ -159,11 +159,6 @@ class MainWindow(QtWidgets.QMainWindow):
         col.setContentsMargins(14, 14, 14, 14)
         col.setSpacing(18)
 
-        # What is on the slide. Only the operator knows it, and it is the
-        # difference between an archive and a folder of numbered files.
-        self.subject = SubjectField()
-        col.addLayout(_group("subject", self.subject))
-
         self.calib_panel = CalibrationPanel()
         self.calib_panel.capture_dark.connect(self._do_dark)
         self.calib_panel.build_flat.connect(self._do_flat)
@@ -172,16 +167,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         col.addLayout(_group("exposure", self.histogram))
         col.addLayout(_group("focus", self.trace))
-
-        # Optics — the two things that change several times a sitting.
-        self.objective = ObjectiveStepper()
-        self.illumination = QtWidgets.QComboBox()
-        for mode in BUILTIN_ILLUMINATION:
-            self.illumination.addItem(mode.display, mode)
-        self.illumination.currentIndexChanged.connect(self._on_illumination)
-        optics = _group("optics", self.objective)
-        optics.addWidget(self.illumination)
-        col.addLayout(optics)
 
         # Sensor
         self.exposure = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -246,6 +231,21 @@ class MainWindow(QtWidgets.QMainWindow):
         col.addWidget(self.coverage)
 
         col.addStretch(1)
+
+        # Subject and optics sit closest to the shutter: they are what this
+        # particular shot is *of*, and they change more often than anything
+        # above them. Everything higher up is instrument state.
+        self.subject = SubjectField()
+        col.addLayout(_group("subject", self.subject))
+
+        self.objective = ObjectiveStepper()
+        self.illumination = QtWidgets.QComboBox()
+        for mode in BUILTIN_ILLUMINATION:
+            self.illumination.addItem(mode.display, mode)
+        self.illumination.currentIndexChanged.connect(self._on_illumination)
+        optics = _group("optics", self.objective)
+        optics.addWidget(self.illumination)
+        col.addLayout(optics)
 
         self.shutter = ShutterButton()
         self.shutter.clicked.connect(self._on_capture)

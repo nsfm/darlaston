@@ -61,7 +61,7 @@ class Chip(QtWidgets.QLabel):
     def _restyle(self) -> None:
         colour = theme.BRASS if self._active else theme.DIM
         self.setStyleSheet(
-            f"border:1px solid {colour}; border-radius:3px;"
+            f"border:1px solid {colour}; border-radius:3px; margin:1px;"
             f"padding:1px 7px; color:{colour}; font-size:11px;")
 
 

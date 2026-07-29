@@ -47,6 +47,7 @@ class ShutterButton(QtWidgets.QPushButton):
         colour = theme.DIM if (busy or not self.isEnabled()) else theme.BRASS
         self.setStyleSheet(
             f"QPushButton {{ border: 1px solid {colour}; border-radius: 4px;"
+            f" margin: 1px;"
             f" color: {colour}; font-size: 14px; letter-spacing: 1px;"
             f" background: transparent; }}"
             f"QPushButton:hover:enabled {{ background: rgba(200,155,74,0.10); }}"
@@ -66,6 +67,7 @@ class SubjectField(QtWidgets.QWidget):
         self.edit.textChanged.connect(self.changed)
         self.edit.setStyleSheet(
             f"QLineEdit {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
+            f" margin: 1px;"
             f" padding: 5px 7px; background: {theme.SUNK}; }}"
             f"QLineEdit:focus {{ border-color: {theme.BRASS}; }}")
 

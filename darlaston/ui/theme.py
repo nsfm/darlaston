@@ -94,8 +94,17 @@ def stylesheet() -> str:
     QLabel[role="advice"] {{ color: {BRASS}; font-size: 12px; }}
     QLabel[role="fault"] {{ font-size: 15px; font-weight: 600; color: {BAD}; }}
 
+    /* Bordered widgets are inset by a pixel throughout.
+       On a fractional device pixel ratio -- any HiDPI display with
+       non-integer scaling -- a border flush against the widget's clip
+       boundary loses its outermost device pixel, and the left edge simply
+       does not draw. Measured: at 1.5x the left column rendered at 151
+       against 236 on the right; inset by one pixel it renders at 239.
+       A thicker border does not help, because the problem is the boundary
+       rather than the weight. */
     QFrame[role="panel"] {{
         background: {PANEL}; border: 1px solid {LINE}; border-radius: 4px;
+        margin: 1px;
     }}
     QFrame[role="bar"] {{
         background: {PANEL}; border: 0; border-bottom: 1px solid {LINE};
@@ -103,7 +112,7 @@ def stylesheet() -> str:
 
     QPushButton {{
         font-family: "{fam['mono']}";
-        border: 1px solid {LINE}; border-radius: 3px;
+        border: 1px solid {LINE}; border-radius: 3px; margin: 1px;
         padding: 6px 12px; color: {INK}; background: transparent;
     }}
     QPushButton:hover {{ border-color: {DIM}; }}
@@ -122,6 +131,7 @@ def stylesheet() -> str:
     QComboBox {{
         font-family: "{fam['mono']}";
         border: 1px solid {LINE}; border-radius: 3px; padding: 4px 6px;
+        margin: 1px;
     }}
     QComboBox:focus {{ border-color: {BRASS}; }}
     QComboBox QAbstractItemView {{
@@ -131,6 +141,7 @@ def stylesheet() -> str:
     QCheckBox {{ font-family: "{fam['mono']}"; spacing: 7px; }}
     QCheckBox::indicator {{
         width: 12px; height: 12px; border: 1px solid {LINE}; border-radius: 2px;
+        margin: 1px;
     }}
     QCheckBox::indicator:checked {{ background: {BRASS}; border-color: {BRASS}; }}
 
@@ -144,7 +155,7 @@ def stylesheet() -> str:
        dark interface and looks like it belongs to a different application. */
     QToolTip {{
         background: {PANEL}; color: {INK};
-        border: 1px solid {BRASS}; border-radius: 3px;
+        border: 1px solid {BRASS}; border-radius: 3px; margin: 1px;
         padding: 6px 8px; font-family: "{fam['sans']}"; font-size: 12px;
         opacity: 240;
     }}
@@ -158,14 +169,15 @@ def stylesheet() -> str:
     QMenu::separator {{ height: 1px; background: {LINE}; margin: 4px 6px; }}
 
     QPushButton[role="menu"] {{
-        border: 0; padding: 5px 10px; color: {DIM};
+        border: 0; margin: 0; padding: 5px 10px; color: {DIM};
         font-family: "{fam['mono']}"; font-size: 12px;
     }}
     QPushButton[role="menu"]:hover {{ color: {INK}; }}
 
     QPushButton[role="wordmark"] {{
-        border: 0; padding: 4px 10px; color: {DIM};
-        font-family: "{fam['sans']}"; font-size: 13px; font-style: italic;
+        border: 0; margin: 0; padding: 4px 10px; color: {DIM};
+        font-family: "{fam['sans']}"; font-size: 14px; font-style: italic;
+        font-weight: 700; letter-spacing: 0.3px;
     }}
     QPushButton[role="wordmark"]:hover {{ color: {BRASS}; }}
     """
