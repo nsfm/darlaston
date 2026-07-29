@@ -324,6 +324,15 @@ Ordered within each section by how much it would change what gets built.
       swap). Real darkfield tiles are the acid test. Undo does not yet
       re-anchor if tile 1 is undone (edge case: undoing the origin tile).
 
+- [ ] **Docs sync pass.** DISCOVERY/DESIGN/ARCHITECTURE predate the own-DNG
+      writer, Z-stacks, turret detection, the floating-panel UI and the
+      re-mosaic output. TODO.md has carried the state; the design docs should
+      catch up in one deliberate pass rather than dribble.
+- [ ] **Strip Co-Authored-By trailers when re-signing.** Every commit from
+      the 2026-07-28/29 sessions carries one against Nate's standing
+      preference (harness default won silently). `git rebase` + `--no-gpg-sign`
+      removal pass pending anyway for signatures.
+
 ## Capture features
 
 - [x] ~~**Timelapse.**~~ Capture menu → dialog (interval, count or
