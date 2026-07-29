@@ -325,7 +325,11 @@ Ordered within each section by how much it would change what gets built.
       proposal now teaches it: the raw occlusion reading is reported
       separately from the interpreted direction, so accepting a different
       objective than the one suggested says exactly which sign was right, and
-      it is saved. Renamed from "turret order" to "image handedness", because
+      it is saved — from the proposal bar *or* from the objective stepper,
+      because reaching for the stepper is the natural motion when a
+      suggestion is wrong. And until it is confirmed the bar offers **both**
+      candidate objectives rather than picking one and being wrong half the
+      time. Renamed from "turret order" to "image handedness", because
       the old name implied a claim about the operator's turret when it is
       really the product of four optical stages — the objective inverting the
       image, the head and photo tube, however the camera is screwed onto its

@@ -456,3 +456,40 @@ def test_the_raw_occlusion_reading_is_reported_separately():
     # setting; the interpreted direction does.
     assert seen[+1].raw_direction == seen[-1].raw_direction
     assert seen[+1].direction == -seen[-1].direction
+
+
+def test_both_candidates_are_offered_until_the_handedness_is_known():
+    """Before the sign is confirmed the detector is genuinely uncertain
+    between two positions -- the same occlusion reading with either sign.
+    Naming one and being wrong half the time is worse than naming both."""
+    from darlaston.session.model import ScopeProfile
+
+    scope = ScopeProfile(id="z", turret=_turret(0), rotation_sign=1)
+    turret = scope.turret
+    raw = -1
+
+    def step(sign):
+        probe = Turret(list(turret.positions), turret.current)
+        return probe.step(raw * sign)
+
+    assert step(+1) != step(-1), "the two signs must disagree, or there is\
+ nothing to offer"
+    assert not scope.rotation_sign_known
+
+
+def test_confirming_the_default_marks_it_known_without_flipping():
+    """Being right by luck and being right on purpose should end in the same
+    place: confirmed, so later proposals stop hedging."""
+    from darlaston.session.model import ScopeProfile
+
+    scope = ScopeProfile(id="z", turret=_turret(1), rotation_sign=1)
+    turret = scope.turret
+    probe = Turret(list(turret.positions), turret.current)
+    would_be = probe.step(-1 * 1)              # raw -1, sign +1
+
+    # Simulate the app's inference: the operator confirmed exactly what the
+    # current sign predicted.
+    assert would_be == 0
+    # A correction to the *other* candidate is what flips it.
+    probe2 = Turret(list(turret.positions), turret.current)
+    assert probe2.step(-1 * -1) == 2

@@ -27,7 +27,7 @@ TIMEOUT_MS = 20_000
 class ProposalBar(QtWidgets.QWidget):
     """One line, two buttons, over the image."""
 
-    accepted = QtCore.Signal(object)          # carries the payload
+    accepted = QtCore.Signal(object)          # carries the chosen payload
     dismissed = QtCore.Signal()
 
     def __init__(self, host: QtWidgets.QWidget) -> None:
@@ -40,17 +40,17 @@ class ProposalBar(QtWidgets.QWidget):
         self.detail = QtWidgets.QLabel("")
         self.detail.setStyleSheet(f"color: {theme.DIM}; font-size: 10px;")
 
-        self.yes = QtWidgets.QPushButton("Yes")
+        # Buttons are built per proposal, because how many there are is the
+        # message. When the detector knows which objective it is, one button
+        # says yes; when it knows only that the turret moved and which pair
+        # it is between, two buttons name both -- which is the honest offer,
+        # and keeps every click in one place instead of sending the operator
+        # to the rail to correct it.
+        self._buttons: list[QtWidgets.QPushButton] = []
         self.no = QtWidgets.QPushButton("No")
-        for b, colour in ((self.yes, theme.BRASS), (self.no, theme.DIM)):
-            b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-            b.setFixedHeight(24)
-            b.setStyleSheet(
-                f"QPushButton {{ border: 1px solid {colour};"
-                f" border-radius: 12px; margin: 1px; padding: 2px 14px;"
-                f" color: {colour}; background: transparent; }}"
-                f"QPushButton:hover {{ background: rgba(200,155,74,0.12); }}")
-        self.yes.clicked.connect(self._accept)
+        self.no.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.no.setFixedHeight(24)
+        self.no.setStyleSheet(self._style(theme.DIM))
         self.no.clicked.connect(self._dismiss)
 
         words = QtWidgets.QVBoxLayout()
@@ -59,12 +59,11 @@ class ProposalBar(QtWidgets.QWidget):
         words.addWidget(self.text)
         words.addWidget(self.detail)
 
-        row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(14, 8, 10, 8)
-        row.setSpacing(10)
-        row.addLayout(words, 1)
-        row.addWidget(self.no)
-        row.addWidget(self.yes)
+        self._row = QtWidgets.QHBoxLayout(self)
+        self._row.setContentsMargins(14, 8, 10, 8)
+        self._row.setSpacing(8)
+        self._row.addLayout(words, 1)
+        self._row.addWidget(self.no)
 
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
@@ -73,10 +72,30 @@ class ProposalBar(QtWidgets.QWidget):
 
     # ---- showing ---------------------------------------------------------
 
-    def propose(self, text: str, detail: str, payload) -> None:
+    @staticmethod
+    def _style(colour: str) -> str:
+        return (f"QPushButton {{ border: 1px solid {colour};"
+                f" border-radius: 12px; margin: 1px; padding: 2px 14px;"
+                f" color: {colour}; background: transparent; }}"
+                f"QPushButton:hover {{ background: rgba(200,155,74,0.12); }}")
+
+    def propose(self, text: str, detail: str, choices) -> None:
+        """`choices` is a list of (label, payload), most likely first."""
+        for b in self._buttons:
+            self._row.removeWidget(b)
+            b.deleteLater()
+        self._buttons = []
+
         self.text.setText(text)
         self.detail.setText(detail)
-        self._payload = payload
+        for label, payload in choices:
+            b = QtWidgets.QPushButton(label)
+            b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            b.setFixedHeight(24)
+            b.setStyleSheet(self._style(theme.BRASS))
+            b.clicked.connect(lambda _=False, p=payload: self._choose(p))
+            self._buttons.append(b)
+            self._row.addWidget(b)
         self.adjustSize()
         self.place()
         self.show()
@@ -88,10 +107,10 @@ class ProposalBar(QtWidgets.QWidget):
         self.setFixedWidth(w)
         self.move((self._host.width() - w) // 2, 18)
 
-    def _accept(self) -> None:
+    def _choose(self, payload) -> None:
         self._timer.stop()
         self.hide()
-        self.accepted.emit(self._payload)
+        self.accepted.emit(payload)
 
     def _dismiss(self) -> None:
         self._timer.stop()

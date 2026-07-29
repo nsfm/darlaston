@@ -193,6 +193,10 @@ class ScopeProfile:
     #: stand where detection is consistently one position out has this
     #: the wrong way round.
     rotation_sign: int = 1
+    #: Has the handedness been confirmed by a correction, or is it still the
+    #: default guess? Until it is known the proposal offers *both* candidate
+    #: objectives rather than picking one and being wrong half the time.
+    rotation_sign_known: bool = False
     #: Working numerical aperture of the condenser. It sets how bright each
     #: objective is, because the *smaller* of the two apertures is what
     #: actually gathers light -- and above about NA 0.5 that is the
