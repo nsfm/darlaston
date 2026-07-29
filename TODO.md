@@ -310,12 +310,18 @@ Ordered within each section by how much it would change what gets built.
       objectives are none of those. Expect the magnification measurement to
       be the fragile half — log-polar correlation assumes a shared centre,
       and a badly parcentric turret breaks that assumption directly.
-- [ ] **Which way does the Zeiss turn?** `ScopeProfile.rotation_sign` exists
-      because the mapping from "the left edge darkened" to "the index went
-      up" depends on how the turret is mounted and the order positions were
-      entered. There is no way to derive it. If detection is consistently one
-      position out in the wrong direction, that field is the fix — and it
-      wants a UI, or better, a one-rotation calibration step.
+- [x] ~~**Turret order is settable.**~~ Confirmed reversed on the Zeiss:
+      moving 6.3× → 10× proposed 40×, exactly one step the wrong way.
+      Instrument → Microscope setup… now has "Turret order: as entered /
+      reversed", alongside the condenser's working NA.
+- [ ] **A one-rotation sign calibration.** Better than a dropdown: turn the
+      turret once to a named position and let the app derive the sign. Small,
+      and removes the only setting whose meaning is hard to explain.
+- [ ] **Brightness signatures on real glass.** The third signal is wired and
+      learns from every confirmed rotation, per illumination mode — which
+      matters most for the 6.3×, which has no phase ring and goes darkfield
+      against the phase stop. Whether the learned values stay stable across a
+      session (lamp drift, iris adjustments) is the open question.
 - [ ] **Empty vs capped slots, now testable.** The mock can occlude the field
       on demand, so the two cases can finally be simulated: an empty slot
       passes light and a capped one blocks it, which the darkness sweep reads

@@ -161,11 +161,42 @@ class SetupDialog(QtWidgets.QDialog):
             "Changes magnification without moving the optical axis, which is "
             "what makes an overview frame cheap.")
 
+        self.condenser_na = QtWidgets.QDoubleSpinBox()
+        self.condenser_na.setRange(0.0, 1.6)
+        self.condenser_na.setDecimals(2)
+        self.condenser_na.setSingleStep(0.05)
+        self.condenser_na.setSpecialValueText("— unknown —")
+        self.condenser_na.setValue(setup.scope.condenser_na or 0.0)
+        self.condenser_na.setToolTip(
+            "The condenser's *working* aperture, not the number engraved on "
+            "it.\nAn NA 1.4 condenser only reaches 1.4 with oil between it "
+            "and the slide;\ndry, air caps it below 1.0, and the iris puts "
+            "it anywhere below that.\n\nIt sets how bright each objective "
+            "is, because the smaller of the two\napertures gathers the "
+            "light — and above about NA 0.5 that is the\ncondenser, not the "
+            "objective. Used only as a first guess; a confirmed\nrotation "
+            "teaches the real value.")
+
+        self.rotation_sign = QtWidgets.QComboBox()
+        self.rotation_sign.addItem("as entered", 1)
+        self.rotation_sign.addItem("reversed", -1)
+        self.rotation_sign.setCurrentIndex(
+            0 if setup.scope.rotation_sign >= 0 else 1)
+        self.rotation_sign.setToolTip(
+            "Which way round the turret detection counts.\n\nWhether a "
+            "darkening left edge means the next objective or the previous\n"
+            "one depends on how the turret is mounted and the order the\n"
+            "positions were entered here. There is no way to work it out from "
+            "the\nimage. If detection consistently names the objective on "
+            "the wrong side,\nswitch this.")
+
         stand = QtWidgets.QFormLayout()
         stand.addRow("Microscope", picker_row)
         stand.addRow("Name", self.scope_name)
         stand.addRow("Condenser", self.condenser)
+        stand.addRow("Condenser NA", self.condenser_na)
         stand.addRow("Optovar", self.optovar)
+        stand.addRow("Turret order", self.rotation_sign)
 
         # --- turret, in physical order
         self.rows: list[ObjectiveRow] = []
@@ -292,6 +323,8 @@ class SetupDialog(QtWidgets.QDialog):
         self.scope_name.setText(scope.name)
         self.condenser.setText(scope.condenser)
         self.optovar.setText(" ".join(f"{v:g}" for v in scope.optovar))
+        self.condenser_na.setValue(scope.condenser_na or 0.0)
+        self.rotation_sign.setCurrentIndex(0 if scope.rotation_sign >= 0 else 1)
         positions = list(scope.turret.positions) + [None] * 6
         for i, row in enumerate(self.rows):
             row.blockSignals(True)
@@ -321,7 +354,13 @@ class SetupDialog(QtWidgets.QDialog):
             turret=Turret(positions=positions, current=current),
             optovar=_parse_factors(self.optovar.text()),
             optovar_current=self._setup.scope.optovar_current,
-            condenser=self.condenser.text().strip())
+            condenser=self.condenser.text().strip(),
+            condenser_na=(self.condenser_na.value()
+                          if self.condenser_na.value() > 0 else None),
+            rotation_sign=int(self.rotation_sign.currentData()),
+            tube_length_mm=self._setup.scope.tube_length_mm,
+            # Learned brightness belongs to the stand, not to this edit.
+            brightness=dict(self._setup.scope.brightness))
         return Setup(camera=camera, scope=scope,
                      illumination=self._setup.illumination)
 

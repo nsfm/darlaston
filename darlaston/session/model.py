@@ -186,6 +186,59 @@ class ScopeProfile:
     #: stand where detection is consistently one position out has this
     #: the wrong way round.
     rotation_sign: int = 1
+    #: Working numerical aperture of the condenser. It sets how bright each
+    #: objective is, because the *smaller* of the two apertures is what
+    #: actually gathers light -- and above about NA 0.5 that is the
+    #: condenser, since filling a high-NA objective needs the condenser
+    #: oiled to the slide. 0.55 is a reasonable dry setting; None means
+    #: assume the objective always wins, which is true only when oiled.
+    condenser_na: float | None = 0.55
+    #: Learned brightness per turret position, keyed by illumination kind,
+    #: normalised by exposure and gain. Learned rather than derived because
+    #: the largest real differences come from things no model covers -- an
+    #: objective with no phase ring going dark against the phase stop, most
+    #: of all.
+    brightness: dict = field(default_factory=dict)
+
+    def signatures(self, illumination_kind: str, model_fallback
+                   ) -> tuple[list, list]:
+        """What each position should look like, and whether we *know*.
+
+        Returns values and a parallel list saying which were learned from a
+        confirmed rotation rather than modelled. The distinction matters more
+        than it looks: the condenser iris changes the expected brightness
+        ratios by more than the objectives do -- 16x to 25x is 1.08 wide open
+        and 0.40 stopped down -- so a modelled value is a first guess and a
+        learned one is evidence.
+        """
+        learned = self.brightness.get(illumination_kind) or []
+        values, known = [], []
+        for i in range(len(self.turret.positions)):
+            got = learned[i] if i < len(learned) else None
+            if got:
+                values.append(got)
+                known.append(True)
+            else:
+                values.append(model_fallback[i]
+                              if i < len(model_fallback) else None)
+                known.append(False)
+        return values, known
+
+    def learn_brightness(self, illumination_kind: str, index: int,
+                         level: float) -> None:
+        """Record what a confirmed position actually looked like.
+
+        Averaged into any previous reading rather than replacing it, so one
+        odd frame -- a bubble, a thick patch of mountant -- does not become
+        the signature for that objective.
+        """
+        if level is None or level <= 0:
+            return
+        row = self.brightness.setdefault(illumination_kind,
+                                         [None] * len(self.turret.positions))
+        while len(row) < len(self.turret.positions):
+            row.append(None)
+        row[index] = level if not row[index] else 0.7 * row[index] + 0.3 * level
 
     @property
     def optovar_factor(self) -> float:

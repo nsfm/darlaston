@@ -344,7 +344,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
             self.objective.set_turret(self.setup.scope.turret)
-            self.pipeline.set_turret(self.setup.scope.turret)
+            self._push_turret()
 
         self.strip.update_status(status, self.setup)
         self.strip.select_resolution(self.session.preview_resolution)
@@ -434,6 +434,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
 
+    def _push_turret(self) -> None:
+        """Hand the detector the turret, the stand's sign and its signatures."""
+        if self.setup is None:
+            return
+        from ..live.turret import model_signatures
+        scope = self.setup.scope
+        signatures, learned = scope.signatures(
+            self.setup.illumination.kind,
+            model_signatures(scope.turret, scope.condenser_na))
+        self.pipeline.set_turret(scope.turret, scope.rotation_sign,
+                                 signatures, learned)
+
     def _on_turret_event(self, event) -> None:
         """A rotation was detected. Say what we think and wait to be told."""
         if self.setup is None:
@@ -453,11 +465,19 @@ class MainWindow(QtWidgets.QMainWindow):
                      else event.reason)
         self.proposal.propose(f"Objective now {objective.label}?",
                               f"{certainty} · {event.confidence * 100:.0f}% sure",
-                              index)
+                              (index, event.level))
 
-    def _accept_turret(self, index: int) -> None:
+    def _accept_turret(self, payload) -> None:
         if self.setup is None:
             return
+        index, level = payload
+        # A confirmation is the only trustworthy label we ever get, so it is
+        # also the moment to learn what that objective looks like.
+        if level:
+            self.setup.scope.learn_brightness(
+                self.setup.illumination.kind, int(index), float(level))
+            self.library.scopes[self.setup.scope.id] = self.setup.scope
+            self.library.save()
         self.setup.scope.turret.current = int(index)
         self.objective.set_turret(self.setup.scope.turret)
         self._on_objective_changed()
@@ -471,6 +491,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
+        self._push_turret()
 
     def _on_rate(self, at: int) -> None:
         fps = self.strip.rate.itemData(at)
@@ -654,8 +675,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup = dialog.result_setup
             self.setup.illumination = self._illumination
             self.objective.set_turret(self.setup.scope.turret)
-            self.pipeline.set_turret(self.setup.scope.turret,
-                                     self.setup.scope.rotation_sign)
+            self._push_turret()
             self.strip.update_status(self.session.status, self.setup)
             # The optical stack changed, so anything banked for the old one is
             # no longer a flat for this one.

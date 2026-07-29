@@ -29,6 +29,40 @@ import cv2
 import numpy as np
 
 
+def model_signatures(turret, condenser_na: float | None = 0.55
+                     ) -> list[float | None]:
+    """Predicted relative brightness per position, before anything is learned.
+
+    Image-plane illuminance goes as (NA_effective / M)^2, and the term that
+    matters is which NA is effective: **the condenser's, not the
+    objective's**, for anything above about NA 0.5. Filling a 1.0 objective
+    needs an oiled condenser and essentially nobody oils theirs, so in
+    practice the condenser is the limit and brightness falls as 1/M^2 across
+    the top of a turret. Assuming the objective always wins predicts nearly
+    constant brightness across a matched set, which is wrong in the ordinary
+    case and wrong in the direction that makes this signal look useless.
+
+    A prior, not an answer. It lets detection work on the very first rotation
+    instead of needing to be taught, and a learned signature replaces it per
+    position as soon as one exists -- which matters because the things that
+    produce the *largest* real differences are outside this model entirely:
+    an objective with no phase ring going dark against the phase stop, a
+    condenser matched to one position and not another.
+    """
+    out: list[float | None] = []
+    for objective in getattr(turret, "positions", []) or []:
+        if objective is None or not objective.magnification:
+            out.append(None)
+            continue
+        na = objective.na
+        if na is None:
+            out.append(None)
+            continue
+        effective = min(na, condenser_na) if condenser_na else na
+        out.append((effective / objective.magnification) ** 2)
+    return out
+
+
 class Phase(Enum):
     STABLE = auto()
     DARK = auto()          # mid-rotation, objective out of the path
@@ -43,8 +77,18 @@ class TurretEvent:
     scale_ratio: float | None      # new field of view / old
     suggested_index: int | None
     confidence: float              # 0..1
-    agree: bool                    # did the two signals corroborate?
+    agree: bool                    # did the signals corroborate?
     reason: str
+    #: How much brighter or darker the field became, with exposure and gain
+    #: divided out. Only meaningful against a learned signature.
+    level_ratio: float | None = None
+    #: What each signal independently thought, for the UI and for debugging
+    #: a stand where one of them is unreliable.
+    votes: tuple = ()
+    #: The level measured after settling, normalised. The application feeds
+    #: this back once the operator confirms a position, which is how the
+    #: signature gets learned in the first place.
+    level: float | None = None
 
     @property
     def should_ask(self) -> bool:
@@ -83,10 +127,38 @@ class TurretDetector:
         self._pre_dark: np.ndarray | None = None
         self._direction: int | None = None
         self._settle: list[float] = []
+        #: Field level before the rotation, with exposure and gain divided
+        #: out, so what remains is a property of the optics rather than of
+        #: how bright the lamp happened to be.
+        self._pre_level: float | None = None
+        self._scale = 1.0
+        self._learned = None
 
     # ---- entry point -----------------------------------------------------
 
-    def feed(self, gray: np.ndarray, turret=None) -> TurretEvent | None:
+    def feed(self, gray: np.ndarray, turret=None, exposure_gain: float = 1.0,
+             signatures=None, learned=None) -> TurretEvent | None:
+        """One preview frame.
+
+        `exposure_gain` is exposure microseconds times gain, and dividing by
+        it is what makes the brightness signal mean anything: the operator
+        adjusts both constantly, and an unnormalised level says more about
+        the last slider they touched than about which objective is in place.
+
+        `signatures` is the learned normalised level for each turret
+        position, or None where a position has never been confirmed. It is
+        learned rather than derived on purpose -- brightness through a
+        well-corrected set is nearly constant in theory, because NA rises
+        with magnification, so (NA/M)^2 varies by only a few percent across a
+        whole turret. What actually produces the large differences an
+        operator sees is everything theory does not cover: an objective with
+        no phase ring going dark against the phase stop, a condenser matched
+        to one position and not another, the field diaphragm. None of that is
+        derivable from the objective's engraving, and all of it is stable for
+        a given stand.
+        """
+        self._scale = max(float(exposure_gain), 1e-9)
+        self._learned = learned
         small = cv2.resize(gray, (self._size, self._size),
                            interpolation=cv2.INTER_AREA).astype(np.float32)
         mean = float(small.mean())
@@ -95,7 +167,7 @@ class TurretDetector:
             return self._when_stable(small, mean)
         if self._phase is Phase.DARK:
             return self._when_dark(small, mean)
-        return self._when_settling(small, mean, turret)
+        return self._when_settling(small, mean, turret, signatures)
 
     # ---- phases ----------------------------------------------------------
 
@@ -114,6 +186,7 @@ class TurretDetector:
         # one good to a few percent.
         if mean > self._stable_mean * 0.9:
             self._reference = small.copy()
+            self._pre_level = mean / self._scale
 
         if mean < self._stable_mean * self.DARK_FRACTION:
             self._phase = Phase.DARK
@@ -139,7 +212,7 @@ class TurretDetector:
             self._settle = []
         return None
 
-    def _when_settling(self, small, mean, turret):
+    def _when_settling(self, small, mean, turret, signatures=None):
         self._settle.append(mean)
         if len(self._settle) < self.SETTLE_FRAMES:
             return None
@@ -149,7 +222,11 @@ class TurretDetector:
             return None                      # still moving; keep waiting
 
         ratio = self._scale_ratio(self._pre_dark, small)
-        event = self._decide(ratio, turret)
+        level = mean / self._scale
+        level_ratio = (level / self._pre_level
+                       if self._pre_level and self._pre_level > 1e-12 else None)
+        event = self._decide(ratio, turret, level_ratio, level,
+                             signatures, self._learned)
 
         self._phase = Phase.STABLE
         self._stable_mean = mean
@@ -211,47 +288,105 @@ class TurretDetector:
             return None
         return 1.0 / content_scale
 
-    def _decide(self, ratio: float | None, turret) -> TurretEvent:
+    def _decide(self, ratio, turret, level_ratio=None, level=None,
+                signatures=None, learned=None) -> TurretEvent:
+        """Three independent readings, and what to do when they disagree.
+
+        Direction, magnification and brightness fail in different ways, which
+        is the whole point of having all three. Direction cannot see a
+        two-position jump. Magnification needs structure to correlate and
+        objectives that are close to parcentric. Brightness needs a signature
+        that has been learned, and drifts if the lamp is adjusted mid-turn.
+        No two of them fail together for the same reason, so agreement
+        between any two is worth far more than confidence in any one.
+        """
         if turret is None or not getattr(turret, "positions", None):
             return TurretEvent(self._direction, ratio, None, 0.3, False,
-                               "objective change detected, turret unknown")
+                               "objective change detected, turret unknown",
+                               level_ratio=level_ratio, level=level)
 
-        # What the direction alone implies.
+        n = len(turret.positions)
+        current = turret.current
+
+        # 1. Direction: one step round the ring, skipping empty positions.
         by_direction = None
         if self._direction is not None:
-            probe = type(turret)(list(turret.positions), turret.current)
+            probe = type(turret)(list(turret.positions), current)
             by_direction = probe.step(self._direction)
 
-        # What the ratio alone implies: the position whose magnification ratio
-        # best matches what was measured.
-        by_ratio, best_err = None, None
-        if ratio is not None:
-            for i in range(len(turret.positions)):
-                if i == turret.current or turret.positions[i] is None:
+        # 2. Magnification: which position's field-of-view ratio fits best.
+        by_ratio, ratio_err = None, None
+        if ratio is not None and ratio > 1e-6:
+            for i in range(n):
+                if i == current or turret.positions[i] is None:
                     continue
                 expected = turret.ratio_to(i)
                 if not expected:
                     continue
-                # Higher magnification shrinks the field of view.
                 err = abs(np.log((1.0 / expected) / ratio))
-                if best_err is None or err < best_err:
-                    by_ratio, best_err = i, err
+                if ratio_err is None or err < ratio_err:
+                    by_ratio, ratio_err = i, err
+        if ratio_err is not None and ratio_err > 0.35:
+            by_ratio = None                      # nearest, but not near
 
-        # Agreement is not enough on its own: the ratio search returns the
-        # *nearest* position however far away it is, so a badly measured
-        # ratio can still rank the right answer first and produce a confident
-        # corroboration out of noise. The fit has to be good as well.
-        agree = (by_direction is not None and by_ratio is not None
-                 and by_direction == by_ratio
-                 and best_err is not None and best_err < 0.25)
-        if agree:
-            return TurretEvent(self._direction, ratio, by_direction, 0.95, True,
-                               "direction and magnification agree")
-        if by_ratio is not None and best_err is not None and best_err < 0.12:
-            return TurretEvent(self._direction, ratio, by_ratio, 0.6, False,
-                               "magnification matched, direction unclear")
-        if by_direction is not None:
-            return TurretEvent(self._direction, ratio, by_direction, 0.45, False,
-                               "direction only; magnification could not be measured")
+        # 3. Brightness, against what this stand has been seen to do.
+        by_level, level_err = None, None
+        if (level_ratio and signatures and current < len(signatures)
+                and signatures[current]):
+            for i in range(n):
+                if i == current or turret.positions[i] is None:
+                    continue
+                if i >= len(signatures) or not signatures[i]:
+                    continue
+                expected = signatures[i] / signatures[current]
+                if expected <= 1e-9:
+                    continue
+                err = abs(np.log(expected / level_ratio))
+                if level_err is None or err < level_err:
+                    by_level, level_err = i, err
+        if level_err is not None and level_err > 0.4:
+            by_level = None
+        # A modelled brightness may corroborate but must never decide alone.
+        # The condenser iris moves the predicted ratios further than the
+        # objectives do, so an unlearned signature is a first guess wearing
+        # the same clothes as evidence.
+        level_is_learned = bool(
+            learned and by_level is not None and current < len(learned)
+            and by_level < len(learned)
+            and learned[current] and learned[by_level])
+
+        votes = tuple(v for v in (by_direction, by_ratio, by_level)
+                      if v is not None)
+        named = (("direction", by_direction), ("magnification", by_ratio),
+                 ("brightness", by_level))
+
+        if votes:
+            # Whichever position the most signals landed on. Two out of three
+            # is the case this design exists to produce.
+            best = max(set(votes), key=votes.count)
+            agreed = [name for name, v in named if v == best]
+            if len(agreed) >= 2:
+                return TurretEvent(
+                    self._direction, ratio, best,
+                    0.95 if len(agreed) > 2 else 0.9, True,
+                    " and ".join(agreed) + " agree",
+                    level_ratio=level_ratio, votes=named, level=level)
+
+            # Only one signal spoke. Say which, because a stand where the
+            # same one is always alone is a stand with something to fix --
+            # a rotation sign the wrong way round, or a signature never
+            # learned.
+            only = agreed[0] if agreed else "one signal"
+            if only == "brightness" and not level_is_learned:
+                return TurretEvent(
+                    self._direction, ratio, None, 0.25, False,
+                    "objective change detected, position unclear",
+                    level_ratio=level_ratio, votes=named, level=level)
+            return TurretEvent(self._direction, ratio, best, 0.5, False,
+                               f"{only} only, unconfirmed",
+                               level_ratio=level_ratio, votes=named,
+                               level=level)
+
         return TurretEvent(None, ratio, None, 0.2, False,
-                           "objective change detected, position unclear")
+                           "objective change detected, position unclear",
+                           level_ratio=level_ratio, votes=named, level=level)

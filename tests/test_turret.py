@@ -233,3 +233,75 @@ def test_new_optics_fields_survive_a_round_trip(tmp_path):
     assert obj.maker == "Carl Zeiss"
     assert obj.serial == "4512873"
     assert obj.working_distance_mm == 0.6
+
+
+# ---- brightness as a third signal -------------------------------------------
+
+def test_the_brightness_model_falls_with_magnification_when_the_condenser_limits():
+    """The correction that produced this: image-plane illuminance goes as
+    (NA_effective / M)^2, and above about NA 0.5 the *condenser* is the
+    effective aperture, because filling a high-NA objective needs it oiled to
+    the slide. Assuming the objective always wins predicts nearly constant
+    brightness across a matched set, which is wrong in the ordinary case."""
+    from darlaston.live.turret import model_signatures
+
+    turret = Turret([Objective(6.3, 0.16), Objective(10, 0.32),
+                     Objective(16, 0.40), Objective(25, 0.65),
+                     Objective(40, 1.00)], current=0)
+
+    dry = model_signatures(turret, condenser_na=0.55)
+    assert dry[4] < dry[3] < dry[2], "must fall with magnification"
+
+    # Oiled, the objective is the limit again and the set is near-flat.
+    oiled = model_signatures(turret, condenser_na=1.4)
+    assert 0.9 < oiled[4] / oiled[2] < 1.1
+
+    # And the iris moves the prediction more than the objectives do, which
+    # is why a learned signature has to outrank a modelled one.
+    stopped = model_signatures(turret, condenser_na=0.3)
+    assert (stopped[3] / stopped[2]) < 0.5 < (oiled[3] / oiled[2])
+
+
+def test_modelled_brightness_may_corroborate_but_never_decide_alone():
+    """A first guess wearing the same clothes as evidence is the failure to
+    avoid: the condenser iris can shift the predicted ratios threefold."""
+    from darlaston.live.turret import TurretDetector
+
+    det = TurretDetector()
+    det._direction = None                     # no direction reading
+    turret = _turret(1)
+    signatures = [1.0, 0.5, 0.25, 0.12]
+
+    # Brightness alone, modelled: refuse to name a position.
+    modelled = det._decide(None, turret, level_ratio=0.5, level=0.5,
+                           signatures=signatures,
+                           learned=[False] * 4)
+    assert modelled.suggested_index is None
+    assert modelled.should_ask
+
+    # The same reading, learned: now it may speak.
+    taught = det._decide(None, turret, level_ratio=0.5, level=0.5,
+                         signatures=signatures, learned=[True] * 4)
+    assert taught.suggested_index == 2
+    assert taught.should_ask, "one signal is still not a confirmation"
+
+
+def test_a_confirmed_position_teaches_the_stand():
+    from darlaston.session.model import ScopeProfile
+
+    scope = ScopeProfile(id="z", turret=_turret(1))
+    scope.learn_brightness("phase", 1, 0.40)
+    values, known = scope.signatures("phase", [None] * 4)
+    assert known[1] and values[1] == pytest.approx(0.40)
+    assert not known[0]
+
+    # A second reading is averaged in, so one odd frame cannot become the
+    # signature for an objective.
+    scope.learn_brightness("phase", 1, 0.60)
+    values, _ = scope.signatures("phase", [None] * 4)
+    assert 0.40 < values[1] < 0.60
+
+    # Illumination modes are learned separately: the same objective can be
+    # bright in brightfield and dark against a phase stop.
+    values, known = scope.signatures("brightfield", [None] * 4)
+    assert not any(known)

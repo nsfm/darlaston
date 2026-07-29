@@ -33,7 +33,7 @@ from .coverage import FocusCoverage
 from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
                     Region, measure, region_rect)
 from .tracker import StageTracker
-from .turret import TurretDetector, TurretEvent
+from .turret import TurretDetector, TurretEvent, model_signatures
 
 
 @dataclass(frozen=True)
@@ -123,6 +123,8 @@ class LivePipeline:
         # does not import the session model -- it only passes this back to
         # the detector, which duck-types it.
         self._turret = None
+        self._signatures = None
+        self._learned = None
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
         self._analysed = 0
@@ -182,10 +184,18 @@ class LivePipeline:
         with self._lock:
             self._trace.reset_peak()
 
-    def set_turret(self, turret, rotation_sign: int = 1) -> None:
-        """Tell the detector what positions exist. None disables detection."""
+    def set_turret(self, turret, rotation_sign: int = 1,
+                   signatures=None, learned=None) -> None:
+        """Tell the detector what positions exist. None disables detection.
+
+        `signatures` is the expected normalised brightness per position --
+        learned where the operator has confirmed one, modelled where they
+        have not.
+        """
         with self._lock:
             self._turret = turret
+            self._signatures = signatures
+            self._learned = learned
             if rotation_sign != self._turret_det._sign:
                 self._turret_det = TurretDetector(rotation_sign=rotation_sign)
 
@@ -366,7 +376,13 @@ class LivePipeline:
         # rotation finishes.
         turret_event = None
         if self._turret is not None:
-            turret_event = self._turret_det.feed(gray, self._turret)
+            # Exposure times gain is what the brightness reading has to be
+            # divided by; without it the level says more about the last
+            # slider touched than about which objective is in place.
+            turret_event = self._turret_det.feed(
+                gray, self._turret,
+                exposure_gain=max(frame.exposure_us * frame.gain_pct, 1),
+                signatures=self._signatures, learned=self._learned)
 
         if self._blank is None:
             from .blank import BlankDetector
