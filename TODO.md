@@ -121,8 +121,37 @@ Ordered within each section by how much it would change what gets built.
       is wired; the objective *stepper* and future turret auto-detection are
       not. When magnification becomes known per objective, positions could be
       rescaled instead of discarded.
-- [ ] **Z-stacks.** Movement detection, settle, auto-trigger. Depends on
-      coverage to know when a sweep is done.
+- [x] ~~**Z-stacks.**~~ The knob is the interface: rack, pause, a slice
+      captures itself; rack again. The trigger reads focus motion from the
+      sharpness field (racking is invisible to the xy tracker), with
+      Pearson-on-mean-removed distances, a self-calibrating noise floor, and
+      settle judged against the motion's own peak *and* the floor — each
+      refinement traced to a measured failure. One honest limit: inside the
+      depth of field, racking and pausing are optically identical, so a
+      continuous rack may fire once near best focus; that slice is one a
+      stack wants anyway. Moved slices discard and retake themselves — the
+      plane is easy to revisit, a dialog is not. StackSession mirrors
+      MosaicSession exactly, so a mosaic tile can one day *be* a stack.
+      The merge is depth-map based: align (constrained phase correlation),
+      pooled Tenengrad per slice, argmax + median for depth, soft-power
+      weights, streamed linear DNG out — plus `depth.png`, kept because a
+      depth map is a measurement of the subject's shape and diagnostic gold.
+      Proven on the mock's tilted focal plane: merged output sharp in every
+      strip where no single slice was, end to end through the running app
+      (7 slices auto-captured, assembled live, merged with 7 depth levels).
+- [ ] **The assembly panel is the fun part** — the all-in-focus image builds
+      live as slices land. Winner-takes-all at preview resolution, no
+      alignment; its job is feel, not accuracy.
+- [ ] **Stack polish, next pass.** Respect `keep_slices` after a verified
+      merge; a `metric` per slice is recorded as 0.0 (thread the real value
+      from signals); coverage-complete could suggest finishing; real-glass
+      trigger thresholds need a session on the Zeiss — the floor
+      self-calibrates but has never met real hand tremor.
+- [ ] **The dream composition: stacked mosaics.** Both halves now exist and
+      share the same session shape. A mosaic tile becomes a stack folder,
+      tiles close as you leave them (stack merges in the background), and
+      the stitcher consumes `stacked.dng` instead of `tile_NNN.dng`. This is
+      the project's original thesis — complaint #4 — one sprint away.
 - [x] ~~**"Hold still" during a capture.**~~ A banner over the frozen preview
       for exactly the window where motion does damage, and a measured verdict
       afterwards: the tracker's position before the pull vs the first

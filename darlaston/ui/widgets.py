@@ -334,6 +334,7 @@ class FocusGroup(QtWidgets.QWidget):
 
     peaking_toggled = QtCore.Signal(bool)
     sweep_toggled = QtCore.Signal(bool)
+    stack_toggled = QtCore.Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -341,6 +342,12 @@ class FocusGroup(QtWidgets.QWidget):
         self.coverage = CoverageMeter()
         self.coverage.setVisible(False)
 
+        self.stack = _Toggle("stack", "Capture a Z-stack: rack the fine "
+                                      "focus, pause, and a slice is taken.\n"
+                                      "Rack again for the next. The knob is "
+                                      "the whole interface —\nnothing is "
+                                      "clicked between slices.")
+        self.stack.toggled.connect(self._on_stack)
         self.peaking = _Toggle("peak", "Highlight the sharpest edges in the "
                                        "live view.")
         self.sweep = _Toggle("sweep", "Accumulate which parts of the frame "
@@ -358,6 +365,7 @@ class FocusGroup(QtWidgets.QWidget):
         label.setProperty("role", "label")
         header.addWidget(label)
         header.addStretch(1)
+        header.addWidget(self.stack)
         header.addWidget(self.peaking)
         header.addWidget(self.sweep)
 
@@ -367,6 +375,13 @@ class FocusGroup(QtWidgets.QWidget):
         col.addLayout(header)
         col.addWidget(self.trace)
         col.addWidget(self.coverage)
+
+    def _on_stack(self, on: bool) -> None:
+        # A stack needs the sweep: coverage is its finish line, and the
+        # trigger reads the sharpness field the sweep computes.
+        if on and not self.sweep.isChecked():
+            self.sweep.setChecked(True)
+        self.stack_toggled.emit(on)
 
     def _on_sweep(self, on: bool) -> None:
         # The bar only exists while it has something to say; an empty meter

@@ -24,6 +24,7 @@ from ..calib import (CalibrationService, CalibrationStore, Opportunist,
 from ..calib.store import flat_key
 from ..capture import CaptureResult, StillCapture
 from ..capture.mosaic import MosaicSession
+from ..capture.stack import StackSession, StackTrigger
 from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..live.focus import Illumination, Region
 from ..live.pipeline import LivePipeline, LiveSignals
@@ -37,6 +38,7 @@ from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
+from .stack_ui import StackAssembly
 from .stitch_ui import StitchDialog
 from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
@@ -116,6 +118,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.timelapse.connect(self._on_timelapse)
         self.bridge.stitch.connect(self._on_stitch)
         self.mosaic: MosaicSession | None = None
+        self.stack_session: StackSession | None = None
+        self.stack_trigger = StackTrigger(self._fire_stack_slice)
         self._last_preview = None
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
@@ -168,6 +172,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.focus = FocusGroup()
         self.focus.peaking_toggled.connect(self._on_peaking)
         self.focus.sweep_toggled.connect(self._on_sweep)
+        self.focus.stack_toggled.connect(self._on_stack_toggled)
 
         # Floating panels over the live view. A map is only meaningful in
         # reference to the image it maps, and calibration is a start-of-
@@ -189,6 +194,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_window.set_relative(0.04, 0.06)
         _fill(self.calib_window, self.calib_panel)
         self.calib_window.hide()
+
+        # The stack assembling live: the fun part, and also the working
+        # feedback -- soft regions in this composite are regions the stack
+        # has not visited yet.
+        self.assembly = StackAssembly()
+        self.stack_window = FloatingPanel("stack — assembling", self.view)
+        self.stack_window.set_relative(0.55, 0.55)
+        _fill(self.stack_window, self.assembly)
+        self.stack_window.hide()
+        self.stack_window.closed.connect(
+            lambda: self.focus.stack.setChecked(False))
 
         # Turret proposals appear over the image, where the operator's eyes
         # already are when they have just turned the turret.
@@ -328,6 +344,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show):
             self.map_window.place(self.slidemap.preferred_size(self.view))
             self.calib_window.place((330, 190))
+            self.stack_window.place((420, 330))
             if self.proposal.isVisible():
                 self.proposal.place()
         return super().eventFilter(obj, event)
@@ -709,8 +726,36 @@ class MainWindow(QtWidgets.QMainWindow):
             discarded = self._offer_retry(result)
         # The moved question comes first: a discarded shot must never
         # become a tile.
-        if result.ok and not discarded and self.mosaic is not None:
+        if result.ok and self.stack_session is not None:
+            self._adopt_slice(result)
+        elif result.ok and not discarded and self.mosaic is not None:
             self._adopt_tile(result)
+        elif not result.ok and self.stack_session is not None:
+            self.stack_trigger.capture_failed()
+
+    def _adopt_slice(self, result: CaptureResult) -> None:
+        """A slice landed. Adopt it, advance the trigger, feed the assembly.
+
+        A moved slice is discarded automatically rather than asked about:
+        the operator's hands are on the fine focus and the plane is easy to
+        revisit -- a dialog would cost more than the retake. The trigger goes
+        back to watching, and the same pause will fire it again.
+        """
+        if result.moved:
+            result.path.unlink(missing_ok=True)
+            self.stack_trigger.capture_failed()
+            self.strip.set_note("slice discarded — it moved; hold and it "
+                               "will retake")
+            return
+        s = self.stack_session.adopt(result.path, metric=0.0)
+        self.stack_trigger.slice_landed()
+        try:
+            from ..process.stitch import read_bayer_dng
+            self.assembly.add_slice(
+                read_bayer_dng(self.stack_session.dir / s.filename)[::2, ::2])
+        except Exception:
+            pass                       # the preview must never block capture
+        self.strip.set_note(f"slice {s.index} ✓ — keep racking")
 
     def _adopt_tile(self, result: CaptureResult) -> None:
         h, w = ((self._last_preview.shape[:2])
@@ -720,6 +765,68 @@ class MainWindow(QtWidgets.QMainWindow):
         note = "" if result.position is not None else " (no position!)"
         self.shutter.set_result(f"tile {tile.index} · {tile.filename}{note}",
                                 ok=result.position is not None)
+
+    def _on_stack_toggled(self, on: bool) -> None:
+        if on:
+            if self.mosaic is not None:
+                self.strip.set_note("finish the mosaic before starting a stack")
+                self.focus.stack.setChecked(False)
+                return
+            self.stack_session = StackSession(self.settings.capture_root,
+                                      self.subject.subject)
+            if self.setup is not None:
+                obj = self.setup.scope.turret.objective
+                self.stack_session.set_meta(
+                    objective=obj.label if obj else None,
+                    illumination=self.setup.illumination.display)
+            self.assembly.reset()
+            self.stack_window.place((420, 330))
+            self.stack_window.show()
+            self.stack_trigger.arm()
+            self.strip.set_note("stack armed — rack to the first plane and "
+                               "hold")
+        else:
+            self.stack_trigger.disarm()
+            self.stack_window.hide()
+            done, self.stack_session = self.stack_session, None
+            if done is not None and len(done.slices) >= 2:
+                box = QtWidgets.QMessageBox(self)
+                box.setWindowTitle("Stack finished")
+                box.setText(f"{len(done.slices)} slices in {done.dir.name}.")
+                box.setInformativeText("Merge them into one image now?")
+                later = box.addButton("Later",
+                                      QtWidgets.QMessageBox.ButtonRole.RejectRole)
+                now = box.addButton("Merge",
+                                    QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+                box.setDefaultButton(now)
+                box.setStyleSheet(theme.stylesheet())
+                box.exec()
+                if box.clickedButton() is now:
+                    self._run_stack_merge(done.dir)
+
+    def _fire_stack_slice(self) -> bool:
+        """The trigger pulling the shutter. Runs on the UI thread, from the
+        signal stream; StillCapture does the work off it."""
+        if self.stack_session is None or self.capture.busy:
+            return False
+        return self.capture.trigger(self.setup, subject=self.subject.subject,
+                                    slide=self.subject.slide_note)
+
+    def _run_stack_merge(self, directory) -> None:
+        self.strip.set_note("merging stack…")
+
+        def work():
+            from ..process.stack import merge
+            try:
+                path, report = merge(directory)
+                note = (f"stacked {report['slices']} slices, "
+                        f"{report['depth_levels']} depth levels → {path.name}")
+            except Exception as exc:
+                note = f"stack merge failed — {exc}"
+            self.bridge.timelapse.emit(TimelapseStatus(
+                running=False, shot=0, count=0, next_in=0, message=note))
+
+        threading.Thread(target=work, daemon=True, name="stack-merge").start()
 
     def _on_mosaic_requested(self, on: bool) -> None:
         if on:
@@ -920,6 +1027,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.focus.set_coverage(s.coverage, s.coverage_complete)
         self.view.set_frame(s.preview, s.peaking)
         self.slidemap.update_live(s)
+        self.stack_trigger.observe(s)
         self._last_preview = s.preview
         if s.turret_event is not None:
             self._on_turret_event(s.turret_event)

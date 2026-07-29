@@ -80,6 +80,13 @@ class LiveSignals:
     coverage_remaining: np.ndarray | None = None
     #: Complete means covered *and* no longer finding new structure.
     coverage_complete: bool = False
+    #: The pooled sharpness field itself, at reduced scale, when a sweep is
+    #: running. The Z-stack trigger reads focus motion from it: racking the
+    #: fine focus changes the image without translating it, so the xy-based
+    #: stillness flag cannot see a pause in racking -- but the sharpness
+    #: field reshapes as the focal plane moves, and stops reshaping when the
+    #: hand stops.
+    sharpness_field: np.ndarray | None = None
     #: A proposal that the objective changed, or None. Never a decision:
     #: a silent misdetection would poison every calibration lookup, so the
     #: UI asks and the operator confirms.
@@ -441,6 +448,7 @@ class LivePipeline:
             stage_pos=stage_pos,
             stage_tracking=stage_tracking,
             peaking=peak_map,
+            sharpness_field=field if sweeping else None,
             focus_rect=norm_rect,
             coverage=coverage,
             coverage_remaining=coverage_remaining,
