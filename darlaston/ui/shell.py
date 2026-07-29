@@ -400,9 +400,24 @@ class ObjectiveStepper(QtWidgets.QWidget):
         row.addWidget(self.next)
 
         self.suggestion = None
+        self._uncertain = False
 
     def set_turret(self, turret) -> None:
         self._turret = turret
+        self._refresh()
+
+    def set_uncertain(self, uncertain: bool) -> None:
+        """Say when the recorded objective may no longer be the real one.
+
+        A rotation was detected and never answered, so the application is
+        holding a belief it has reason to doubt. Showing that is the honest
+        thing: the objective keys every calibration lookup and appears in
+        every file, and a quietly wrong one is worse than an obviously
+        unsure one.
+        """
+        if uncertain == self._uncertain:
+            return
+        self._uncertain = uncertain
         self._refresh()
 
     def _step(self, delta: int) -> None:
@@ -413,4 +428,14 @@ class ObjectiveStepper(QtWidgets.QWidget):
 
     def _refresh(self) -> None:
         obj = self._turret.objective if self._turret else None
-        self.label.setText(obj.label if obj else "—")
+        text = obj.label if obj else "—"
+        if obj and self._uncertain:
+            text += "  ?"
+        self.label.setText(text)
+        self.label.setStyleSheet(
+            f"color: {theme.BRASS};" if self._uncertain else "")
+        self.label.setToolTip(
+            "A turret rotation was detected and never answered, so this may "
+            "no longer be\nthe objective in the light path. Step it, or "
+            "answer the next prompt, to be sure."
+            if self._uncertain else "")

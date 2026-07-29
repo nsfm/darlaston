@@ -47,11 +47,35 @@ class ProposalBar(QtWidgets.QWidget):
         # and keeps every click in one place instead of sending the operator
         # to the rail to correct it.
         self._buttons: list[QtWidgets.QPushButton] = []
-        self.no = QtWidgets.QPushButton("No")
+
+        # An escape hatch listing every position. Without it a wrong
+        # proposal can only be waved away, and waving it away leaves the
+        # application believing an objective that is no longer in the light
+        # path -- which then makes the *next* proposal wrong too, by
+        # stepping from a stale position. One unanswered rotation used to
+        # poison every rotation after it.
+        self.other = QtWidgets.QToolButton()
+        self.other.setText("Other ▾")
+        self.other.setFixedHeight(24)
+        self.other.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.other.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.other.setStyleSheet(
+            f"QToolButton {{ border: 1px solid {theme.DIM};"
+            f" border-radius: 12px; margin: 1px; padding: 2px 12px;"
+            f" color: {theme.DIM}; background: transparent; }}"
+            f"QToolButton::menu-indicator {{ image: none; }}"
+            f"QToolButton:hover {{ color: {theme.INK}; }}")
+        self._other_menu = QtWidgets.QMenu(self)
+        self.other.setMenu(self._other_menu)
+
+        # Says something different from ignoring the bar: this one asserts
+        # that nothing moved, so the recorded objective is still right.
+        self.no = QtWidgets.QPushButton("Didn't switch")
         self.no.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.no.setFixedHeight(24)
         self.no.setStyleSheet(self._style(theme.DIM))
-        self.no.clicked.connect(self._dismiss)
+        self.no.clicked.connect(self._answered_no)
 
         words = QtWidgets.QVBoxLayout()
         words.setContentsMargins(0, 0, 0, 0)
@@ -64,6 +88,12 @@ class ProposalBar(QtWidgets.QWidget):
         self._row.setSpacing(8)
         self._row.addLayout(words, 1)
         self._row.addWidget(self.no)
+        self._row.addWidget(self.other)
+
+        #: Was the last dismissal a click on "Didn't switch" rather than the
+        #: timer running out? The two mean different things: one asserts the
+        #: recorded objective is still right, the other says nothing at all.
+        self.answered_explicitly = False
 
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
@@ -79,8 +109,18 @@ class ProposalBar(QtWidgets.QWidget):
                 f" color: {colour}; background: transparent; }}"
                 f"QPushButton:hover {{ background: rgba(200,155,74,0.12); }}")
 
-    def propose(self, text: str, detail: str, choices) -> None:
-        """`choices` is a list of (label, payload), most likely first."""
+    def propose(self, text: str, detail: str, choices, others=None) -> None:
+        """`choices` is a list of (label, payload), most likely first.
+
+        `others` populates the escape-hatch menu with every position, so a
+        proposal can always be answered correctly rather than only refused.
+        """
+        self._other_menu.clear()
+        for label, payload in (others or []):
+            act = self._other_menu.addAction(label)
+            act.triggered.connect(
+                lambda _=False, p=payload: self._choose(p))
+        self.other.setVisible(bool(others))
         for b in self._buttons:
             self._row.removeWidget(b)
             b.deleteLater()
@@ -96,6 +136,7 @@ class ProposalBar(QtWidgets.QWidget):
             b.clicked.connect(lambda _=False, p=payload: self._choose(p))
             self._buttons.append(b)
             self._row.addWidget(b)
+        self.answered_explicitly = False
         self.adjustSize()
         self.place()
         self.show()
@@ -112,10 +153,15 @@ class ProposalBar(QtWidgets.QWidget):
         self.hide()
         self.accepted.emit(payload)
 
+    def _answered_no(self) -> None:
+        self.answered_explicitly = True
+        self._dismiss()
+
     def _dismiss(self) -> None:
         self._timer.stop()
         self.hide()
         self.dismissed.emit()
+        self.answered_explicitly = False
 
     # ---- paint -----------------------------------------------------------
 

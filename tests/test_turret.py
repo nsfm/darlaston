@@ -493,3 +493,26 @@ def test_confirming_the_default_marks_it_known_without_flipping():
     # A correction to the *other* candidate is what flips it.
     probe2 = Turret(list(turret.positions), turret.current)
     assert probe2.step(-1 * -1) == 2
+
+
+# ---- the application's belief tracking the real turret ----------------------
+
+def test_a_stale_belief_makes_the_next_proposal_wrong():
+    """The failure Nate hit: 25x to 16x suggested 10x, one slot too far.
+
+    Nothing was wrong with the detection. An earlier rotation had gone
+    unanswered, so the application still believed the previous position, and
+    stepping one place from the wrong place lands two places from the right
+    one. Which is why an unanswered prompt now marks the objective uncertain
+    and every prompt offers a way to say where the turret really is."""
+    positions = [Objective(6.3, 0.16), Objective(10, 0.32),
+                 Objective(16, 0.40), Objective(25, 0.65),
+                 Objective(40, 1.00)]
+
+    # Believing the truth: one step back from 25x is 16x.
+    truth = Turret(list(positions), current=3)
+    assert Turret(list(positions), truth.current).step(-1) == 2
+
+    # Believing a stale 16x: the same reading lands on 10x.
+    stale = Turret(list(positions), current=2)
+    assert Turret(list(positions), stale.current).step(-1) == 1

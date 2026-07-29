@@ -194,6 +194,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # already are when they have just turned the turret.
         self.proposal = ProposalBar(self.view)
         self.proposal.accepted.connect(self._accept_turret)
+        # Ignoring a prompt is allowed, but it leaves a belief we have reason
+        # to doubt -- so say so rather than carry on as though we know.
+        self.proposal.dismissed.connect(self._on_proposal_gone)
 
         self.view.installEventFilter(self)
         self.slidemap.show()
@@ -479,20 +482,43 @@ class MainWindow(QtWidgets.QMainWindow):
             if alt is not None:
                 choices.append((alt.label, (other, event.level)))
 
+        # Every position, always, so a wrong guess can be corrected rather
+        # than merely refused. A refused proposal used to leave the recorded
+        # objective stale, and the next rotation then stepped from the wrong
+        # place -- one unanswered prompt poisoned every prompt after it.
+        offered = {i for i, _ in (c[1] for c in choices)}
+        others = [(o.label, (i, event.level))
+                  for i, o in enumerate(turret.positions)
+                  if o is not None and i not in offered]
+
         if len(choices) > 1:
             self.proposal.propose(
                 "Objective changed — which?",
                 "the turret moved; naming it once teaches which way it counts",
-                choices)
+                choices, others)
         else:
             self.proposal.propose(
                 f"Objective now {objective.label}?",
                 f"{event.reason} · {event.confidence * 100:.0f}% sure",
-                choices)
+                choices, others)
+
+    def _on_proposal_gone(self) -> None:
+        """Dismissed or expired.
+
+        'Didn't switch' is an answer and leaves the recorded objective
+        trustworthy. A timeout is not an answer, and the objective is then
+        a guess -- mark it, because it keys every calibration lookup and
+        goes into every file.
+        """
+        if self.proposal.answered_explicitly:
+            self.objective.set_uncertain(False)
+        else:
+            self.objective.set_uncertain(True)
 
     def _accept_turret(self, payload) -> None:
         if self.setup is None:
             return
+        self.objective.set_uncertain(False)
         index, level = payload
         self._learn_rotation_sign(int(index))
         # A confirmation is the only trustworthy label we ever get, so it is
