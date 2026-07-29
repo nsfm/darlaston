@@ -229,6 +229,16 @@ def test_merge_is_sharp_everywhere_when_no_slice_is(tmp_path):
     merged_strips = _strip_sharpness(merged_luma)
     ref_strips = _strip_sharpness(ref_luma)
 
+    # Brightness must survive the merge. The blend of 12-bit slices lands
+    # back in 0..4095, and writing that against a 16-bit white level shipped
+    # every stack four stops under -- found by Nate pushing +3 EV in post.
+    # The relative level (mean / white level) must match the slices'.
+    white = 4095 * 16
+    merged_rel = float(rgb.mean()) / white
+    slice_rel = float(reference.mean()) / 4095
+    assert merged_rel > slice_rel * 0.5, \
+        f"merged sits at {merged_rel:.3f} vs slices {slice_rel:.3f} — dark"
+
     ratios = [m / max(r, 1e-9) for m, r in zip(merged_strips, ref_strips)]
     assert min(ratios) > 0.5, \
         f"merged must be sharp in every strip; ratios {ratios}"

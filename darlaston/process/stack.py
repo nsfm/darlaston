@@ -141,7 +141,13 @@ def merge(directory: Path | str, progress=None) -> tuple[Path, dict]:
         if progress:
             progress("blending", i + 1, n)
 
-    result = np.clip(acc, 0, 65535).astype(np.uint16)[:, :, ::-1]
+    # The blend of 12-bit slices lands back in 0..4095, and writing that
+    # against a 65535 white level shipped the composite four stops under --
+    # found by Nate having to push every stack +3 EV in post. Scaled x16
+    # into the declared range instead, which also keeps the sub-LSB
+    # precision the weighted blend just created, exactly as the
+    # frame-averaging path does.
+    result = np.clip(acc * 16.0 + 0.5, 0, 65520).astype(np.uint16)[:, :, ::-1]
     del acc
 
     neutral = dng.grey_world_neutral(raws[len(raws) // 2])
@@ -158,13 +164,16 @@ def merge(directory: Path | str, progress=None) -> tuple[Path, dict]:
     target = session.dir / "stacked.dng"
     written = dng.write_linear_streamed(
         target, lambda s, c: result[s:s + c], h, w,
-        preview=preview, neutral=neutral, white=65535)
+        preview=preview, neutral=neutral, white=4095 * 16)
 
-    # The depth map, kept. It is a measurement of the subject's shape and it
-    # is diagnostic gold: banding here means misregistration, speckle means
-    # the merge had nothing to grip on.
+    # The depth map, twice. depth.png is the *data*: plain grayscale, near
+    # slices dark and far slices light, the conventional encoding every
+    # depth-consuming tool expects -- this is what a stereo pair or a
+    # wigglegram will be synthesised from. depth_view.png is the same map
+    # dressed for looking at, and stays because it earned it.
     dmap = (depth.astype(np.float32) / max(n - 1, 1) * 255).astype(np.uint8)
-    cv2.imwrite(str(session.dir / "depth.png"),
+    cv2.imwrite(str(session.dir / "depth.png"), dmap)
+    cv2.imwrite(str(session.dir / "depth_view.png"),
                 cv2.applyColorMap(dmap, cv2.COLORMAP_VIRIDIS))
 
     report = {

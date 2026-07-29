@@ -142,6 +142,26 @@ Ordered within each section by how much it would change what gets built.
 - [ ] **The assembly panel is the fun part** — the all-in-focus image builds
       live as slices land. Winner-takes-all at preview resolution, no
       alignment; its job is feel, not accuracy.
+- [x] ~~**Stacks and mosaics shipped four stops dark.**~~ Found by Nate
+      pushing every stack +3 EV in post. The blend of 12-bit sources lands
+      back in 0..4095, and both composite writers declared a 16-bit white
+      level against it — 4095/65535 is exactly 1/16, four stops. Scaled ×16
+      into the declared range now, which also keeps the sub-LSB precision
+      the weighted blend creates, exactly as frame averaging does. Verified
+      on the real 18-slice stack: relative mean 0.173 against the slices'
+      0.174. A regression test holds the levels together from now on.
+- [ ] **Wigglegram / stereo from the depth map** — Nate's idea and a genuinely
+      good one. `depth.png` is now plain grayscale (near dark, far light),
+      the encoding depth consumers expect; `depth_view.png` keeps the pretty
+      colormap. Depth + all-in-focus is everything DIBR needs: synthesise two
+      or three parallax views and emit an anaglyph or a wobble GIF. The data
+      is already on disk after every merge.
+- [ ] **Halo at depth edges.** Nate reports edge glow survives the merge on
+      real diatoms — the classic depth-map artefact where the pooled
+      sharpness of an in-focus edge bleeds its vote over the out-of-focus
+      neighbour. The pooling radius trades speckle against halo; a
+      consistency filter or pyramid-hybrid blend at depth *discontinuities
+      only* is the usual cure and keeps the depth map's explainability.
 - [ ] **Stack polish, next pass.** Respect `keep_slices` after a verified
       merge; a `metric` per slice is recorded as 0.0 (thread the real value
       from signals); coverage-complete could suggest finishing; real-glass

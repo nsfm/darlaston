@@ -487,8 +487,12 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
         covered = wacc > 0
         blended = np.zeros_like(acc)
         blended[covered] = acc[covered] / wacc[covered, None]
-        # BGR from OpenCV back to the RGB a linear DNG expects.
-        result[top:bot] = np.clip(blended, 0, 65535).astype(np.uint16)[:, :, ::-1]
+        # BGR from OpenCV back to the RGB a linear DNG expects. Scaled x16:
+        # the blend of 12-bit tiles lands in 0..4095, and writing that
+        # against the 16-bit white level shipped every mosaic four stops
+        # under -- the same defect the stack merge had, found there.
+        result[top:bot] = np.clip(blended * 16.0 + 0.5,
+                                  0, 65520).astype(np.uint16)[:, :, ::-1]
         del acc, wacc, blended
         if progress is not None:
             progress(bi + 1, bands)
@@ -514,7 +518,8 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
                                white=int(max(result.max(), 1)))
     return dng.write_linear_streamed(
         target, lambda s, c: result[s:s + c], ch, cw,
-        preview=preview, neutral=neutral or (1.0, 1.0, 1.0), white=65535)
+        preview=preview, neutral=neutral or (1.0, 1.0, 1.0),
+        white=4095 * 16)
 
 
 def survey(directory: Path | str) -> tuple[MosaicSession, list, list]:
