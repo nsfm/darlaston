@@ -29,7 +29,9 @@ from pidng.defs import (CalibrationIlluminant, CFAPattern, DNGVersion,
 
 from pidng.dng import Type
 
+from . import tiff as T
 from .metadata import CaptureMetadata
+from .tiff import DngWriter, make_preview
 
 #: Not named by pidng, but its Tag entries are just (id, Type) pairs and
 #: DNGTags.set takes any of them.
@@ -173,3 +175,110 @@ def _convert(path: Path, data: np.ndarray, tags: DNGTags) -> Path:
     conv.options(tags, path="", compress=False)
     conv.convert(data, filename=str(path.with_suffix("")))
     return path.with_suffix(".dng")
+
+
+# --------------------------------------------------------------------------
+# Our own writer
+# --------------------------------------------------------------------------
+
+def _our_tags(w: DngWriter, black: int, white: int,
+              neutral: tuple[float, float, float],
+              meta: CaptureMetadata | None) -> None:
+    """The camera-level description, in IFD0 where DNG readers expect it."""
+    w.add(T.DNG_VERSION, T.BYTE, [1, 4, 0, 0])
+    w.add(T.DNG_BACKWARD, T.BYTE, [1, 1, 0, 0])
+    w.add(T.COLOR_MATRIX1, T.SRATIONAL, NEUTRAL_MATRIX)
+    w.add(T.CALIBRATION_ILLUMINANT1, T.SHORT, 17)      # Standard light A
+    w.add(T.AS_SHOT_NEUTRAL, T.RATIONAL,
+          [_ratio(neutral[0]), _ratio(neutral[1]), _ratio(neutral[2])])
+    w.add(T.BLACK_LEVEL, T.SHORT, black, where="raw")
+    w.add(T.WHITE_LEVEL, T.LONG, white, where="raw")
+    w.add(T.SOFTWARE, T.ASCII, f"darlaston {_version()}")
+    w.add(T.DATETIME, T.ASCII, datetime.now().strftime("%Y:%m:%d %H:%M:%S"))
+    if meta is None:
+        # rawspeed logs "Failed to find MAKE entry" and falls back to a
+        # generic path without one. It still decodes, but a file that makes
+        # a decoder complain is a file that will confuse someone later.
+        w.add(T.MAKE, T.ASCII, "darlaston")
+        w.add(T.MODEL, T.ASCII, "camera")
+        w.add(T.UNIQUE_CAMERA_MODEL, T.ASCII, "camera")
+        return
+    w.add(T.MAKE, T.ASCII, meta.make or "darlaston")
+    w.add(T.MODEL, T.ASCII, meta.model or "camera")
+    w.add(T.UNIQUE_CAMERA_MODEL, T.ASCII,
+          meta.unique_camera_model or meta.model or "camera")
+    if meta.description:
+        w.add(T.IMAGE_DESCRIPTION, T.ASCII, meta.description)
+    if meta.serial:
+        w.add(T.CAMERA_SERIAL, T.ASCII, meta.serial)
+    if meta.exposure_seconds:
+        w.add(T.EXPOSURE_TIME, T.RATIONAL, [_ratio(meta.exposure_seconds)],
+              where="exif")
+    if meta.iso:
+        w.add(T.ISO_SPEED, T.SHORT, int(meta.iso), where="exif")
+    if meta.lens_model:
+        w.add(T.LENS_MODEL, T.ASCII, meta.lens_model, where="exif")
+    w.add(T.DATETIME_ORIGINAL, T.ASCII,
+          datetime.now().strftime("%Y:%m:%d %H:%M:%S"), where="exif")
+    if meta.comment:
+        w.add(T.USER_COMMENT, T.UNDEFINED,
+              _ASCII_PREFIX + meta.comment.encode("ascii", "ignore"),
+              where="exif")
+
+
+def _version() -> str:
+    from .. import __version__
+    return __version__
+
+
+def write_bayer_streamed(path: Path, rows, height: int, width: int, *,
+                         preview: np.ndarray,
+                         pattern: str = "GBRG", black: int = 0,
+                         white: int = WHITE_LEVEL,
+                         neutral: tuple[float, float, float] = (1.0, 1.0, 1.0),
+                         meta: CaptureMetadata | None = None,
+                         bits: int = 16, compress: bool = False,
+                         progress=None) -> Path:
+    """A Bayer DNG written strip by strip, with an embedded preview."""
+    path = Path(path).with_suffix(".dng")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    w = DngWriter(path, width, height, samples=1, bits=bits,
+                  photometric=T.PHOTO_CFA,
+                  compression=(T.COMPRESSION_DEFLATE if compress
+                               else T.COMPRESSION_NONE))
+    w.set_preview(preview)
+    _our_tags(w, black, white, neutral, meta)
+    w.add(T.CFA_REPEAT_DIM, T.SHORT, [2, 2], where="raw")
+    w.add(T.CFA_PATTERN, T.BYTE, _CFA_BYTES.get(pattern, (1, 2, 0, 1)),
+          where="raw")
+    w.add(T.CFA_PLANE_COLOR, T.BYTE, [0, 1, 2], where="raw")
+    w.add(T.CFA_LAYOUT, T.SHORT, 1, where="raw")
+    return w.write(rows, progress=progress)
+
+
+def write_linear_streamed(path: Path, rows, height: int, width: int, *,
+                          preview: np.ndarray, black: int = 0,
+                          white: int = 65535,
+                          neutral: tuple[float, float, float] = (1.0, 1.0, 1.0),
+                          meta: CaptureMetadata | None = None,
+                          compress: bool = False, progress=None) -> Path:
+    """A demosaiced-but-linear DNG, written strip by strip.
+
+    This is the mosaic composite's output, and the reason the writer exists:
+    a 272 MP composite cannot be handed to a library as one array.
+    """
+    path = Path(path).with_suffix(".dng")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    w = DngWriter(path, width, height, samples=3, bits=16,
+                  photometric=T.PHOTO_LINEAR_RAW,
+                  compression=(T.COMPRESSION_DEFLATE if compress
+                               else T.COMPRESSION_NONE))
+    w.set_preview(preview)
+    _our_tags(w, black, white, neutral, meta)
+    return w.write(rows, progress=progress)
+
+
+#: CFAPattern is four bytes of colour indices, 0=R 1=G 2=B, reading the 2x2
+#: cell left to right then top to bottom.
+_CFA_BYTES = {"GBRG": (1, 2, 0, 1), "GRBG": (1, 0, 2, 1),
+              "RGGB": (0, 1, 1, 2), "BGGR": (2, 1, 1, 0)}

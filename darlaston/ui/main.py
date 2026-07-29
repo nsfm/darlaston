@@ -32,14 +32,15 @@ from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
 from ..session.settings import Settings
 from . import theme
 from .about import AboutDialog
-from .calib_ui import CalibrationPanel
-from .capture_ui import SettingsDialog, ShutterButton, SubjectField
+from .calib_ui import CalibrationButton, CalibrationPanel
+from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
 from .stitch_ui import StitchDialog
 from .timelapse_ui import TimelapseDialog
-from .widgets import CoverageMeter, FocusTraceView, Histogram, LiveView
+from .floating import FloatingPanel
+from .widgets import FocusGroup, Histogram, LiveView
 
 #: Until the setup editor exists, a plausible stand so the chrome has something
 #: real to show. Replaced by the library as soon as a camera is recognised.
@@ -130,6 +131,19 @@ class MainWindow(QtWidgets.QMainWindow):
         capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
         capture_menu.addAction("Stitch mosaic…", self._stitch_mosaic)
+        capture_menu.addSeparator()
+        # In the menu rather than the rail: it is set once per illumination
+        # style and then left alone, and the rail is already too full to
+        # spend space on a control nobody touches twice in a session.
+        self.wb_action = capture_menu.addAction("Write white balance")
+        self.wb_action.setCheckable(True)
+        self.wb_action.setChecked(True)
+        self.wb_action.setToolTip(
+            "Off writes a neutral file: the sensor's own channels, untouched.\n"
+            "Use for polarised interference colour, fluorescence or stained\n"
+            "sections, where no part of the field is neutral by nature.")
+        self.wb_action.toggled.connect(
+            lambda on: setattr(self.capture, "white_balance", on))
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -138,17 +152,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view = LiveView()
         self.view.region_drawn.connect(self._on_custom_region)
         self.histogram = Histogram()
-        self.trace = FocusTraceView()
+        self.focus = FocusGroup()
+        self.focus.peaking_toggled.connect(self._on_peaking)
+        self.focus.sweep_toggled.connect(self._on_sweep)
 
-        # The slide map overlays the view's bottom-left corner: a map is only
-        # meaningful in reference to the image, and the rail squashed it.
+        # Floating panels over the live view. A map is only meaningful in
+        # reference to the image it maps, and calibration is a start-of-
+        # session ritual that does not deserve permanent rail residency --
+        # both belong here, and both can be dragged out of the way.
         self.slidemap = SlideMapPanel()
-        self.slidemap.setParent(self.view)
         self.slidemap.reset_requested.connect(self.pipeline.reset_tracking)
         self.slidemap.mosaic_requested.connect(self._on_mosaic_requested)
         self.slidemap.undo_tile.connect(self._on_undo_tile)
+        self.map_window = FloatingPanel("slide map", self.view)
+        self.map_window.set_relative(0.02, 0.58)
+        _fill(self.map_window, self.slidemap)
+
+        self.calib_panel = CalibrationPanel()
+        self.calib_panel.capture_dark.connect(self._do_dark)
+        self.calib_panel.build_flat.connect(self._do_flat)
+        self.calib_panel.build_lut.connect(self._do_lut)
+        self.calib_window = FloatingPanel("calibration", self.view)
+        self.calib_window.set_relative(0.04, 0.06)
+        _fill(self.calib_window, self.calib_panel)
+        self.calib_window.hide()
+
         self.view.installEventFilter(self)
         self.slidemap.show()
+        self.map_window.show()
 
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(self.waiting)
@@ -161,6 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
         body.addWidget(self._rail())
 
         self.strip = StatusBar()
+        self.strip.preview.currentIndexChanged.connect(self._on_preview_res)
 
         col = QtWidgets.QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
@@ -184,14 +216,13 @@ class MainWindow(QtWidgets.QMainWindow):
         col.setContentsMargins(14, 14, 14, 14)
         col.setSpacing(18)
 
-        self.calib_panel = CalibrationPanel()
-        self.calib_panel.capture_dark.connect(self._do_dark)
-        self.calib_panel.build_flat.connect(self._do_flat)
-        self.calib_panel.build_lut.connect(self._do_lut)
-        col.addLayout(_group("calibration", self.calib_panel))
+        # One row that is both status and doorway; the panel itself floats.
+        self.calib_button = CalibrationButton()
+        self.calib_button.clicked.connect(self._toggle_calibration)
+        col.addWidget(self.calib_button)
 
         col.addLayout(_group("exposure", self.histogram))
-        col.addLayout(_group("focus", self.trace))
+        col.addWidget(self.focus)
 
         # Sensor
         self.exposure = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -241,20 +272,6 @@ class MainWindow(QtWidgets.QMainWindow):
         measure.addWidget(hint)
         col.addLayout(measure)
 
-        self.peaking = QtWidgets.QCheckBox("focus peaking")
-        self.peaking.toggled.connect(self._on_peaking)
-        col.addWidget(self.peaking)
-
-        self.sweep = QtWidgets.QCheckBox("Z sweep")
-        self.sweep.setToolTip(
-            "Accumulates which parts of the frame have been through focus.\n"
-            "Rack past focus in both directions; it reads 100% when every "
-            "region with something in it has been passed.")
-        self.sweep.toggled.connect(self._on_sweep)
-        col.addWidget(self.sweep)
-        self.coverage = CoverageMeter()
-        col.addWidget(self.coverage)
-
         col.addStretch(1)
 
         # Subject and optics sit closest to the shutter: they are what this
@@ -272,51 +289,22 @@ class MainWindow(QtWidgets.QMainWindow):
         optics.addWidget(self.illumination)
         col.addLayout(optics)
 
-        # Frame averaging, next to the shutter it modifies. Noise falls as
-        # √N: sixteen frames are two stops of SNR, and the reason this
-        # sensor's small pixels can beat a camera whose single frame is
-        # cleaner. Not persisted -- a hero shot is a decision, not a mode
-        # to be surprised by tomorrow.
-        self._avg_frames = 1
-        avg_row = QtWidgets.QHBoxLayout()
-        avg_row.setSpacing(4)
-        avg_label = QtWidgets.QLabel("average")
-        avg_label.setProperty("role", "key")
-        avg_label.setToolTip(
-            "Average several exposures into one file.\n"
-            "Noise falls as the square root: ×16 is two stops cleaner.\n"
-            "Hold still for the whole burst — motion between frames\n"
-            "ghosts the average.")
-        avg_row.addWidget(avg_label)
-        avg_row.addStretch(1)
-        self._avg_buttons: dict[int, QtWidgets.QPushButton] = {}
-        for n in (1, 4, 16):
-            b = QtWidgets.QPushButton("—" if n == 1 else f"×{n}")
-            b.setCheckable(True)
-            b.setProperty("role", "seg")
-            b.setFixedWidth(40)
-            b.setChecked(n == 1)
-            b.clicked.connect(lambda _=False, n=n: self._on_average(n))
-            self._avg_buttons[n] = b
-            avg_row.addWidget(b)
-        col.addLayout(avg_row)
-
-        self.shutter = ShutterButton()
-        self.shutter.clicked.connect(self._on_capture)
+        # Shutter, averaging and last result as one control. Averaging is a
+        # split-button menu because it is chosen rarely and read never; the
+        # result appears under the button inside the same frame, so a capture
+        # reports where the eye already is.
+        self.shutter = ShutterBar()
+        self.shutter.triggered.connect(self._on_capture)
         self.shutter.set_available(False)
         col.addWidget(self.shutter)
-
-        self.last_capture = QtWidgets.QLabel("")
-        self.last_capture.setProperty("role", "key")
-        self.last_capture.setWordWrap(True)
-        col.addWidget(self.last_capture)
 
         return rail
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self.view and event.type() in (
                 QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show):
-            self.slidemap.place_in(self.view)
+            self.map_window.place(self.slidemap.preferred_size(self.view))
+            self.calib_window.place((330, 190))
         return super().eventFilter(obj, event)
 
     # ---- session ---------------------------------------------------------
@@ -331,7 +319,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.objective.set_turret(self.setup.scope.turret)
 
         self.strip.update_status(status, self.setup)
-        
+        self.strip.select_resolution(self.session.preview_resolution)
+
         if status.is_live and not self._synced:
             self._adopt_camera_settings()
 
@@ -405,6 +394,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_focus_peak()
         self.gain_value.setText(f"{value / 100:.1f}×")
 
+    def _on_preview_res(self, at: int) -> None:
+        index = self.strip.preview.itemData(at)
+        if index is None or not self.session.status.is_live:
+            return
+        # The scene scale changes with the mode, so tracked positions in the
+        # old mode's pixels no longer measure anything.
+        self.session.set_preview_resolution(int(index))
+        self.pipeline.reset_tracking()
+        self.slidemap.clear()
+        self.pipeline.reset_focus_peak()
+
     def _on_region(self, region: Region) -> None:
         self.pipeline.set_focus_region(region)
         for r, b in self._region_buttons.items():
@@ -452,20 +452,15 @@ class MainWindow(QtWidgets.QMainWindow):
         actual = self.session.actual_settings() or (8330, 100)
         status = self.store.status(self.setup, actual[0], actual[1],
                                    self.subject.slide_note)
+        live = self.session.status.is_live and not self.calibration.busy
         self.calib_panel.set_status(status, self.opportunist.count,
-                                    self.opportunist.bank.wanted,
-                                    live=self.session.status.is_live
-                                    and not self.calibration.busy)
-
-    def _on_average(self, n: int) -> None:
-        self._avg_frames = n
-        for count, b in self._avg_buttons.items():
-            b.setChecked(count == n)
+                                    self.opportunist.bank.wanted, live=live)
+        self.calib_button.set_status(status, busy=self.calibration.busy)
 
     def _on_capture(self) -> None:
         if not self.capture.trigger(self.setup, subject=self.subject.subject,
                                     slide=self.subject.slide_note,
-                                    frames=self._avg_frames):
+                                    frames=self.shutter.frames):
             return
         self.shutter.set_state("exposing")
 
@@ -482,9 +477,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object)
     def _on_capture_result(self, result: CaptureResult) -> None:
-        self.last_capture.setText(result.summary)
-        colour = theme.BAD if (not result.ok or result.moved) else theme.DIM
-        self.last_capture.setStyleSheet(f"color: {colour};")
+        self.shutter.set_result(result.summary,
+                                ok=result.ok and not result.moved)
         if result.ok and self.timelapse.running:
             try:
                 self.timelapse.note_written(result.path.stat().st_size)
@@ -506,8 +500,8 @@ class MainWindow(QtWidgets.QMainWindow):
         tile = self.mosaic.adopt(result.path, result.position, (w, h))
         self.slidemap.tile_added(result.position, self._last_preview)
         note = "" if result.position is not None else " (no position!)"
-        self.last_capture.setText(
-            f"tile {tile.index} · {tile.filename}{note}")
+        self.shutter.set_result(f"tile {tile.index} · {tile.filename}{note}",
+                                ok=result.position is not None)
 
     def _on_mosaic_requested(self, on: bool) -> None:
         if on:
@@ -548,8 +542,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tile = self.mosaic.undo()
         if tile is not None:
             self.slidemap.tile_removed()
-            self.last_capture.setText(f"tile {tile.index} deleted")
-            self.last_capture.setStyleSheet(f"color: {theme.DIM};")
+            self.shutter.set_result(f"tile {tile.index} deleted")
 
     def _offer_retry(self, result: CaptureResult) -> bool:
         """The shot is on disk either way; the question is whether to keep it.
@@ -575,8 +568,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
         if box.clickedButton() is retry:
             result.path.unlink(missing_ok=True)
-            self.last_capture.setText("discarded — hold still this time")
-            self.last_capture.setStyleSheet(f"color: {theme.DIM};")
+            self.shutter.set_result("discarded — hold still this time")
             self._on_capture()
             return True
         return False
@@ -599,6 +591,14 @@ class MainWindow(QtWidgets.QMainWindow):
             # pixels no longer measure anything on the new one.
             self.slidemap.clear()
 
+    def _toggle_calibration(self) -> None:
+        if self.calib_window.isVisible():
+            self.calib_window.hide()
+            return
+        self.calib_window.place((330, 190))
+        self.calib_window.show()
+        self.calib_window.raise_()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self.setup, self)
         dialog.exec()
@@ -608,7 +608,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self.timelapse.start(
                 interval, count, setup=self.setup,
                 subject=self.subject.subject, slide=self.subject.slide_note,
-                frames=self._avg_frames)
+                frames=self.shutter.frames)
         TimelapseDialog(self.timelapse, start, self).exec()
 
     @QtCore.Slot(object)
@@ -665,7 +665,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pipeline.start_sweep()
         else:
             self.pipeline.stop_sweep()
-            self.coverage.set_value(None)
+            self.focus.set_coverage(None)
             self.view.set_remaining(None, None)
 
     def _on_peaking(self, on: bool) -> None:
@@ -695,14 +695,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.opportunist.observe(s)
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_remaining(s.coverage_remaining, s.focus_rect)
-        self.coverage.set_value(s.coverage, s.coverage_complete)
+        self.focus.set_coverage(s.coverage, s.coverage_complete)
         self.view.set_frame(s.preview, s.peaking)
         self.slidemap.update_live(s)
         self._last_preview = s.preview
-        self.histogram.set_data(s.histogram, s.clipped_fraction,
-                                s.black_fraction, s.channel_clipped)
-        self.trace.set_data(s.focus_trace, s.focus_fraction_of_peak)
-        self.strip.set_live(s)
+
+        # The instruments repaint at a third of the frame rate. A histogram
+        # and a focus trace are read as trends, not as individual frames, and
+        # at 30 Hz their repaints cost more of the UI thread than the live
+        # image itself. The *data* is still folded in every frame -- only the
+        # drawing is thinned.
+        self._tick = getattr(self, "_tick", 0) + 1
+        if self._tick % 3 == 0:
+            self.histogram.set_data(s.histogram, s.clipped_fraction,
+                                    s.black_fraction, s.channel_clipped)
+            self.focus.set_data(s.focus_trace, s.focus_fraction_of_peak)
+            self.strip.set_live(s)
 
     def shutdown(self) -> None:
         """Release the camera. Idempotent, and reached from both the window
@@ -720,6 +728,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 # --------------------------------------------------------------------------
+
+def _fill(panel, widget) -> None:
+    """Put a panel's content inside its floating frame."""
+    lay = QtWidgets.QVBoxLayout(panel.body)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(widget)
+
 
 def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout):
     col = QtWidgets.QVBoxLayout()

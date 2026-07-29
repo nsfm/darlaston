@@ -23,10 +23,30 @@ Ordered within each section by how much it would change what gets built.
       raw level that implies. A neutral-looking preview and an honest
       per-channel histogram are mutually exclusive from 8-bit data — the ISP
       must boost blue ~3x, so blue's information is destroyed before we see it.
-- [ ] **UI sweep.** Spacing, resizing behaviour, layout. Deliberately deferred
-      until more elements exist, so the pass is done once against the finished
-      set rather than twice. The rail is now dense enough that this is getting
-      closer.
+- [ ] **The rail needs restructuring, not scrolling.** It now holds eleven
+      groups and calibration is squashed at the top. The honest read is that
+      the rail is doing two different jobs: *setup* (calibration, preview
+      profile, measurement region, metric) which is touched at the start of a
+      session and then left, and *shooting* (exposure, focus, coverage,
+      subject, optics, average, shutter) which is touched constantly. A
+      scrollbar would preserve that confusion and add hunting to it. Split by
+      how often a thing is touched, keep the shooting controls always visible
+      and unscrolled, and move setup behind its own surface. Collapsible
+      sections are the fallback if the split proves wrong, not the first move.
+- [x] ~~**Live loop profiled.**~~ Frame-rate regression measured and fixed,
+      A/B on the same harness: 24.65 → 18.44 ms with peaking off, 42.21 →
+      17.64 ms with peaking and Z sweep on (23.7 → 56.7 fps ceiling). Three
+      causes, all measured: the clipping test built three full-frame boolean
+      temporaries every frame (10.9 ms; `cv2.split` plus per-plane calcHist
+      is 3.4 ms and hands back the green plane the focus metric needed
+      anyway), the sharpness field ran at full preview resolution when both
+      its consumers are insensitive to that (16.6 → 4.9 ms at half size), and
+      coverage recomputed its structure mask three times per update and used
+      boolean-mask indexing to average (13.7 → 1.3 ms).
+- [ ] **Profile the UI thread too.** The analysis loop is now well inside
+      budget, so if frame rate still disappoints on hardware the next suspect
+      is painting — the map canvas redraws every banked thumbnail on every
+      position change, which is cheap at 20 fields and may not be at 200.
 - [x] ~~**Calibration engine.**~~ Store keyed by product lifetime, dark
       averaging with a defect map, flat medianing with per-Bayer-phase
       normalisation, measured white balance, opportunistic blank banking, and
@@ -136,16 +156,39 @@ Ordered within each section by how much it would change what gets built.
       mosaic and re-run the comparison — this is the highest-value open
       question, because it may indicate a real defect in the calibration
       path rather than drift.
-- [ ] **Bake a thumbnail into our DNGs.** System thumbnailers refuse the big
-      files, and a 275 MP composite is unopenable-looking in a file manager.
-      Structural, not cosmetic: a conformant DNG puts a *reduced* image in
-      IFD0 (`NewSubfileType = 1`) and the real one in a SubIFD, but pidng
-      writes the full image directly into IFD0 with no SubIFDs tag at all —
-      verified by parsing our own output. So this cannot be done by adding a
-      tag; it needs the IFD tree restructured after pidng writes, or our own
-      writer. We already parse TIFF for `read_bayer_dng`, so writing one is
-      within reach and stays dependency-free. Do it for composites first,
-      where it hurts most.
+- [x] ~~**Our own DNG writer.**~~ `process/tiff.py`. Strip-based, streaming,
+      little-endian, 8/12/16-bit. IFD0 now holds a real reduced-resolution
+      preview with the image in a SubIFD, which is the structure thumbnailers
+      and DNG readers actually expect. Verified against darktable 5.4.1:
+      12-bit Bayer, 16-bit Bayer and the 272 MP linear composite all decode
+      clean. Peak memory to write the 1.63 GB composite fell 6.84 → 3.05 GB;
+      a single capture fell 39.7 → 30.0 MB. `read_bayer_dng` grew to follow
+      SubIFDs and unpack 12-bit while still reading every pidng file already
+      on disk — there are mosaics in the old shape and they must keep working.
+- [ ] **Deflate is a dead end for us, and it is worth knowing why.**
+      Implemented and round-tripping through our own reader, but rawspeed
+      refuses it: "Only float format is supported for deflate-compressed
+      data" — the DNG spec only allows Deflate on floating-point samples.
+      Measured cost of the restriction: 27.0 MB with deflate versus 30.0 MB
+      packed, so it was buying 10%, not a category change. Left in the code
+      behind no UI. A float DNG would unlock it and cost more than it saves.
+- [x] ~~**Raw file size.**~~ 12-bit packing is on by default for single
+      frames: 39.7 → 30.0 MB, lossless, since the sensor is 12-bit and the
+      other four bits were always zeroes. Averaged frames stay 16-bit — the
+      mean carries real sub-LSB precision and packing it would throw away
+      exactly the SNR the burst paid for.
+- [ ] **Binned capture as a size option.** `grab_raw` hard-codes full
+      resolution. The sensor's own binned modes would give 7.5 MB at
+      2736×1824 and 3.3 MB at 1824×1216, packed — a real choice for survey
+      work where 20 MP per tile is not the point.
+- [x] ~~**Thumbnails baked into our DNGs.**~~ Every file we write now carries
+      a gamma-corrected, white-balanced RGB preview in IFD0. The balance is
+      estimated for the preview even when the file itself carries no measured
+      neutral, because a raw microscope field rendered flat is a green
+      rectangle that tells the operator nothing.
+- [ ] **Confirm the system thumbnailer is happy.** The preview is in the
+      right place and extracts correctly, but whether a given file manager
+      picks it up depends on that thumbnailer. Nate to check.
 - [x] ~~**Output size is a knob now.**~~ Capture → Stitch mosaic… measures the
       real geometry from the manifest and prices every choice before starting
       (Nate's 17-tile run: full 19718 × 13925 = 275 MP / 1.65 GB, half 69 MP,
@@ -153,13 +196,12 @@ Ordered within each section by how much it would change what gets built.
       image plus one band rather than a 3.3 GB float accumulator that grew
       with the square of the area covered. Choices past the 4 GB a classic
       TIFF can address are disabled rather than offered and then failed.
-- [ ] **The DNG writer is now the memory bottleneck.** Banding cut the
-      compositor to the finished image plus one band, and measurement then
-      showed the peak had moved: writing a 1.63 GB linear DNG through pidng
-      costs about 3.2 GB *on top of* the array — 272 MP peaked at 6.84 GB,
-      most of it in the write. Our own strip-based TIFF writer fixes this and
-      the thumbnail item above in one stroke, and removes the last thing
-      standing between us and a 40-tile mosaic.
+- [ ] **The composite still holds one full canvas.** With the writer fixed,
+      peak is 3.05 GB for 272 MP and the remainder is the uint16 result
+      array plus the registration lumas. Rendering bands on demand into the
+      writer, rather than filling a canvas and then streaming it, would drop
+      it again — and the writer's `rows` callback is already the right shape
+      for it.
 - [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all — classic
       TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for
       viewing; the linear DNG stays the right output while it fits.

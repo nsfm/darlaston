@@ -26,6 +26,7 @@ one tile covers a pixel.
 from __future__ import annotations
 
 import struct
+import zlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,25 +50,91 @@ MIN_OVERLAP = 0.04
 
 # ---- reading our own files -------------------------------------------------
 
+_TYPE_SIZE = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 10: 8}
+
+
+def _read_ifd(data: bytes, at: int) -> dict[int, tuple[int, int, int]]:
+    """tag -> (type, count, value-or-offset)."""
+    (count,) = struct.unpack_from("<H", data, at)
+    out = {}
+    for i in range(count):
+        tag, typ, cnt, val = struct.unpack_from("<HHII", data, at + 2 + i * 12)
+        out[tag] = (typ, cnt, val)
+    return out
+
+
+def _values(data: bytes, entry: tuple[int, int, int]) -> list[int]:
+    typ, cnt, val = entry
+    size = _TYPE_SIZE.get(typ, 1) * cnt
+    if size <= 4:
+        raw = struct.pack("<I", val)[:size]
+    else:
+        raw = data[val:val + size]
+    fmt = {1: "B", 3: "H", 4: "I"}.get(typ)
+    if fmt is None:
+        return [val]
+    return list(struct.unpack_from("<" + fmt * cnt, raw))
+
+
+def _unpack_12(raw: bytes, count: int) -> np.ndarray:
+    b = np.frombuffer(raw, np.uint8)
+    trips = b[:(b.size // 3) * 3].reshape(-1, 3).astype(np.uint16)
+    a = (trips[:, 0] << 4) | (trips[:, 1] >> 4)
+    c = ((trips[:, 1] & 0x0F) << 8) | trips[:, 2]
+    out = np.empty(a.size * 2, np.uint16)
+    out[0::2] = a
+    out[1::2] = c
+    return out[:count]
+
+
 def read_bayer_dng(path: Path | str) -> np.ndarray:
-    """Read a DNG that darlaston wrote. Nothing else is attempted."""
+    """Read a DNG that darlaston wrote. Nothing else is attempted.
+
+    Handles both shapes we have produced: the old pidng files, where the full
+    image sits in IFD0 as a single tile, and our own, where IFD0 holds a
+    preview and the real image lives in a SubIFD as strips. Reading our own
+    history is not optional -- there are mosaics on disk in the old shape.
+    """
     data = Path(path).read_bytes()
     if data[:4] != b"II\x2a\x00":
         raise ValueError(f"{path}: not a little-endian TIFF darlaston wrote")
-    (ifd,) = struct.unpack_from("<I", data, 4)
-    (count,) = struct.unpack_from("<H", data, ifd)
-    tags: dict[int, int] = {}
-    for i in range(count):
-        tag, _typ, _cnt, val = struct.unpack_from("<HHII", data, ifd + 2 + i * 12)
-        tags[tag] = val
-    w, h = tags.get(256, 0), tags.get(257, 0)
-    if tags.get(259, 1) != 1 or tags.get(258) != 16:
-        raise ValueError(f"{path}: compressed or non-16-bit; not ours")
-    offset = tags.get(324) or tags.get(273)      # one full-frame tile
-    if not w or not h or not offset:
-        raise ValueError(f"{path}: missing geometry tags")
-    return np.frombuffer(data, np.uint16, count=w * h,
-                         offset=offset).reshape(h, w).copy()
+    (first,) = struct.unpack_from("<I", data, 4)
+    ifd = _read_ifd(data, first)
+
+    # Prefer a SubIFD when there is one: that is where our writer puts the
+    # real image, IFD0 being the preview.
+    if 330 in ifd:
+        sub = _values(data, ifd[330])[0]
+        ifd = _read_ifd(data, sub)
+
+    w = _values(data, ifd[256])[0]
+    h = _values(data, ifd[257])[0]
+    bits = _values(data, ifd[258])[0] if 258 in ifd else 16
+    comp = _values(data, ifd[259])[0] if 259 in ifd else 1
+    if bits not in (12, 16):
+        raise ValueError(f"{path}: {bits}-bit is not a shape we write")
+
+    if 324 in ifd:                                    # tiled (old pidng)
+        offsets = _values(data, ifd[324])
+        counts = _values(data, ifd[325]) if 325 in ifd else [w * h * 2]
+    else:
+        offsets = _values(data, ifd[273])
+        counts = _values(data, ifd[279])
+
+    chunks = []
+    for off, n in zip(offsets, counts):
+        raw = data[off:off + n]
+        if comp == 8:
+            raw = zlib.decompress(raw)
+        elif comp != 1:
+            raise ValueError(f"{path}: compression {comp} is not ours")
+        chunks.append(raw)
+    blob = b"".join(chunks)
+    if bits == 12:
+        flat = _unpack_12(blob, w * h)
+    else:
+        flat = np.frombuffer(blob, np.uint16, count=w * h)
+    return flat.reshape(h, w).copy()
 
 
 def luma_half(raw: np.ndarray) -> np.ndarray:
@@ -369,6 +436,7 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
             f"{geom['megapixels']:.0f} MP is {geom['bytes'] / 1e9:.1f} GB, "
             f"past what a DNG can address (4 GB). Use a smaller scale.")
     w0, h0 = geom["origin"]
+    del geom
 
     # Where each tile lands, so a band knows what to ask for.
     boxes = []
@@ -426,7 +494,27 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
             progress(bi + 1, bands)
 
     target = session.dir / "composite.dng"
-    return dng.write_linear(target, result, neutral=neutral or (1, 1, 1))
+    # Written strip by strip through our own writer. pidng needed roughly
+    # 3.2 GB of working memory on top of a 1.6 GB composite, which made the
+    # writer the peak of the whole operation once banding had fixed the
+    # compositor; this adds one strip. It also embeds a preview, so the
+    # result is something a file manager will show rather than refuse.
+    # Subsample *both* axes by the same step: stepping rows only produced a
+    # 320x6 sliver, which is structurally a valid thumbnail and useless as
+    # one. Cheap decimation first so make_preview is not resizing 272 MP.
+    step = max(1, ch // 400, cw // 400)
+    thumb = result[::step, ::step]
+    # Balance the thumbnail even when the file carries no measured neutral:
+    # a raw microscope field is green-dominant, and an unbalanced preview is
+    # a green rectangle that tells the operator nothing about their mosaic.
+    means = [float(thumb[:, :, c][thumb[:, :, c] > 0].mean() or 1.0)
+             for c in range(3)]
+    grey = tuple(m / max(means[1], 1e-6) for m in means)
+    preview = dng.make_preview(thumb, bayer=False, neutral=grey,
+                               white=int(max(result.max(), 1)))
+    return dng.write_linear_streamed(
+        target, lambda s, c: result[s:s + c], ch, cw,
+        preview=preview, neutral=neutral or (1.0, 1.0, 1.0), white=65535)
 
 
 def survey(directory: Path | str) -> tuple[MosaicSession, list, list]:

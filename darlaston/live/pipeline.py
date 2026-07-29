@@ -287,10 +287,30 @@ class LivePipeline:
         # from preview clipping that is not sensor clipping at all. Green
         # saturates within a few percent of the sensor's own ceiling, and it
         # carries most of the detail regardless.
-        gray = data[:, :, 1].copy() if data.ndim == 3 else data
-
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
-        total = float(gray.size)
+        # Split once, then everything downstream reads contiguous memory.
+        #
+        # This was the most expensive thing in the loop and it was pure waste.
+        # Clipping used to be three full-frame `(chan >= 255).mean()` calls,
+        # each materialising a 2.2 MP boolean temporary: 10.9 ms per frame
+        # against a 33 ms budget. Counting the same pixels with calcHist is
+        # the obvious fix, but calcHist on an interleaved channel strides and
+        # costs 5.7 ms -- while splitting first and running it on contiguous
+        # planes costs 3.4 ms *and* hands back the green plane the focus
+        # metric needs anyway, replacing a separate copy.
+        if data.ndim == 3:
+            planes = cv2.split(data)                  # B, G, R
+            gray = planes[1]
+            hists = [cv2.calcHist([p], [0], None, [256], [0, 256]).ravel()
+                     for p in planes]
+            total = float(gray.size)
+            per = (float(hists[2][255] / total), float(hists[1][255] / total),
+                   float(hists[0][255] / total))
+            hist = hists[1]
+        else:
+            gray = data
+            total = float(gray.size)
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+            per = (0.0, float(hist[255] / total), 0.0)
         black = float(hist[0] / total)
 
         # Clipping is judged on green, not on luminance or on any channel.
@@ -302,12 +322,7 @@ class LivePipeline:
         # saturation, because neutralising this sensor needs about 3x blue
         # gain. Green saturates at raw ~3584, 88% of full scale, so it is
         # honest to within about 12% and carries most of the luminance anyway.
-        if data.ndim == 3:
-            per = tuple(float((data[:, :, i] >= 255).mean()) for i in (2, 1, 0))
-            clipped = per[1]           # green
-        else:
-            per = (0.0, float(hist[255] / total), 0.0)
-            clipped = per[1]
+        clipped = per[1]               # green
 
         rect = region_rect(gray.shape, region, custom)
         score = measure(gray, metric, prefilter, rect)
@@ -347,7 +362,11 @@ class LivePipeline:
             # Coverage is measured over the same region as the focus metric,
             # so 'spot' gives fast feedback on one detail and 'full' answers
             # whether the whole tile is covered.
-            rx, ry, rw, rh = rect
+            # The field is at reduced scale; the region is in preview
+            # coordinates. Scale it down rather than the field up.
+            k = self.PEAKING_SHRINK
+            rx, ry, rw, rh = (v // k for v in rect)
+            rw, rh = max(1, rw), max(1, rh)
             if field is not None:
                 coverage_acc.update(field[ry:ry + rh, rx:rx + rw])
             coverage = coverage_acc.fraction
@@ -409,18 +428,35 @@ class LivePipeline:
         sy = full_shape[0] / small.shape[0]
         return (dx * sx, dy * sy), float(response)
 
-    @staticmethod
-    def _peaking(gray: np.ndarray) -> np.ndarray:
-        """Per-pixel sharpness field.
+    #: The sharpness field is computed at half the preview's linear size.
+    #: Both its consumers are insensitive to that: the peaking overlay is
+    #: Gaussian-pooled with sigma 4 and then rescaled to the widget anyway,
+    #: and coverage asks a per-region question, not a per-pixel one. Measured
+    #: at 16.6 ms full size against 4.4 ms here, and it makes every coverage
+    #: pass a quarter of the work as well.
+    PEAKING_SHRINK = 2
+
+    @classmethod
+    def _peaking(cls, gray: np.ndarray) -> np.ndarray:
+        """Per-pixel sharpness field, at reduced scale.
 
         Tenengrad plus Gaussian pooling, after focus-stack's task_focusmeasure
         (MIT). The blur is the load-bearing step nobody else does -- it turns a
         sparse edge response into a smooth field that can be colour-mapped
         rather than a speckle mask.
+
+        Sigma scales with the shrink so the pooled field has the same shape in
+        image terms as it did at full size -- otherwise halving the resolution
+        would quietly double the effective blur radius.
         """
+        k = cls.PEAKING_SHRINK
+        if k > 1:
+            h, w = gray.shape[:2]
+            gray = cv2.resize(gray, (w // k, h // k),
+                              interpolation=cv2.INTER_AREA)
         f = gray.astype(np.float32)
         gx = cv2.Sobel(f, cv2.CV_32F, 1, 0)
         gy = cv2.Sobel(f, cv2.CV_32F, 0, 1)
         mag = gx * gx + gy * gy
-        mag = cv2.GaussianBlur(mag, (0, 0), 4.0)
+        mag = cv2.GaussianBlur(mag, (0, 0), 4.0 / k)
         return cv2.sqrt(mag)

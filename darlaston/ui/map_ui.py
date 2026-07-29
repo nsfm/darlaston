@@ -250,7 +250,7 @@ class SlideMapPanel(QtWidgets.QWidget):
         row.addWidget(self.clear_btn)
 
         col = QtWidgets.QVBoxLayout(self)
-        col.setContentsMargins(9, 9, 9, 9)
+        col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(5)
         col.addWidget(self.canvas, 1)
         col.addWidget(self.status)
@@ -260,24 +260,10 @@ class SlideMapPanel(QtWidgets.QWidget):
         self._frame: tuple[int, int] = (0, 0)
         self._tracking = False
 
-    def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))
-        p.setBrush(QtGui.QColor(16, 18, 16, 232))
-        p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5,
-                                                              -0.5, -0.5),
-                          5.0, 5.0)
-        p.end()
-
-    def place_in(self, host: QtWidgets.QWidget, margin: int = 14) -> None:
-        """Size and pin to the host's bottom-left corner. Called by the host
-        on every resize; the map takes about a third of the view, bounded."""
+    def preferred_size(self, host: QtWidgets.QWidget) -> tuple[int, int]:
+        """About a third of the view wide, bounded, plus room for controls."""
         w = int(max(280, min(500, host.width() * 0.34)))
-        h = int(w * 0.58) + 58
-        self.setFixedSize(w, h)
-        self.move(margin, host.height() - h - margin)
-        self.raise_()
+        return w, int(w * 0.58) + 76
 
     # ---- feed ------------------------------------------------------------
 

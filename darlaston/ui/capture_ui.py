@@ -25,20 +25,30 @@ class ShutterButton(QtWidgets.QPushButton):
 
     LABELS = {"idle": "Capture", "exposing": "Exposing…", "writing": "Writing…"}
 
-    @staticmethod
-    def _label(state: str) -> str:
+    def _label(self, state: str) -> str:
         # Burst states arrive as "exposing 3/16" -- show them as they are,
         # because a sixteen-frame average with a mute progress readout looks
         # exactly like a hang.
-        return (ShutterButton.LABELS.get(state)
+        base = (ShutterButton.LABELS.get(state)
                 or state[:1].upper() + state[1:] + "…")
+        if state == "idle" and self._average > 1:
+            return f"{base}  ×{self._average}"
+        return base
 
     def __init__(self) -> None:
         super().__init__("Capture")
         self._state = "idle"
+        self._average = 1
         self.setMinimumHeight(46)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self._restyle()
+
+    def set_average(self, n: int) -> None:
+        """Carry the burst count on the button itself, so a sixteen-frame
+        capture is never a surprise at the moment of pressing."""
+        self._average = n
+        if self._state == "idle":
+            self.setText(self._label("idle"))
 
     def set_state(self, state: str) -> None:
         self._state = state
@@ -53,13 +63,118 @@ class ShutterButton(QtWidgets.QPushButton):
     def _restyle(self) -> None:
         busy = self._state != "idle"
         colour = theme.DIM if (busy or not self.isEnabled()) else theme.BRASS
+        # Right side square: the averaging arrow butts against it to make one
+        # pill, so the seam between them must not be rounded.
         self.setStyleSheet(
-            f"QPushButton {{ border: 1px solid {colour}; border-radius: 4px;"
-            f" margin: 1px;"
+            f"QPushButton {{ border: 1px solid {colour};"
+            f" border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+            f" margin: 1px 0 1px 1px;"
             f" color: {colour}; font-size: 14px; letter-spacing: 1px;"
             f" background: transparent; }}"
             f"QPushButton:hover:enabled {{ background: rgba(200,155,74,0.10); }}"
             f"QPushButton:pressed:enabled {{ background: rgba(200,155,74,0.20); }}")
+
+
+class ShutterBar(QtWidgets.QWidget):
+    """The shutter, its averaging menu, and the last result, as one control.
+
+    Three rail rows became one. The averaging choice is a split-button arrow
+    rather than a segmented row, because it is picked rarely and read never;
+    the result line lives *under the button inside the same frame*, so a
+    capture reports where the eye already is instead of somewhere below.
+    """
+
+    triggered = QtCore.Signal()
+    average_changed = QtCore.Signal(int)
+
+    CHOICES = (1, 4, 16)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.button = ShutterButton()
+        self.button.clicked.connect(self.triggered)
+
+        self.arrow = QtWidgets.QToolButton()
+        self.arrow.setText("▾")
+        self.arrow.setFixedSize(26, 46)
+        self.arrow.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.arrow.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.arrow.setToolTip(
+            "Average several exposures into one file.\n"
+            "Noise falls as the square root: ×16 is two stops cleaner.\n"
+            "Hold still for the whole burst — motion between frames ghosts "
+            "the average.")
+
+        self._menu = QtWidgets.QMenu(self)
+        self._actions = {}
+        group = QtGui.QActionGroup(self._menu)
+        group.setExclusive(True)
+        for n in self.CHOICES:
+            act = self._menu.addAction("single frame" if n == 1
+                                       else f"average ×{n}")
+            act.setCheckable(True)
+            act.setChecked(n == 1)
+            group.addAction(act)
+            act.triggered.connect(lambda _=False, n=n: self._choose(n))
+            self._actions[n] = act
+        self.arrow.setMenu(self._menu)
+
+        self.result = QtWidgets.QLabel("")
+        self.result.setProperty("role", "key")
+        self.result.setWordWrap(True)
+        self.result.setVisible(False)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self.button, 1)
+        row.addWidget(self.arrow)
+
+        col = QtWidgets.QVBoxLayout(self)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(3)
+        col.addLayout(row)
+        col.addWidget(self.result)
+
+        self._frames = 1
+        self._restyle_arrow()
+
+    @property
+    def frames(self) -> int:
+        return self._frames
+
+    def _choose(self, n: int) -> None:
+        self._frames = n
+        self.button.set_average(n)
+        self._restyle_arrow()
+        self.average_changed.emit(n)
+
+    def _restyle_arrow(self) -> None:
+        colour = theme.BRASS if self._frames > 1 else theme.DIM
+        self.arrow.setStyleSheet(
+            f"QToolButton {{ border: 1px solid {colour}; border-left: 0;"
+            f" border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+            f" margin: 1px 1px 1px 0; color: {colour};"
+            f" background: transparent; }}"
+            f"QToolButton::menu-indicator {{ image: none; }}"
+            f"QToolButton:hover {{ background: rgba(200,155,74,0.10); }}")
+
+    # ---- state -----------------------------------------------------------
+
+    def set_state(self, state: str) -> None:
+        self.button.set_state(state)
+        self.arrow.setEnabled(state == "idle")
+
+    def set_available(self, available: bool) -> None:
+        self.button.set_available(available)
+        self.arrow.setEnabled(available)
+
+    def set_result(self, text: str, ok: bool = True) -> None:
+        self.result.setVisible(bool(text))
+        self.result.setText(text)
+        self.result.setStyleSheet(
+            f"color: {theme.DIM if ok else theme.BAD};")
 
 
 class SubjectField(QtWidgets.QWidget):

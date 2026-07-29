@@ -75,10 +75,21 @@ class CameraSession:
         # forgets them and a partially configured camera is worse than none.
         self._exposure_us = 8330
         self._gain_pct = 100
-        #: Live preview rate. Analysis tops out around 47 fps, so a camera free-
-        #: running at 60 spends a third of its output being discarded -- and
-        #: those pulls hold the GIL. Ask for fewer instead. 0 disables the cap.
-        self.framerate_cap = 30
+        #: Live preview rate. Frames we drop were still pulled -- memcpy'd off
+        #: USB with the SDK's thread holding the GIL -- so asking the camera
+        #: for fewer beats discarding more.
+        #:
+        #: This was 30 when analysis topped out near 47 fps. After profiling
+        #: (see TODO) the live loop sustains about 57, so 30 had become the
+        #: binding constraint rather than a sensible ceiling: a reported
+        #: 27 fps was 90% of our own cap, not evidence of a bottleneck.
+        #:
+        #: Raised to 60 with the caveat that the link may bind first: the
+        #: preview is 24-bit RGB, so 1824x1216 at 30 fps is already ~200 MB/s
+        #: and 60 would want ~400, which is past what USB 3 delivers in
+        #: practice. Where that bites, the honest lever is a smaller preview
+        #: resolution, which is now a control in the status bar. 0 disables.
+        self.framerate_cap = 60
 
         self._status = SessionStatus(CameraState.DISCONNECTED,
                                      message="Waiting for a camera")
@@ -119,6 +130,44 @@ class CameraSession:
             return b.get_exposure(), b.get_gain()
         except Exception:
             return None
+
+    @property
+    def preview_resolution(self) -> int:
+        return self._preview
+
+    def set_preview_resolution(self, index: int) -> bool:
+        """Restart the live stream at a different sensor mode.
+
+        The mode cannot be changed while the stream runs, so this stops and
+        restarts it -- a visible blink, which is honest about what is
+        happening. Captures are unaffected: `grab_raw` always selects full
+        resolution for itself, so a smaller preview costs nothing but preview
+        detail, while every per-pixel stage of the live loop gets cheaper with
+        the square of the reduction.
+        """
+        index = int(index)
+        if index == self._preview:
+            return True
+        with self._lock:
+            backend = self._backend
+        self._preview = index
+        if backend is None:
+            return True
+        try:
+            backend.stop_stream()
+            backend.set_resolution(index)
+            backend.start_stream(self._on_frame)
+            backend.set_exposure(self._exposure_us)
+            backend.set_gain(self._gain_pct)
+            if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
+                backend.set_framerate_cap(self.framerate_cap)
+            return True
+        except Exception:
+            # The supervisor notices a dead stream and reconnects; saying so
+            # here would race with it.
+            import traceback
+            traceback.print_exc()
+            return False
 
     def set_exposure(self, microseconds: int) -> None:
         self._exposure_us = int(microseconds)

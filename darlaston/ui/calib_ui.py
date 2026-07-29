@@ -53,6 +53,58 @@ class _Row(QtWidgets.QWidget):
         self.button.setEnabled(actionable)
 
 
+class CalibrationButton(QtWidgets.QPushButton):
+    """One rail row that is both the status and the way in.
+
+    Calibration is a start-of-session ritual: you do it, then you shoot for
+    an hour. It does not deserve permanent residency in the rail, but its
+    *state* does -- capturing against a missing flat should be a visible
+    choice rather than a silent one. So the button reports what exists and
+    opens the panel that fixes what does not.
+    """
+
+    ORDER = (("dark", "dark"), ("flat", "flat"),
+             ("white_balance", "wb"), ("preview_lut", "profile"))
+
+    def __init__(self) -> None:
+        super().__init__("calibration")
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self._missing: list[str] = []
+        self._busy = False
+        self._restyle()
+
+    def set_status(self, status: dict, busy: bool = False) -> None:
+        self._missing = [label for key, label in self.ORDER
+                         if not status.get(key, False)]
+        self._busy = busy
+        # A count, not a list. The rail is 258 px wide and "no flat, wb,
+        # profile" elided to "no flat, wb, profil" -- which is worse than a
+        # number, because a truncated list looks like information and is not.
+        # Which ones are missing is the panel's job; this is the summary.
+        have = len(self.ORDER) - len(self._missing)
+        if busy:
+            self.setText("calibration   working…")
+        elif not self._missing:
+            self.setText("calibration   complete")
+        else:
+            self.setText(f"calibration   {have} of {len(self.ORDER)}")
+        self.setToolTip(
+            "Dark, flat, white balance and preview profile for this "
+            "configuration.\nClick to open. Missing products are a nag, "
+            "not a gate — capture anyway\nand the file records what it "
+            "did and did not have.")
+        self._restyle()
+
+    def _restyle(self) -> None:
+        colour = (theme.BRASS if self._busy
+                  else theme.DIM if not self._missing else theme.BRASS)
+        self.setStyleSheet(
+            f"QPushButton {{ border: 1px solid {theme.LINE};"
+            f" border-radius: 3px; margin: 1px; padding: 5px 8px;"
+            f" text-align: left; color: {colour}; background: transparent; }}"
+            f"QPushButton:hover {{ border-color: {theme.BRASS}; }}")
+
+
 class CalibrationPanel(QtWidgets.QWidget):
     """Status for the current configuration, plus the routines."""
 

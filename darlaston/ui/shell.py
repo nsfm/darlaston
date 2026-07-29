@@ -132,6 +132,30 @@ class StatusBar(QtWidgets.QFrame):
         self.state.setProperty("role", "sub")
         self.context = QtWidgets.QLabel("")
         self.context.setProperty("role", "sub")
+
+        # Preview resolution, as a control rather than a label. It used to
+        # report the *capture* resolution, which read as though the live view
+        # were 20 MP when it has always been the smallest binned mode -- a
+        # label that answers a different question than the one it appears to.
+        self.preview = QtWidgets.QComboBox()
+        self.preview.setProperty("role", "sub")
+        # Size to the longest entry, not to the current one: a combo that
+        # fits its selection and then elides it is worse than one that is
+        # simply wide enough.
+        self.preview.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.preview.setMinimumContentsLength(18)
+        self.preview.setToolTip(
+            "Live preview resolution. Captures are always full resolution;\n"
+            "this only trades preview detail for frame rate, and every\n"
+            "per-pixel stage of the live loop scales with it.")
+        self.preview.setStyleSheet(
+            f"QComboBox {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
+            f" margin: 1px; padding: 1px 6px; color: {theme.DIM};"
+            f" background: transparent; }}"
+            f"QComboBox:hover {{ color: {theme.INK}; }}"
+            f"QComboBox::drop-down {{ border: 0; width: 12px; }}")
+
         self.numbers = QtWidgets.QLabel("")
         self.numbers.setProperty("role", "sub")
 
@@ -142,9 +166,19 @@ class StatusBar(QtWidgets.QFrame):
         row.addWidget(self.state)
         row.addWidget(self.context)
         row.addStretch(1)
+        row.addWidget(self.preview)
         row.addWidget(self.numbers)
         self._base = ""
         self._note = ""
+        self._res_filled = False
+
+    def select_resolution(self, index: int) -> None:
+        """Reflect the session's actual choice without re-firing the signal."""
+        at = self.preview.findData(index)
+        if at >= 0 and at != self.preview.currentIndex():
+            self.preview.blockSignals(True)
+            self.preview.setCurrentIndex(at)
+            self.preview.blockSignals(False)
 
     def set_note(self, note: str) -> None:
         self._note = note
@@ -174,10 +208,17 @@ class StatusBar(QtWidgets.QFrame):
             parts.append(info.model)
         self.context.setText(" · ".join(parts))
 
+        if info is not None and info.resolutions and not self._res_filled:
+            self._res_filled = True
+            self.preview.blockSignals(True)
+            self.preview.clear()
+            for r in info.resolutions:
+                mp = r.width * r.height / 1e6
+                self.preview.addItem(f"{r.width}×{r.height}  {mp:.1f} MP",
+                                     r.index)
+            self.preview.blockSignals(False)
+
         tail: list[str] = []
-        if info is not None and info.resolutions:
-            full = max(info.resolutions, key=lambda r: r.width * r.height)
-            tail.append(f"{full.width}×{full.height}")
         link = status.link
         if link is not None and link.speed_mbps:
             tail.append(link.label)

@@ -89,6 +89,17 @@ class StillCapture:
         self._on_result = on_result or (lambda _r: None)
         self._pipeline = pipeline
         self._busy = threading.Lock()
+        #: Write a measured AsShotNeutral into the file. On brightfield and
+        #: phase this is what makes a capture open looking like what was on
+        #: the screen. Turn it off when the field is not neutral by nature --
+        #: polarised-light interference colours, fluorescence, stained
+        #: sections -- where any estimate is a guess dressed as a measurement.
+        self.white_balance = True
+        #: Write single frames as packed 12-bit. The sensor is 12-bit, so
+        #: this is lossless and saves a quarter of every file: measured
+        #: 39.9 MB down to 30.0 MB on a real 20 MP frame. Off writes 16-bit,
+        #: which is what every previous capture used.
+        self.pack_12bit = True
 
     @property
     def busy(self) -> bool:
@@ -167,6 +178,16 @@ class StillCapture:
             pattern = info.bayer_pattern if info else "GBRG"
 
             meta = None
+            if not self.white_balance:
+                # Neutral means "do not touch the channels": the raw arrives
+                # in a developer exactly as the sensor recorded it. Grey-world
+                # assumes the scene averages to grey, which a polarised-light
+                # interference field or a stained section flatly is not -- and
+                # a wrong AsShotNeutral is not a suggestion, it is a colour
+                # cast baked into how the file opens.
+                neutral = (1.0, 1.0, 1.0)
+                applied = [a for a in applied if a != "wb"]
+
             if setup is not None:
                 meta = from_setup(setup, exposure_us=exposure_us,
                                   gain_pct=gain_pct, subject=subject,
@@ -177,16 +198,33 @@ class StillCapture:
             if frames > 1:
                 # The mean carries real precision below one 12-bit LSB.
                 # Scaled into 16 bits, the file keeps the SNR the burst just
-                # paid for; rounded back to 12, it would be quantised away.
+                # paid for; rounded back to 12, it would be quantised away --
+                # so an averaged frame is never packed.
                 white = dng.WHITE_LEVEL * 16
                 out = np.clip(corrected * 16.0 + 0.5, 0, white) \
                         .astype(np.uint16)
+                bits = 16
             else:
                 white = dng.WHITE_LEVEL
                 out = corrected
-            written = dng.write_bayer(path, out, pattern=pattern,
-                                      black=black, neutral=neutral, meta=meta,
-                                      white=white)
+                # A single frame is 12-bit data and nothing about writing it
+                # into 16 bits adds information: packing is lossless here and
+                # saves a quarter of every file. Verified readable by
+                # darktable 5.4.1.
+                bits = 12 if self.pack_12bit else 16
+
+            # The thumbnail gets a balance even when the file does not: with
+            # white balance turned off, or before a flat exists, the measured
+            # neutral is absent -- and a raw microscope field rendered flat
+            # is a green rectangle. The estimate is for the preview only and
+            # changes nothing about the data or the tags.
+            preview = dng.make_preview(
+                out, bayer=True, black=black, white=white,
+                neutral=neutral or dng.grey_world_neutral(out))
+            written = dng.write_bayer_streamed(
+                path, lambda s, c: out[s:s + c], out.shape[0], out.shape[1],
+                preview=preview, pattern=pattern, black=black, white=white,
+                neutral=neutral or (1.0, 1.0, 1.0), meta=meta, bits=bits)
 
             clipped = float((raw >= dng.WHITE_LEVEL).sum()) / raw.size
             self._on_state("idle")

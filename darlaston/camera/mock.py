@@ -266,26 +266,42 @@ class MockCamera(CameraBackend):
             img = view.astype(np.float32) / 255.0
             return self._defocus(img, 1.0)
 
-        # Preview: downsample on uint8 first, then blur at the reduced scale.
-        # Strictly the optics blur before the sensor samples, but at preview
-        # resolution the striae are already below Nyquist, so the difference is
-        # invisible -- and doing it this way avoids converting 20 MP to float
-        # thirty times a second.
+        # Preview: crop from a scene that is *already* at preview scale.
         #
-        # Memoised on stage position, because the decimation of a 20 MP crop is
-        # the whole cost and the stage is stationary for most frames. Focus,
-        # exposure and gain then operate on the small array for free.
-        key = (px, py, w, h)
-        if getattr(self, "_crop_key", None) != key:
-            self._crop_key = key
-            self._crop = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-        img = self._crop.astype(np.float32) / 255.0
-        return self._defocus(img, w / full.width)
+        # This used to decimate a 20 MP crop per frame, memoised on stage
+        # position -- which is free while parked and 61 ms per frame while
+        # cranking, exactly when the app is working hardest. That made the
+        # synthetic camera the bottleneck in every performance measurement
+        # and hid the real numbers behind its own cost.
+        #
+        # Pre-decimating the whole scene once is also the more honest model:
+        # binning *is* decimation at the sensor, so cropping a reduced scene
+        # is what the hardware actually does, rather than an optimisation of
+        # it. Blur still happens after, at the reduced scale, because at
+        # preview resolution the striae are already below Nyquist.
+        ratio = w / full.width
+        key = (w, h)
+        if getattr(self, "_small_key", None) != key:
+            self._small_key = key
+            sh = int(round(self._scene.shape[0] * ratio))
+            sw = int(round(self._scene.shape[1] * ratio))
+            self._small_scene = cv2.resize(self._scene, (sw, sh),
+                                           interpolation=cv2.INTER_AREA)
+        small = self._small_scene
+        sx = int(px * ratio) % small.shape[1]
+        sy = int(py * ratio) % small.shape[0]
+        crop = self._wrap_crop_of(small, sy, sx, h, w)
+        img = crop.astype(np.float32) / 255.0
+        return self._defocus(img, ratio)
 
     def _wrap_crop(self, y0: int, x0: int, h: int, w: int) -> np.ndarray:
-        """Window into the scene with wraparound. Zero-copy when the window
+        return self._wrap_crop_of(self._scene, y0, x0, h, w)
+
+    @staticmethod
+    def _wrap_crop_of(s: np.ndarray, y0: int, x0: int,
+                      h: int, w: int) -> np.ndarray:
+        """Window into an image with wraparound. Zero-copy when the window
         does not cross an edge, which is most frames."""
-        s = self._scene
         sh, sw = s.shape
         rows = (s[y0:y0 + h] if y0 + h <= sh
                 else np.concatenate((s[y0:], s[:y0 + h - sh]), axis=0))

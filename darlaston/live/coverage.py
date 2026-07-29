@@ -54,6 +54,12 @@ class FocusCoverage:
         self._area = 0
         self._steady = 0
         self.frames = 0
+        # Derived once per update and reused. Recomputing `structure` on
+        # every read cost three extra full-frame passes per frame, and
+        # `_passed[has].mean()` allocated a compacted copy on top of that --
+        # coverage measured 13.7 ms per frame against a 33 ms budget.
+        self._structure: np.ndarray | None = None
+        self._fraction = 0.0
 
     def reset(self) -> None:
         self._peak = None
@@ -61,6 +67,8 @@ class FocusCoverage:
         self._area = 0
         self._steady = 0
         self.frames = 0
+        self._structure = None
+        self._fraction = 0.0
 
     @property
     def active(self) -> bool:
@@ -72,6 +80,8 @@ class FocusCoverage:
         if self._peak is None or self._peak.shape != s.shape:
             self._peak = s.copy()
             self._passed = np.zeros(s.shape, bool)
+            self._structure = None
+            self._fraction = 0.0
             self.frames = 1
             return 0.0
 
@@ -80,17 +90,29 @@ class FocusCoverage:
         self._passed |= s < self._peak * self.FALL
         self.frames += 1
 
+        # Structure, computed once here and cached for every reader.
+        top = float(self._peak.max())
+        has = self._peak > top * self.FLOOR if top > 0 else None
+        self._structure = has
+
         # Watch the denominator. Structure appearing means the frame still has
         # more to show, whatever the percentage currently says.
-        has = self.structure
-        area = int(has.sum()) if has is not None else 0
+        if has is None:
+            area = 0
+            self._fraction = 0.0
+        else:
+            area = int(np.count_nonzero(has))
+            # count_nonzero on a temporary beats mask-indexing into a
+            # compacted copy: same answer, no allocation of the subset.
+            self._fraction = (float(np.count_nonzero(self._passed & has)) / area
+                              if area else 0.0)
         # A small tolerance, so noise at the floor does not reset the counter.
         if area > self._area * 1.02 + 8:
             self._steady = 0
         else:
             self._steady += 1
         self._area = max(self._area, area)
-        return self.fraction
+        return self._fraction
 
     # ---- readings --------------------------------------------------------
 
@@ -102,19 +124,19 @@ class FocusCoverage:
         self-corrects: a pixel that looked like structure early, before
         anything sharp had been seen, drops out once the scale is established.
         """
+        if self._structure is not None:
+            return self._structure
         if self._peak is None:
             return None
         top = float(self._peak.max())
         if top <= 0:
             return None
-        return self._peak > top * self.FLOOR
+        self._structure = self._peak > top * self.FLOOR
+        return self._structure
 
     @property
     def fraction(self) -> float:
-        has = self.structure
-        if has is None or not has.any():
-            return 0.0
-        return float(self._passed[has].mean())
+        return self._fraction
 
     @property
     def settled(self) -> bool:

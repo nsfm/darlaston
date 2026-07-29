@@ -81,21 +81,23 @@ def test_burst_average_is_the_mean_not_the_sum(tmp_path):
     cam.grab_raw = fake_grab
     captured = {}
     from darlaston.process import dng as dng_mod
-    real_write = dng_mod.write_bayer
+    real_write = dng_mod.write_bayer_streamed
 
-    def spy_write(path, raw, **kw):
-        captured["raw"] = raw.copy()
+    def spy_write(path, rows, h, w, **kw):
+        captured["raw"] = rows(0, h).copy()
         captured["white"] = kw.get("white")
-        return real_write(path, raw, **kw)
+        captured["bits"] = kw.get("bits")
+        return real_write(path, rows, h, w, **kw)
 
-    dng_mod.write_bayer, spy = spy_write, real_write
+    dng_mod.write_bayer_streamed, spy = spy_write, real_write
     try:
         r = _shoot_with(cam, frames=4)
     finally:
-        dng_mod.write_bayer = spy
+        dng_mod.write_bayer_streamed = spy
     assert r.ok, r.message
     # mean of 1001..1004 is 1002.5; scaled x16 = 16040.
     assert captured["white"] == 4095 * 16
+    assert captured["bits"] == 16, "an averaged frame must not be packed to 12"
     assert int(captured["raw"][0, 0]) == 16040
 
 
@@ -427,3 +429,37 @@ def test_plan_prices_the_output_before_any_work():
     # A mosaic large enough to break classic TIFF must say so, not fail late.
     huge = plan([(0.0, 0.0), (60000.0, 40000.0)], [(3648, 5440)] * 2, 1.0)
     assert not huge["fits"]
+
+
+def test_white_balance_can_be_left_out_of_the_file(tmp_path):
+    """Grey-world is a guess dressed as a measurement on an interference
+    field. Off must write a genuinely neutral AsShotNeutral, not a
+    slightly-different estimate."""
+    from darlaston.process import dng as dng_mod
+
+    seen = {}
+    real = dng_mod.write_bayer_streamed
+
+    def spy(path, rows, h, w, **kw):
+        seen["neutral"] = kw.get("neutral")
+        return real(path, rows, h, w, **kw)
+
+    cam = MockCamera()
+    cam.open()
+    session = types.SimpleNamespace(backend=cam)
+    settings = Settings(capture_root=str(tmp_path))
+    results, done = [], threading.Event()
+    cap = StillCapture(session, settings,
+                       on_result=lambda r: (results.append(r), done.set()))
+    cap.white_balance = False
+
+    dng_mod.write_bayer_streamed = spy
+    try:
+        assert cap.trigger(None, subject="t")
+        assert done.wait(30)
+    finally:
+        dng_mod.write_bayer_streamed = real
+    cam.close()
+    assert results[-1].ok, results[-1].message
+    assert seen["neutral"] == (1.0, 1.0, 1.0)
+    assert "wb" not in results[-1].applied
