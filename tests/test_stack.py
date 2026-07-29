@@ -297,3 +297,61 @@ def test_bayer_output_round_trips_the_blend(tmp_path):
 
     # Levels must agree between the two forms.
     assert abs(float(back.mean()) / (4095 * 16)) > 0.02
+
+def test_merge_does_not_halo_past_a_bright_edge(tmp_path):
+    """The halo, as a regression test. A bright textured disk over a fine
+    textured background, two slices, each plane defocused in the other's --
+    the defocused disk's glow physically spreads past its boundary, like a
+    diatom edge in phase contrast. With wide sharpness pooling the disk's
+    in-focus edge pushed its verdict deep into the background (54%% of the
+    band beside the disk misassigned); pool-small-then-refine holds the
+    line. Ground truth is known, so the failure is countable."""
+    from darlaston.process.stack import merge
+
+    rng = np.random.default_rng(7)
+    H, W = 600, 800
+    CX, CY, R = 400, 300, 130
+
+    def texture(scale, lo, hi):
+        t = cv2.GaussianBlur(rng.normal(size=(H, W)).astype(np.float32),
+                             (0, 0), scale)
+        t = (t - t.min()) / (np.ptp(t) + 1e-9)
+        return lo + t * (hi - lo)
+
+    bg = texture(1.2, 500, 1100)
+    disk = texture(2.0, 2600, 3600)
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    dist = np.sqrt((xx - CX) ** 2 + (yy - CY) ** 2)
+    alpha = np.clip(R + 1.5 - dist, 0, 1).astype(np.float32)
+
+    slice_a = alpha * disk + (1 - alpha) * cv2.GaussianBlur(bg, (0, 0), 9.0)
+    pre = cv2.GaussianBlur(alpha * disk, (0, 0), 9.0)
+    soft = cv2.GaussianBlur(alpha, (0, 0), 9.0)
+    slice_b = pre + (1 - soft) * bg
+
+    session = StackSession(tmp_path, subject="halo")
+    for i, s in enumerate((slice_a, slice_b)):
+        raw = np.clip(s, 0, 4095).astype(np.uint16)
+        p = tmp_path / f"c{i}.dng"
+        dng.write_bayer_streamed(
+            p, lambda st, c: raw[st:st + c], H, W,
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            bits=12, white=4095)
+        session.adopt(p, metric=0.5)
+
+    merge(session.dir, output="bayer")
+    dmap = cv2.imread(str(session.dir / "depth.png"),
+                      cv2.IMREAD_GRAYSCALE)
+    near = dmap < 128                                # slice A's territory
+
+    dist2 = cv2.resize(dist, (W // 2, H // 2),
+                       interpolation=cv2.INTER_AREA) / 2
+    gt_near = cv2.resize(alpha, (W // 2, H // 2),
+                         interpolation=cv2.INTER_AREA) > 0.5
+    halo_band = (~gt_near) & (dist2 < R / 2 + 20)
+    rim_band = gt_near & (dist2 > R / 2 - 20)
+
+    halo = float(near[halo_band].mean())
+    rim = float((~near)[rim_band].mean())
+    assert halo < 0.10, f"halo band {halo:.1%} taken from the wrong slice"
+    assert rim < 0.10, f"subject rim {rim:.1%} eroded by the background"

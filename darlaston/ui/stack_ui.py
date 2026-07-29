@@ -31,6 +31,7 @@ class StackAssembly(QtWidgets.QWidget):
 
     finish_requested = QtCore.Signal()
     discard_requested = QtCore.Signal()
+    close_requested = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -53,11 +54,19 @@ class StackAssembly(QtWidgets.QWidget):
                                "one all-in-focus image.")
         self.discard = QtWidgets.QPushButton("Discard")
         self.discard.setToolTip("Delete this stack — slices and all.")
-        for b in (self.view_toggle, self.finish, self.discard):
+        self.close_btn = QtWidgets.QPushButton("Close")
+        self.close_btn.hide()
+        for b in (self.view_toggle, self.finish, self.discard,
+                  self.close_btn):
             b.setProperty("role", "seg")
         self.finish.clicked.connect(self.finish_requested)
         self.discard.clicked.connect(self.discard_requested)
+        self.close_btn.clicked.connect(self.close_requested)
         self.view_toggle.toggled.connect(self._on_view)
+        # Depth view is the default: watching the shape of the subject fill
+        # in is the show, and it is a better teacher of the rack-pause
+        # rhythm than the composite alone.
+        self.view_toggle.setChecked(True)
 
         self.progress = QtWidgets.QProgressBar()
         self.progress.setTextVisible(False)
@@ -76,6 +85,7 @@ class StackAssembly(QtWidgets.QWidget):
         row.addWidget(self.status, 1)
         row.addWidget(self.discard)
         row.addWidget(self.finish)
+        row.addWidget(self.close_btn)
 
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
@@ -99,6 +109,15 @@ class StackAssembly(QtWidgets.QWidget):
             self.progress.setValue(done)
         self.status.setText(message)
 
+    def set_finished(self, message: str) -> None:
+        """The merge is over. The stack's endings have all happened, so the
+        control buttons give way to the only remaining act: closing."""
+        self.progress.hide()
+        self.status.setText(message)
+        self.finish.hide()
+        self.discard.hide()
+        self.close_btn.show()
+
     def reset(self) -> None:
         self._rgb = None
         self._sharp = None
@@ -107,6 +126,11 @@ class StackAssembly(QtWidgets.QWidget):
         self._count = 0
         self.progress.hide()
         self.status.setText("")
+        self.close_btn.hide()
+        self.finish.show()
+        self.finish.setEnabled(True)
+        self.discard.show()
+        self.discard.setEnabled(True)
         self.update()
         self.canvas.update()
 

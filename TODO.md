@@ -133,8 +133,9 @@ Ordered within each section by how much it would change what gets built.
       plane is easy to revisit, a dialog is not. StackSession mirrors
       MosaicSession exactly, so a mosaic tile can one day *be* a stack.
       The merge is depth-map based: align (constrained phase correlation),
-      pooled Tenengrad per slice, argmax + median for depth, soft-power
-      weights, streamed linear DNG out — plus `depth.png`, kept because a
+      small-pooled Tenengrad per slice, running argmax + joint-bilateral
+      weighted-median refinement + median for depth, feathered one-hot
+      blend, streamed DNG out — plus `depth.png`, kept because a
       depth map is a measurement of the subject's shape and diagnostic gold.
       Proven on the mock's tilted focal plane: merged output sharp in every
       strip where no single slice was, end to end through the running app
@@ -172,13 +173,29 @@ Ordered within each section by how much it would change what gets built.
       Discard (confirmed — it is the one button that destroys data) live in
       the assembly window, with the merge's three-stage progress bar. The
       "depth" toggle tints each region by the slice that won it — the
-      depth data as a living image while it is still being collected.
-- [ ] **Halo at depth edges.** Nate reports edge glow survives the merge on
-      real diatoms — the classic depth-map artefact where the pooled
-      sharpness of an in-focus edge bleeds its vote over the out-of-focus
-      neighbour. The pooling radius trades speckle against halo; a
-      consistency filter or pyramid-hybrid blend at depth *discontinuities
-      only* is the usual cure and keeps the depth map's explainability.
+      depth data as a living image while it is still being collected — and
+      is on by default (Nate: "it's more exciting to watch"). After the
+      merge the endings have all happened, so Finish and Discard give way
+      to a single Close.
+- [x] ~~**Halo at depth edges.**~~ Measured before fixing, and the measuring
+      mattered: the first theory (edge-aware *pooling* of the sharpness
+      field, guided filter) tested strictly worse than the plain Gaussian —
+      a sharpness ridge sits exactly on the luma edge and spans every luma
+      level, so no similarity kernel can exclude it. Joint-bilateral pooling
+      barely moved it for the same reason. What worked: pool *small*
+      (sigma 1.5, accurate but speckled), then refine the **depth map** —
+      the thing that actually is piecewise-constant w.r.t. the image — with
+      a joint-bilateral weighted median (r=8, votes = luma similarity ×
+      own sharpness evidence), and make the blend follow the refined depth
+      via feathered one-hot weights instead of raw field powers. Synthetic
+      halo case: band misassignment 54% → 3%, band RMSE 238 → 103, depth
+      boundary ±11.5 px → ±0.9 px; parameters insensitive across a 4×
+      sweep. On Nate's real 20-slice stack: background particles beside the
+      diatom resolve as particles instead of mush, halo rings mostly gone,
+      striae legible in the depth map — which answers his depth-resolution
+      ask too. Running argmax replaced the field stack (~360 MB less on 20
+      slices); merge is 41 s for 20 slices. Regression test holds the
+      synthetic halo band under 10%.
 - [ ] **Stack polish, next pass.** Respect `keep_slices` after a verified
       merge; a `metric` per slice is recorded as 0.0 (thread the real value
       from signals); coverage-complete could suggest finishing; real-glass

@@ -204,6 +204,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.assembly.finish_requested.connect(self._finish_stack)
         self.assembly.discard_requested.connect(self._discard_stack)
         self.stack_window = FloatingPanel("stack — assembling", self.view)
+        self.assembly.close_requested.connect(self.stack_window.hide)
         self.stack_window.set_relative(0.55, 0.55)
         _fill(self.stack_window, self.assembly)
         self.stack_window.hide()
@@ -881,9 +882,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                       f"{stage} {i}/{n}…")
             return
         _kind, note, ok = message
-        self.assembly.set_merging(None, None, note)
-        self.assembly.finish.setEnabled(True)
-        self.assembly.discard.setEnabled(True)
+        # The session is already gone either way -- Finish and Discard have
+        # nothing left to act on -- so the buttons give way to Close. On
+        # failure the folder is still on disk, mergeable later.
+        self.assembly.set_finished(note)
         self.strip.set_note(note)
 
     def _on_mosaic_requested(self, on: bool) -> None:
