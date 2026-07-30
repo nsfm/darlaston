@@ -94,7 +94,12 @@ class Settings:
     #: exist because the right smoothing is partly a statement about the
     #: subject, and that judgement belongs to the photographer.
     stack_output: str = "bayer"      # bayer | linear (RGB, ~3x the size)
-    stack_smoothing: str = "normal"  # off | normal | strong (glow diffusion)
+    #: off | light | normal | strong. "light" is the default because it is
+    #: the only setting that costs nothing measurable: detail equal to
+    #: winner-takes-all, a quarter less glow ring. "normal" trades 2% of
+    #: fine detail for much smoother glow, and on a field of scattered
+    #: debris it also diffuses away real background specks.
+    stack_smoothing: str = "light"
     stack_feather: float = 2.0       # blend feather at depth seams, px
 
     def __post_init__(self) -> None:

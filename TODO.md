@@ -224,10 +224,33 @@ Ordered within each section by how much it would change what gets built.
       mosaic registration (at small overlaps the strips were *views* into
       tile lumas reused for other neighbours). Regression test pins it.
 - [x] ~~**Stacking knobs.**~~ Gear menu in the assembly window, bound to
-      persisted settings: glow smoothing (off/normal/strong — presets over
-      the diffusion gate, "extreme" deliberately absent because (0.2, 0.6)
-      measured catastrophic), seam feather (1/2/4 px), output
-      (bayer/linear). Defaults are the bench winners.
+      persisted settings: glow smoothing (off/light/normal/strong), seam
+      feather (1/2/4 px), output (bayer/linear).
+- [x] ~~**A/B on two real stacks of the same subject** (Nate's 25×/0.65
+      diatoms, 13 slices each).~~ He reported the *older* merge looked
+      better — more even glow, more striae — and he was right. Measured
+      end to end, fine detail against the best single slice and
+      manufactured glow structure against a typical slice:
+      off 0.753/0.716, light 0.752/0.549, normal 0.736/0.287,
+      strong 0.699/0.171. Findings, several of them corrections:
+      (a) the tent blend introduced with continuous depth was the detail
+      loss — averaging two slices at a sharp feature is softer than either,
+      and worse, cross-fading two *defocused* slices does not produce
+      intermediate defocus, it produces both their rings at partial
+      opacity, so it made glow structure worse too (0.58 vs one-hot 0.74
+      was the wrong-direction reading from a proxy; see (d));
+      (b) the depth *diffusion* does nearly all the glow work at 2% detail;
+      (c) blending across many slices buys little for real detail cost;
+      (d) **a half-resolution proxy of the blend is not trustworthy for
+      the glow metric** — it showed diffusion doing nothing (0.718→0.738)
+      where the full merge showed 0.716→0.287. Only end-to-end merges
+      count. Refuted along the way: peak-prominence confidence (at 25×/0.65
+      the DoF spans several slices, so a real striae winner is not
+      distinctly sharper — textured median 1.38 vs glow 1.26), and trust
+      dilation as a free lunch (it interpolates between off and normal
+      rather than beating both, though r=5 is where detail becomes
+      indistinguishable from winner-takes-all, which is the "light"
+      preset and the new default).
 - [ ] **Stack polish, next pass.** Respect `keep_slices` after a verified
       merge; a `metric` per slice is recorded as 0.0 (thread the real value
       from signals); coverage-complete could suggest finishing; real-glass

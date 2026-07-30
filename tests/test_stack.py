@@ -400,3 +400,34 @@ def test_register_does_not_mutate_lumas():
     _register(lumas)
     for l, b in zip(lumas, before):
         assert np.array_equal(l, b), "registration mutated a luma"
+
+def test_every_smoothing_preset_keeps_the_depth_map_honest(tmp_path):
+    """The knob trades detail against glow smoothness, and no setting may
+    buy smoothness by wrecking the depth map. Only that invariant is
+    asserted here: the presets' *ordering* was measured end to end on real
+    stacks, and this synthetic apron is too small to separate them (all
+    four land within noise of each other), so claiming the ordering from
+    this fixture would be claiming more than it shows."""
+    from tools.stack_bench import scene_terrace, WHITE
+    from darlaston.process.stack import merge, SMOOTHING
+
+    slices, gt, regions = scene_terrace()
+    n = len(slices)
+    session = StackSession(tmp_path, subject="presets")
+    for i, s in enumerate(slices):
+        raw = np.clip(s, 0, WHITE).astype(np.uint16)
+        p = tmp_path / f"c{i}.dng"
+        dng.write_bayer_streamed(
+            p, lambda st, c: raw[st:st + c], raw.shape[0], raw.shape[1],
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            bits=12, white=4095)
+        session.adopt(p, metric=0.5)
+
+    band = regions["glow band"]
+    for name in SMOOTHING:
+        merge(session.dir, output="bayer", smoothing=name)
+        depth = (cv2.imread(str(session.dir / "depth.png"),
+                            cv2.IMREAD_GRAYSCALE).astype(np.float32)
+                 / 255 * (n - 1))
+        wrong = float((np.abs(depth[band] - gt[band]) > 0.5).mean())
+        assert wrong < 0.25, f"{name}: {wrong:.1%} of the glow band is wrong"

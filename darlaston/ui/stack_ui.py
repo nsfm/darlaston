@@ -139,9 +139,10 @@ class StackAssembly(QtWidgets.QWidget):
                 act.triggered.connect(pick)
 
         group("Glow smoothing", "stack_smoothing",
-              [("off — trust every pixel", "off"),
+              [("off — sharpest, keeps glow rings", "off"),
+               ("light — same detail, less ring", "light"),
                ("normal", "normal"),
-               ("strong — diffuse more glow", "strong")])
+               ("strong — smoothest glow, softer detail", "strong")])
         group("Seam feather", "stack_feather",
               [("subtle (1 px)", 1.0), ("normal (2 px)", 2.0),
                ("wide (4 px)", 4.0)])

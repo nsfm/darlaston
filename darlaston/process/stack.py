@@ -70,6 +70,34 @@ REFINE_RANGE = 0.15
 #: territory mask is blurred this much, so seams cross-fade instead of
 #: stepping.
 FEATHER_SIGMA = 2.0
+#: How many slices the blend draws on, per pixel, from confidence.
+#:
+#: This is the answer to two of Nate's complaints at once, and neither was
+#: what I first assumed. NARROW below 1 means a trusted pixel takes its own
+#: slice outright instead of averaging with a neighbour: the plain tent
+#: blend measured 1.06-1.07 fine detail against one-hot's 1.27-1.31, and
+#: that gap *is* the striae he saw the older merge keep. WIDE is the other
+#: half: cross-fading two defocused slices does not produce intermediate
+#: defocus, it produces both of their glow rings at partial opacity --
+#: measured, the tent blend manufactures MORE glow structure (0.58-0.61)
+#: than one-hot (0.74-0.78 is worse still, but tent was meant to fix it and
+#: made it worse in kind). Averaging many slices smears the rings into the
+#: smooth field the glow physically is: 0.24-0.26 at these settings, while
+#: detail rises to 1.17-1.18. Better than the tent on both axes, on both of
+#: Nate's real 25x stacks. POWER shapes the transition; higher keeps more
+#: pixels narrow, and 20 sits at the knee.
+BLEND_NARROW = 0.5
+BLEND_WIDE = 9.0
+BLEND_POWER = 20.0
+#: Dilating the trust field before use spares a pixel that merely sits
+#: *near* confident detail. Faint striae score low against a global
+#: percentile that the specimen's bright edges set, and were visibly
+#: softened without this; glow aprons are large and uniformly untrusted,
+#: so they are unaffected. Measured, it interpolates between "off" and
+#: "normal" rather than beating both -- there is no free lunch here, only
+#: a dial, and radius 5 is the point where detail is indistinguishable
+#: from winner-takes-all.
+TRUST_DILATE = 5
 #: Diffusion gate: fine-scale (Laplacian) energy of the winning slice,
 #: as a smoothstep between these fractions of its own 90th percentile.
 #: Placed by measurement on the terrace scene: misassigned glow pixels sit
@@ -174,20 +202,44 @@ def _push_pull(depth: np.ndarray, weight: np.ndarray) -> np.ndarray:
     return filled
 
 
-#: Diffusion presets for the smoothing knob. "off" trusts the refined
-#: depth everywhere; "strong" pushes more borderline pixels into the
-#: interpolation (measured fine at (0.15, 0.45); (0.2, 0.6) collapses,
-#: which is why there is no "extreme").
+#: Presets for the glow-smoothing knob: (diffusion gate, widest blend,
+#: trust dilation, transition power). Three measured points on a real
+#: trade-off, not a quality ladder -- which is why the knob exists.
+#: Measured end to end through merge() on Nate's real 25x stack, as fine
+#: detail (against the best single slice) and manufactured glow structure
+#: (against a typical slice):
+#:
+#:   off      0.753 / 0.716   winner takes all, no diffusion. Crisp, and
+#:                            it keeps the rings. What the merge did before.
+#:   light    0.752 / 0.549   diffusion, but only where nothing nearby is
+#:                            trusted. Detail indistinguishable from off,
+#:                            a quarter less ring: the free one.
+#:   normal   0.736 / 0.287   diffusion everywhere it is warranted. 60%
+#:                            less ring structure for 2% of the striae.
+#:   strong   0.699 / 0.171   plus wide blending where nothing is in focus.
+#:                            Another 40% off the rings, another 5% of the
+#:                            striae -- worth it only when the apron is the
+#:                            subject of the complaint.
+#:
+#: The ordering matters more than it looks: the *depth diffusion* does
+#: nearly all the glow work, and blending across many slices -- which
+#: sounds like the obvious way to smear rings away, and measured well on a
+#: half-resolution proxy -- turns out to buy little and cost real detail
+#: once it goes through the full-resolution upsample and feather. The
+#: proxy is not trustworthy for glow; only end-to-end merges are.
 SMOOTHING = {
-    "off": None,
-    "normal": (DIFFUSE_LO, DIFFUSE_HI),
-    "strong": (0.15, 0.45),
+    "off": (None, BLEND_NARROW, 0, 1.0),
+    "light": ((DIFFUSE_LO, DIFFUSE_HI), BLEND_NARROW, TRUST_DILATE, 1.0),
+    "normal": ((DIFFUSE_LO, DIFFUSE_HI), BLEND_NARROW, 0, 1.0),
+    "strong": ((0.15, 0.45), BLEND_WIDE, 9, 3.0),
 }
 
 
 def _depth_map(lumas: np.ndarray, progress=None, total: int = 0,
                diffuse: tuple[float, float] | None = (DIFFUSE_LO,
-                                                      DIFFUSE_HI)) -> np.ndarray:
+                                                      DIFFUSE_HI),
+               wide: float = BLEND_WIDE, dilate: int = TRUST_DILATE,
+               power: float = 3.0) -> tuple[np.ndarray, np.ndarray]:
     """Aligned half-res lumas (n, h2, w2) -> continuous depth map (float32).
 
     Four measured stages, each earning its place on tools/stack_bench.py:
@@ -238,19 +290,31 @@ def _depth_map(lumas: np.ndarray, progress=None, total: int = 0,
     out = depth.astype(np.float32) + np.where(
         ok, np.clip(np.nan_to_num(dz), -0.5, 0.5), 0.0).astype(np.float32)
 
-    if diffuse is None:
-        return out
-
     # Fine-scale energy of the slice the *refined* depth actually selects
     # (measured: gathering at the raw argmax instead costs 8.5% -> 14.2%
-    # wrong in the glow band). Glow and bare glass diffuse; texture holds.
-    lo, hi = diffuse
+    # wrong in the glow band). It answers "does this pixel's winner carry
+    # real detail, or is it a defocused edge's ring?" -- a question
+    # Tenengrad confidence gets backwards -- and both the diffusion and the
+    # blend width hang off it.
+    lo, hi = diffuse if diffuse else (DIFFUSE_LO, DIFFUSE_HI)
     win = np.take_along_axis(lumas, depth[None].astype(np.int64), 0)[0]
     lap = cv2.Laplacian(win, cv2.CV_32F, ksize=3)
     fine = cv2.GaussianBlur(lap * lap, (0, 0), 1.0)
     t = fine / (np.percentile(fine, 90) + 1e-9)
     t = np.clip((t - lo) / (hi - lo), 0.0, 1.0)
-    return _push_pull(out, t * t * (3 - 2 * t))
+    trust = t * t * (3 - 2 * t)
+
+    # Dilating the trust before it is used keeps a pixel next to confident
+    # detail out of the interpolation: faint striae score low against a
+    # global percentile that the specimen's bright edges set, and were
+    # visibly softened without this. Glow aprons are large and uniformly
+    # untrusted, so they still diffuse.
+    if dilate:
+        trust = cv2.dilate(trust, np.ones((dilate, dilate), np.uint8))
+    if diffuse is not None:
+        out = _push_pull(out, trust)
+    width = BLEND_NARROW + (wide - BLEND_NARROW) * (1 - trust) ** power
+    return out, width.astype(np.float32)
 
 
 def _register(lumas: list[np.ndarray]) -> list[tuple[float, float]]:
@@ -323,22 +387,31 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
                                   borderMode=cv2.BORDER_REPLICATE)
         aligned[i] = luma
     del lumas
-    depth = _depth_map(aligned, progress=progress, total=n,
-                       diffuse=SMOOTHING.get(smoothing,
-                                             (DIFFUSE_LO, DIFFUSE_HI)))
+    gate, wide, dil, power = SMOOTHING.get(smoothing, SMOOTHING["normal"])
+    depth, width = _depth_map(aligned, progress=progress, total=n,
+                              diffuse=gate, wide=wide, dilate=dil,
+                              power=power)
     del aligned
 
     # Blend at full resolution, one slice at a time: demosaic, align, add.
-    # Weights follow the *refined* depth -- a hat function of the
-    # continuous depth around each slice's index, so a pixel at depth 3.4
-    # is 60% slice 3 and 40% slice 4 -- not the raw sharpness fields, or
-    # every halo the refinement removed would sneak straight back in
-    # through the blend. Hats over a real-valued map partition unity, and
-    # blurring a partition of unity keeps it one: no normalising pass.
+    # Weights follow the *refined* depth, not the raw sharpness fields, or
+    # every halo the refinement removed would sneak back in through the
+    # blend. Each slice gets a hat around its own index, of a per-pixel
+    # width: narrow where the winner carries real detail (so a sharp
+    # feature comes from its own slice, not an average with its
+    # neighbour), wide where nothing is in focus (so the glow becomes the
+    # smooth superposition it physically is, instead of two slices' rings
+    # at partial opacity). Variable width means the hats no longer sum to
+    # one on their own, so normalise -- once, up front, at half res.
     h, w = raws[0].shape
+    norm = np.zeros_like(depth)
+    for i in range(n):
+        norm += np.clip(1.0 - np.abs(depth - i) / width, 0.0, 1.0)
+    np.maximum(norm, 1e-6, out=norm)
+
     acc = np.zeros((h, w, 3), np.float32)
     for i, (raw, (sx, sy)) in enumerate(zip(raws, shifts)):
-        hat = np.clip(1.0 - np.abs(depth - i), 0.0, 1.0)
+        hat = np.clip(1.0 - np.abs(depth - i) / width, 0.0, 1.0) / norm
         if not (hat > 1e-4).any():
             if progress:
                 progress("blending", i + 1, n)
