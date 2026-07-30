@@ -213,25 +213,31 @@ Ordered within each section by how much it would change what gets built.
       model of it; and z is an exaggeration, because depth is measured
       in slices and nothing in the capture path measures fine-focus
       travel in microns.
-- [ ] **The plate export.** Darlaston and Möller *arranged* diatoms —
-      patterns, rosettes, taxonomic plates. Lay N captures into a labelled
-      plate with scale bars computed from real optics (magnification,
-      relay, pixel pitch — all known) rather than eyeballed. Pairs with
-      turning the slide map into a printable finding aid: pins, thumbnails,
-      µm coordinates, which for a catalogued mount is a genuinely archival
-      artifact. The soul-of-the-project item: the app named after an
-      arranger, making arrangements.
-- [x] ~~**Autostereogram.**~~ Thimbleby's algorithm in
-      `wiggle.autostereogram`, filled with a smooth tileable texture
-      rather than random dots — dots do encode the surface but give the
-      eye nothing to lock onto while diverging. Two bugs found by
-      looking at it: the separation used a constant denominator instead
-      of `(2 - mu*Z)`, swinging by ~100 px so nothing could fuse; and
-      the links point left while the render walked right-to-left, so
-      every pixel copied from a neighbour that did not exist yet and the
-      output was uninitialised memory that looked convincingly like
-      random-dot noise. Test measures the pattern's repeat period in two
-      regions and requires the nearer one to repeat tighter.
+- [x] ~~**The plate export.**~~ `process/plate.py`: several finished
+      captures arranged on one printable sheet, numbered, labelled with
+      the objective, and each carrying a scale bar. Building it found a
+      real defect — **no file we have ever written carries the scale**.
+      `FocalPlaneXResolution` comes from the SDK's `get_PixelSize`, which
+      returns 0 on Nate's E3ISPM20000KPA, and a zero pitch silently drops
+      the tag. Worse, that tag is a scale at the *sensor*: a bar drawn
+      from it is wrong by the entire magnification chain. Both fixed —
+      `CameraProfile.pixel_um` (settable in the setup dialog, datasheet
+      beats SDK) and an explicit `um_per_px` in the structured comment,
+      pitch over total magnification, which is the number a bar actually
+      needs. A file without it gets no bar, because a wrong scale bar is
+      worse than none.
+- [ ] **The slide map as a finding aid.** The other half of the plate
+      idea, still open: export the accumulated map — pins, thumbnails,
+      µm coordinates — as a printable sheet. For a catalogued mount that
+      is an archival artifact, and Victorian mounters drew them by hand.
+- [ ] **Nate's mosaic EXIF says 16×/0.4 and it was shot at 25×/0.65.**
+      Found while building the plate: every file in
+      `260729-230442_mosaic_tiles` records the wrong objective, so the
+      turret belief was stale for that whole session (the stack folders
+      from the same evening are correct). Worth finding out whether an
+      unanswered proposal, a missed detent, or the startup guess is
+      responsible — the optics metadata is only as good as that belief,
+      and now the scale bar depends on it too.
 
 - [ ] **Down-then-back-up stacks.** Nate racks down through the subject
       and back up, so slice order revisits planes: the merge is untouched

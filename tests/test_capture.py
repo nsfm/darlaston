@@ -602,3 +602,32 @@ def test_registration_survives_accumulated_drift(tmp_path):
         got_dy = pos[i][1] - pos[0][1]
         assert abs(got_dx - true_dx) < 4.0, f"tile {i} x off {got_dx-true_dx:.1f}"
         assert abs(got_dy - true_dy) < 4.0, f"tile {i} y off {got_dy-true_dy:.1f}"
+
+
+def test_capture_records_how_much_slide_a_pixel_covers():
+    """The number a scale bar is drawn from, and the reason it is written
+    explicitly: EXIF's FocalPlaneXResolution is a scale at the *sensor*,
+    so anyone drawing a bar from it is wrong by the whole magnification
+    chain. The comment carries microns-of-slide per pixel instead."""
+    from darlaston.process.metadata import from_setup
+    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
+                                         Objective, ScopeProfile, Setup,
+                                         Turret)
+
+    cam = CameraProfile(serial="s", name="cam", pixel_um=2.4,
+                        relay_factor=2.0)
+    scope = ScopeProfile(id="z", name="stand",
+                         turret=Turret([Objective(25, 0.65)], current=0),
+                         optovar=[1.0], optovar_current=0)
+    setup = Setup(camera=cam, scope=scope,
+                  illumination=BUILTIN_ILLUMINATION[0])
+    assert setup.total_magnification == pytest.approx(50.0)   # 25 x 1 x 2
+
+    meta = from_setup(setup, exposure_us=8000, gain_pct=100,
+                      pixel_um=cam.pixel_um)
+    field = dict(p.split("=", 1) for p in meta.comment.split() if "=" in p)
+    assert float(field["um_per_px"]) == pytest.approx(2.4 / 50.0, rel=1e-3)
+
+    # No pitch, no claim: silence beats an invented scale.
+    bare = from_setup(setup, exposure_us=8000, gain_pct=100, pixel_um=None)
+    assert "um_per_px" not in bare.comment

@@ -148,6 +148,12 @@ class CameraProfile:
     #: how much slide each pixel covers. A 2x relay is two stops of
     #: difference in the number a raw developer shows.
     relay_factor: float = 1.0
+    #: Sensor pixel pitch in microns. The SDK reports it, but silently
+    #: returns 0 on some models -- measured on Nate's E3ISPM20000KPA,
+    #: where it left every file without the one tag a scale bar needs.
+    #: Set here it is authoritative; the datasheet number is the answer
+    #: and the camera cannot argue with it.
+    pixel_um: float = 0.0
     last_scope: str | None = None
 
     @property

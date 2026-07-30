@@ -144,9 +144,25 @@ class SetupDialog(QtWidgets.QDialog):
             "sensor, which\nchanges the f-number and how much slide each "
             "pixel covers.")
 
+        self.pixel_um = QtWidgets.QDoubleSpinBox()
+        self.pixel_um.setRange(0.0, 20.0)
+        self.pixel_um.setDecimals(2)
+        self.pixel_um.setSingleStep(0.1)
+        self.pixel_um.setSuffix(" um")
+        self.pixel_um.setSpecialValueText("ask the camera")
+        self.pixel_um.setValue(setup.camera.pixel_um or 0.0)
+        self.pixel_um.setToolTip(
+            "Sensor pixel pitch, from the datasheet.\n\n"
+            "Set it and every capture can record how much slide one pixel "
+            "covers,\nwhich is the number a scale bar is drawn from. The "
+            "SDK is asked\nfirst when this is left at zero, but it reports "
+            "0 on some models --\nand a zero pitch means no scale bar "
+            "anywhere, quietly. The IMX183\nis 2.4 um.")
+
         camera.addRow("Name", self.camera_name)
         camera.addRow("Relay / adapter", self.relay)
         camera.addRow("Relay factor", self.relay_factor)
+        camera.addRow("Pixel pitch", self.pixel_um)
         camera.addRow("Serial", serial)
 
         # --- which stand. A camera that travels needs this; a camera that
@@ -360,7 +376,8 @@ class SetupDialog(QtWidgets.QDialog):
             name=self.camera_name.text().strip() or "Camera",
             model=self._setup.camera.model,
             relay=self.relay.text().strip(),
-            relay_factor=self.relay_factor.value())
+            relay_factor=self.relay_factor.value(),
+            pixel_um=self.pixel_um.value())
         positions = [row.value() for row in self.rows]
         while positions and positions[-1] is None:
             positions.pop()                     # trailing blanks are not gaps

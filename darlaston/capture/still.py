@@ -192,10 +192,13 @@ class StillCapture:
                 # The sensor pitch comes from the SDK and is the file's only
                 # link to real-world scale: pitch over magnification is how
                 # much slide one pixel covers.
-                pixel_um = None
-                if info and info.resolutions:
+                # The profile wins over the SDK: get_PixelSize returns 0
+                # on some models, and a zero pitch silently drops the one
+                # tag a scale bar can be computed from.
+                pixel_um = setup.camera.pixel_um or None
+                if not pixel_um and info and info.resolutions:
                     full = min(info.resolutions, key=lambda r: r.index)
-                    pixel_um = full.pixel_um
+                    pixel_um = full.pixel_um or None
                 meta = from_setup(setup, exposure_us=exposure_us,
                                   gain_pct=gain_pct, subject=subject,
                                   slide=slide,

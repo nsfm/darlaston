@@ -156,6 +156,14 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         "inverted": "1" if setup.illumination.inverted else "0",
         "relay": cam.relay,
         "total_magnification": f"{total:g}" if total else "",
+        # The number a scale bar is drawn from: how much *slide* one
+        # pixel covers. Sensor pitch over total magnification. Written
+        # explicitly because it cannot be recovered from EXIF alone --
+        # FocalPlaneXResolution is a scale at the sensor, and dividing it
+        # by a magnification nobody recorded is how wrong scale bars get
+        # published.
+        "um_per_px": (f"{pixel_um / total:.4g}"
+                      if pixel_um and total else ""),
         "subject": subject,
         "slide": slide,
         "calibration": calibration,
