@@ -1196,6 +1196,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, "Mosaic tile folder", start)
             if not directory:
                 return
+        # Stitching the live mosaic is a "done with this field" gesture
+        # like any other: a field still being stacked seals first, or the
+        # freshest tile -- the one the operator is probably most curious
+        # about -- would be the one missing from the composite.
+        if (self.mosaic is not None and self.stack_session is not None
+                and Path(directory) == self.mosaic.dir):
+            self._seal_tile_stack()
         if self._tile_merging is not None or self._tile_merges:
             # Wait for the background tile merges rather than letting the
             # stitcher's own merge-on-demand race the queue over the same
@@ -1301,6 +1308,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_shut", False):
             return
         self._shut = True
+        # A field mid-stack at quit still becomes its tile: the manifest
+        # write is what matters -- the merge can wait for the stitcher's
+        # merge-on-demand another day.
+        if self.mosaic is not None and self.stack_session is not None:
+            try:
+                self._seal_tile_stack()
+            except Exception:
+                pass               # closing must never be blocked
         self.timelapse.stop()
         self.session.stop()
         self.pipeline.stop()

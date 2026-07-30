@@ -256,6 +256,27 @@ Ordered within each section by how much it would change what gets built.
       from signals); coverage-complete could suggest finishing; real-glass
       trigger thresholds need a session on the Zeiss — the floor
       self-calibrates but has never met real hand tremor.
+- [x] ~~**First real stacked mosaic found two field bugs.**~~ Nate ran the
+      flow twice on real glass (smooth, hands-off — the rhythm works). Both
+      runs lost the final field: stitching mid-lay from the menu was the
+      one route that sealed nothing. Stitch is now a "done with this
+      field" gesture like sliding away, and quitting the app seals too.
+      Second: ghosted/duplicated diatoms along seams — the drift bound.
+      Dead-reckoning drift accumulated to ~500 raw px across the 25× scan,
+      and strong refinements (response 0.37–0.65, residuals all agreeing
+      in direction — drift's signature, not a decoy's) were refused
+      because they exceeded MAX_RESIDUAL of a narrow overlap strip. The
+      per-axis bound now admits drift up to DRIFT_FRACTION of the *tile*,
+      hard-capped under the strip's wraparound ambiguity. His mosaic:
+      3/7 → 7/7 seams refined, solved corrections march monotonically to
+      −500 px in Y, ghosts collapse (before/after crops verified).
+      Regression test injects the same drift shape.
+- [ ] **Why does stage tracking undershoot Y at 25×?** The drift that
+      broke registration was systematic: monotonic, one direction, ~14%
+      of traveled distance. Candidates: per-objective calibration error
+      in preview-px-per-µm, tracking loss during capture blackouts, or
+      anisotropy in the tracker. The stitcher now survives it, but the
+      minimap would place fields better if dead reckoning were honest.
 - [ ] **Measured candidates in waiting** (from the research sweep, each goes
       through `tools/stack_bench.py` before shipping): CombineZP's ramp
       subtraction (monotone-vs-peaked profile test — the only shipped

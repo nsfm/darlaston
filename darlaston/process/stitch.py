@@ -40,6 +40,14 @@ from . import dng
 #: Refinement beyond this fraction of the overlap strip is not a refinement,
 #: it is the wraparound or a decoy. The prediction stands instead.
 MAX_RESIDUAL = 0.25
+#: But real dead-reckoning drift is bounded by the *tile*, not the strip:
+#: on Nate's first stacked mosaic (25x), strong seams (response 0.37-0.65)
+#: measured coherent residuals up to ~330 raw px -- far past 25% of a
+#: narrow strip, all agreeing in direction, which is what drift does and
+#: decoys do not. So the per-axis bound is the larger of the two scales,
+#: hard-capped below the half-period wraparound ambiguity.
+DRIFT_FRACTION = 0.12
+WRAP_GUARD = 0.45
 #: Below this correlation response the strip had nothing to say (blank
 #: overlap, say); the prediction stands.
 MIN_RESPONSE = 0.12
@@ -317,8 +325,18 @@ def _refine_pair(a: np.ndarray, b: np.ndarray,
     # are reused to register the tile's other neighbours.
     (rx, ry), response = cv2.phaseCorrelate(sa.copy(), sb.copy(), hann)
 
-    limit = MAX_RESIDUAL * min(sa.shape)
-    if abs(rx) > limit or abs(ry) > limit or response < MIN_RESPONSE:
+    # Per-axis trust bounds. Two scales are in play: MAX_RESIDUAL of the
+    # strip axis (the decoy scale -- a wrong match lives within the strip)
+    # and DRIFT_FRACTION of the tile (the dead-reckoning scale -- real
+    # drift accumulates across a scan and does not care how narrow this
+    # particular overlap is). Take the larger, capped below the half-
+    # period wraparound ambiguity of the strip itself.
+    drift = DRIFT_FRACTION * min(h, w) / down     # tile dims are half-res
+    lim_x = min(max(MAX_RESIDUAL * sa.shape[1], drift),
+                WRAP_GUARD * sa.shape[1])
+    lim_y = min(max(MAX_RESIDUAL * sa.shape[0], drift),
+                WRAP_GUARD * sa.shape[0])
+    if abs(rx) > lim_x or abs(ry) > lim_y or response < MIN_RESPONSE:
         return None
     # sb sits at prediction; content shifted +r in b means b is really at
     # prediction - r. Half-res residual, times the extra downsample, times

@@ -557,3 +557,48 @@ def test_stitch_mixes_stacked_and_plain_tiles(tmp_path):
     right = float(comp[:, -w // 3:][comp[:, -w // 3:] > 0].mean())
     assert abs(left - right) / max(left, right) < 0.06, \
         f"left {left:.0f} vs right {right:.0f} — white levels not normalised"
+
+
+def test_registration_survives_accumulated_drift(tmp_path):
+    """Nate's first real stacked mosaic: dead-reckoning drift accumulated
+    to ~500 raw px across the scan, and the old strip-relative trust bound
+    refused strong refinements (response 0.37-0.65) as suspected decoys --
+    the tiles then composited at drifted positions, printing every diatom
+    on the seam twice. The bound now admits drift up to a fraction of the
+    *tile*, capped under the wraparound ambiguity; this injects drift of
+    that size and requires registration to see through it."""
+    from darlaston.camera.mock import MockCamera
+    from darlaston.capture.mosaic import MosaicSession
+    from darlaston.process.stitch import stitch
+
+    cam = MockCamera()
+    cam.open()
+    session = MosaicSession(tmp_path, "drifted")
+    truth_um = [(0.0, 0.0), (10444.8, 302.4), (20889.6, -240.0)]
+    # Monotonic accumulating drift, ~150 preview px by tile 3 -- the same
+    # shape and scale as the real failure (500 raw px = ~167 preview px).
+    drift = [(0.0, 0.0), (-20.0, 75.0), (-35.0, 150.0)]
+
+    for i, (ux, uy) in enumerate(truth_um):
+        cam.stage_xy = (ux, uy)
+        frame = cam.grab_raw()
+        with frame:
+            raw = frame.copy()
+        p = tmp_path / f"c{i}.dng"
+        write_dng(p, raw)
+        px = ux / 2.4 * (1824 / 5440) + drift[i][0]
+        py = uy / 2.4 * (1216 / 3648) + drift[i][1]
+        session.adopt(p, (px, py), (1824, 1216))
+    cam.close()
+
+    path, report = stitch(session.dir, scale=0.1)
+    assert report["refined"] >= 2, \
+        f"drifted seams must refine, got {report['refined']}"
+    pos = report["positions"]
+    for i in (1, 2):
+        true_dx = (truth_um[i][0] - truth_um[0][0]) / 2.4
+        true_dy = (truth_um[i][1] - truth_um[0][1]) / 2.4
+        got_dx = pos[i][0] - pos[0][0]
+        got_dy = pos[i][1] - pos[0][1]
+        assert abs(got_dx - true_dx) < 4.0, f"tile {i} x off {got_dx-true_dx:.1f}"
+        assert abs(got_dy - true_dy) < 4.0, f"tile {i} y off {got_dy-true_dy:.1f}"
