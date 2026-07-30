@@ -270,11 +270,25 @@ Ordered within each section by how much it would change what gets built.
       cheap for us since aligned slices + depth map already exist);
       capture-side step-size hint from NA/magnification (3-4 steps per
       DoF is the community rule and we know both numbers).
-- [ ] **The dream composition: stacked mosaics.** Both halves now exist and
-      share the same session shape. A mosaic tile becomes a stack folder,
-      tiles close as you leave them (stack merges in the background), and
-      the stitcher consumes `stacked.dng` instead of `tile_NNN.dng`. This is
-      the project's original thesis — complaint #4 — one sprint away.
+- [x] ~~**The dream composition: stacked mosaics.**~~ The thesis, shipped.
+      With mosaic + stack both on, each field's rack-pauses build a
+      per-tile `StackSession` living *inside* the mosaic folder
+      (`tile_007_stack/`), created lazily at the first slice and **sealed
+      by sliding away** — moving ~a third of a field from the tile's
+      anchor is the gesture; no button exists between fields. The merge
+      runs in a background queue while the operator racks the next field
+      (map shows a hatched veil until it lands; failed = red, retried at
+      stitch). One slice = the exposure is simply a plain tile; single
+      shots and stacks mix freely, so racking is spent only where the
+      subject demands it. Stitcher consumes `stacked.dng`, **normalises
+      per-tile white levels** (12-bit singles vs 16-bit stacked blends —
+      without it every stacked tile lands four stops bright), and
+      finishes any merge it finds undone, so a mosaic closed mid-merge
+      still stitches. Chip-off and mosaic-end also seal; undo mid-field
+      scraps the racked slices. Proven end to end on the mock: tilted
+      focal plane, two fields, seal fired mid-slide, tile 1 merged
+      during the pan, composite sharp in every strip (min/max 0.78)
+      where no single exposure could be.
 - [x] ~~**"Hold still" during a capture.**~~ A banner over the frozen preview
       for exactly the window where motion does damage, and a measured verdict
       afterwards: the tracker's position before the pull vs the first

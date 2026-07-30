@@ -467,3 +467,93 @@ def test_white_balance_can_be_left_out_of_the_file(tmp_path):
     assert results[-1].ok, results[-1].message
     assert seen["neutral"] == (1.0, 1.0, 1.0)
     assert "wb" not in results[-1].applied
+
+
+def test_mosaic_adopts_a_stack_tile(tmp_path):
+    """The composition in one unit: a tile that IS a stack folder. The
+    manifest round-trips it, and undo removes the whole folder."""
+    from darlaston.capture.mosaic import MosaicSession
+
+    session = MosaicSession(tmp_path, "composed")
+    stack = session.begin_stack_tile()
+    assert stack.dir == session.dir / "tile_001_stack"
+    for i in range(3):
+        f = tmp_path / f"s{i}.dng"
+        f.write_bytes(b"x")
+        stack.adopt(f, metric=float(i))
+    tile = session.adopt_stack(stack, (100.0, 50.0), (1824, 1216))
+    assert tile.stack == "tile_001_stack"
+    assert tile.filename == "tile_001_stack/stacked.dng"
+
+    # A plain tile after it: mixing is the point.
+    f = tmp_path / "plain.dng"
+    f.write_bytes(b"y")
+    t2 = session.adopt(f, (400.0, 50.0), (1824, 1216))
+    assert t2.index == 2 and t2.stack is None
+
+    again = MosaicSession.load(session.dir)
+    assert again.tiles[0].stack == "tile_001_stack"
+    assert again.tiles[0].pos == (100.0, 50.0)
+    assert again.tiles[1].stack is None
+
+    again.undo()                                  # the plain tile
+    again.undo()                                  # the stack tile
+    assert not (session.dir / "tile_001_stack").exists()
+
+
+def test_stitch_mixes_stacked_and_plain_tiles(tmp_path):
+    """The dream's plumbing: one tile is a single 12-bit exposure, the
+    other an *unmerged* stack whose merge output is 16-bit. The stitcher
+    must (a) finish the pending merge itself and (b) normalise the white
+    levels -- without (b), the stacked half lands four stops bright.
+    Same scene content everywhere, so any level step is the defect."""
+    from darlaston.camera.mock import MockCamera
+    from darlaston.capture.mosaic import MosaicSession
+    from darlaston.capture.stack import StackSession
+    from darlaston.process.stitch import (read_bayer_dng, read_white_level,
+                                          stitch)
+
+    cam = MockCamera()
+    cam.open()
+    session = MosaicSession(tmp_path, "mixed")
+    positions_um = [(0.0, 0.0), (10444.8, 0.0)]
+
+    # Tile 1: plain 12-bit capture.
+    cam.stage_xy = positions_um[0]
+    frame = cam.grab_raw()
+    with frame:
+        raw = frame.copy()
+    p = tmp_path / "one.dng"
+    write_dng(p, raw)
+    session.adopt(p, (0.0, 0.0), (1824, 1216))
+
+    # Tile 2: a stack of two identical slices, deliberately left unmerged.
+    cam.stage_xy = positions_um[1]
+    frame = cam.grab_raw()
+    with frame:
+        raw2 = frame.copy()
+    cam.close()
+    stack = session.begin_stack_tile()
+    for i in range(2):
+        p = tmp_path / f"sl{i}.dng"
+        write_dng(p, raw2)
+        stack.adopt(p, metric=0.5)
+    px = positions_um[1][0] / 2.4 * (1824 / 5440)
+    session.adopt_stack(stack, (px, 0.0), (1824, 1216))
+
+    path, report = stitch(session.dir, scale=0.1)
+    assert path.exists()
+    # (a) the pending merge was finished, and produced a 16-bit file.
+    merged = session.dir / "tile_002_stack" / "stacked.dng"
+    assert merged.exists()
+    assert read_white_level(merged) == 4095 * 16
+
+    # (b) levels match across the composite: compare the two tiles'
+    # territories in the output. Same mock scene, same illumination --
+    # anything beyond a few percent is a normalisation failure.
+    comp = read_bayer_dng(path).astype(np.float32)
+    h, w = comp.shape
+    left = float(comp[:, : w // 3][comp[:, : w // 3] > 0].mean())
+    right = float(comp[:, -w // 3:][comp[:, -w // 3:] > 0].mean())
+    assert abs(left - right) / max(left, right) < 0.06, \
+        f"left {left:.0f} vs right {right:.0f} — white levels not normalised"

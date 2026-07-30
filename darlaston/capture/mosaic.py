@@ -30,6 +30,12 @@ class Tile:
     pos: tuple[float, float] | None
     #: Preview frame (w, h) at capture, the units pos is measured against.
     frame: tuple[int, int]
+    #: Subfolder name when this tile is a whole Z-stack (a StackSession
+    #: living inside the mosaic); `filename` then points at its merged
+    #: `stacked.dng`. The stitcher does not care how many exposures a tile
+    #: took -- a tile is a position and an image -- which is what lets
+    #: single shots and stacks mix freely in one mosaic.
+    stack: str | None = None
 
 
 def overlap_fraction(a: tuple[float, float], b: tuple[float, float],
@@ -95,13 +101,51 @@ class MosaicSession:
         self._save()
         return tile
 
+    def begin_stack_tile(self, subject: str = ""):
+        """A StackSession at the next tile's reserved slot.
+
+        Nothing is recorded in the manifest yet -- the folder exists, the
+        tile does not. `adopt_stack` makes it real once the operator slides
+        away; an abandoned folder is just deleted. Only one can be in
+        flight, because every capture routes into it until it seals.
+        """
+        from .stack import StackSession
+        index = len(self.tiles) + 1
+        return StackSession.at(self.dir / f"tile_{index:03d}_stack",
+                               subject or self.subject)
+
+    def adopt_stack(self, stack, pos: tuple[float, float] | None,
+                    frame: tuple[int, int]) -> Tile:
+        """Record a sealed stack as the next tile.
+
+        The merged `stacked.dng` may not exist yet -- the merge runs in the
+        background while the operator is already racking the next field --
+        and that is fine: the stack folder is complete and mergeable by
+        construction, so the stitcher can finish any merge it finds undone.
+        """
+        index = len(self.tiles) + 1
+        name = stack.dir.name
+        expected = f"tile_{index:03d}_stack"
+        if name != expected:
+            raise ValueError(f"stack {name} is not the next tile "
+                             f"({expected}) — tiles adopted out of order?")
+        tile = Tile(index=index, filename=f"{name}/stacked.dng",
+                    pos=(float(pos[0]), float(pos[1])) if pos else None,
+                    frame=(int(frame[0]), int(frame[1])), stack=name)
+        self.tiles.append(tile)
+        self._save()
+        return tile
+
     def undo(self) -> Tile | None:
         """Remove the last tile, file and record both. The one mosaic-specific
         mistake is 'that tile was mid-crank'; this is its eraser."""
         if not self.tiles:
             return None
         tile = self.tiles.pop()
-        (self.dir / tile.filename).unlink(missing_ok=True)
+        if tile.stack:
+            shutil.rmtree(self.dir / tile.stack, ignore_errors=True)
+        else:
+            (self.dir / tile.filename).unlink(missing_ok=True)
         self._save()
         return tile
 
@@ -121,7 +165,9 @@ class MosaicSession:
                               "for registration, not registration"),
             "tiles": [{"index": t.index, "file": t.filename,
                        "pos": list(t.pos) if t.pos else None,
-                       "frame": list(t.frame)} for t in self.tiles],
+                       "frame": list(t.frame),
+                       **({"stack": t.stack} if t.stack else {})}
+                      for t in self.tiles],
         }
         tmp = self.manifest_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2))
@@ -139,6 +185,7 @@ class MosaicSession:
         session.tiles = [
             Tile(index=t["index"], filename=t["file"],
                  pos=tuple(t["pos"]) if t.get("pos") else None,
-                 frame=tuple(t.get("frame", (0, 0))))
+                 frame=tuple(t.get("frame", (0, 0))),
+                 stack=t.get("stack"))
             for t in data.get("tiles", [])]
         return session

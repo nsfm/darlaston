@@ -60,6 +60,22 @@ class StackSession:
         self.slices: list[Slice] = []
         self._meta: dict = {}
 
+    @classmethod
+    def at(cls, directory: Path | str, subject: str = "") -> "StackSession":
+        """A stack at an exact directory, for living inside a mosaic.
+
+        The stamped name in __init__ suits a free-standing stack; a stack
+        that IS a mosaic tile is named by the mosaic (`tile_007_stack/`),
+        because its identity comes from its position in the larger work.
+        """
+        session = cls.__new__(cls)
+        session.dir = Path(directory)
+        session.dir.mkdir(parents=True, exist_ok=True)
+        session.subject = subject
+        session.slices = []
+        session._meta = {}
+        return session
+
     def set_meta(self, **meta) -> None:
         self._meta.update({k: v for k, v in meta.items() if v is not None})
         self._save()

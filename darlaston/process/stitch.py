@@ -137,6 +137,48 @@ def read_bayer_dng(path: Path | str) -> np.ndarray:
     return flat.reshape(h, w).copy()
 
 
+def read_white_level(path: Path | str) -> int:
+    """The DNG's declared white level, from wherever the raw image lives.
+
+    Needed because a mosaic may mix sources: single-exposure tiles are
+    12-bit (white 4095) while a stacked tile's merge is a 16-bit blend
+    (white 65520). Compositing them without normalising would land every
+    stacked tile four stops bright -- the same class of defect that once
+    shipped every composite four stops dark.
+    """
+    data = Path(path).read_bytes()
+    if data[:4] != b"II\x2a\x00":
+        raise ValueError(f"{path}: not a little-endian TIFF darlaston wrote")
+    (first,) = struct.unpack_from("<I", data, 4)
+    ifd = _read_ifd(data, first)
+    if 330 in ifd:
+        ifd = _read_ifd(data, _values(data, ifd[330])[0])
+    if 50717 in ifd:                                  # WhiteLevel
+        return int(_values(data, ifd[50717])[0])
+    bits = _values(data, ifd[258])[0] if 258 in ifd else 16
+    return (1 << bits) - 1
+
+
+def read_tile(session_dir: Path, tile: Tile) -> np.ndarray:
+    """A mosaic tile's image, normalised to the 12-bit domain.
+
+    Merges the tile's stack first if its `stacked.dng` does not exist yet
+    -- a mosaic closed mid-merge, or merged on another day, still
+    stitches. The import is local because process.stack reads DNGs through
+    this module.
+    """
+    path = Path(session_dir) / tile.filename
+    if tile.stack and not path.exists():
+        from .stack import merge as merge_stack
+        merge_stack(Path(session_dir) / tile.stack, output="bayer")
+    raw = read_bayer_dng(path)
+    white = read_white_level(path)
+    if white != 4095:
+        raw = np.clip(raw.astype(np.float32) * (4095.0 / white) + 0.5,
+                      0, 4095).astype(np.uint16)
+    return raw
+
+
 def read_metadata(path: Path | str):
     """Recover a CaptureMetadata from a DNG darlaston wrote.
 
@@ -496,7 +538,7 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
     if shapes is None:
         shapes = []
         for t in session.tiles:
-            raw = read_bayer_dng(session.dir / t.filename)
+            raw = read_tile(session.dir, t)
             shapes.append(raw.shape)
             del raw
 
@@ -529,7 +571,7 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
         for tile, (x, y, sw, sh) in zip(session.tiles, boxes):
             if y >= bot or y + sh <= top:
                 continue                      # this tile misses the band
-            raw = read_bayer_dng(session.dir / tile.filename)
+            raw = read_tile(session.dir, tile)
             if neutral is None:
                 neutral = dng.grey_world_neutral(raw)
             rgb = cv2.cvtColor(raw,
@@ -603,7 +645,7 @@ def survey(directory: Path | str) -> tuple[MosaicSession, list, list]:
     session = MosaicSession.load(directory)
     shapes = []
     for t in session.tiles:
-        raw = read_bayer_dng(session.dir / t.filename)
+        raw = read_tile(session.dir, t)
         shapes.append(raw.shape)
         del raw
     positions = [(0.0, 0.0)] * len(shapes)
@@ -620,7 +662,7 @@ def stitch(directory: Path | str, scale: float = 0.25,
         raise ValueError("a mosaic needs at least two tiles")
     lumas, shapes = [], []
     for t in session.tiles:
-        raw = read_bayer_dng(session.dir / t.filename)
+        raw = read_tile(session.dir, t)
         shapes.append(raw.shape)
         lumas.append(luma_half(raw))
         del raw

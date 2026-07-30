@@ -136,12 +136,32 @@ class _Canvas(QtWidgets.QWidget):
             rect = QtCore.QRectF(tl.x(), tl.y(), w * s, h * s)
             p.drawImage(rect, img)
             last = i == len(self._model.tiles) - 1
-            colour = QtGui.QColor(theme.BRASS)
-            if not last:
-                colour.setAlpha(140)
-            p.setPen(QtGui.QPen(colour, 1.4 if last else 1.0))
+            if tile.state == "merging":
+                # A hatched veil: this tile's stack is still merging in
+                # the background. The veil lifts when it lands.
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                veil = QtGui.QColor(theme.BRASS)
+                veil.setAlpha(70)
+                p.setBrush(QtGui.QBrush(veil,
+                                        QtCore.Qt.BrushStyle.BDiagPattern))
+                p.drawRect(rect)
+            if tile.state == "failed":
+                colour = QtGui.QColor(200, 60, 50)
+            else:
+                colour = QtGui.QColor(theme.BRASS)
+                if not last:
+                    colour.setAlpha(140)
+            p.setPen(QtGui.QPen(colour, 1.4 if last or tile.state == "failed"
+                                else 1.0))
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
+            if tile.label:
+                f = p.font()
+                f.setPointSizeF(7.0)
+                p.setFont(f)
+                p.drawText(rect.adjusted(0, 0, -2, -1),
+                           QtCore.Qt.AlignmentFlag.AlignRight
+                           | QtCore.Qt.AlignmentFlag.AlignBottom, tile.label)
 
         # Guidance line under the pins, so the target stays legible.
         target = next((q for q in self._model.pins
@@ -287,11 +307,16 @@ class SlideMapPanel(QtWidgets.QWidget):
             self.canvas.update()
         self._update_status()
 
-    def tile_added(self, pos, preview) -> None:
-        if pos is not None:
-            self.model.add_tile(pos, preview)
+    def tile_added(self, pos, preview, state: str = "ok",
+                   label: str = "") -> None:
+        if pos is not None and preview is not None:
+            self.model.add_tile(pos, preview, state=state, label=label)
         self.canvas.update()
         self._update_status()
+
+    def set_tile_state(self, index: int, state: str) -> None:
+        self.model.set_tile_state(index, state)
+        self.canvas.update()
 
     def tile_removed(self) -> None:
         self.model.pop_tile()

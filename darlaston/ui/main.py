@@ -14,6 +14,7 @@ import math
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 
@@ -72,6 +73,7 @@ class Bridge(QtCore.QObject):
     timelapse = QtCore.Signal(object)
     stitch = QtCore.Signal(object)
     stack_merge = QtCore.Signal(object)
+    tile_merge = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
@@ -119,9 +121,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.timelapse.connect(self._on_timelapse)
         self.bridge.stitch.connect(self._on_stitch)
         self.bridge.stack_merge.connect(self._on_stack_merge)
+        self.bridge.tile_merge.connect(self._on_tile_merge)
         self.mosaic: MosaicSession | None = None
         self.stack_session: StackSession | None = None
         self.stack_trigger = StackTrigger(self._fire_stack_slice)
+        # Stacked-mosaic state: the current tile's anchor position, frame
+        # dims, a preview for the minimap, and the background merge queue.
+        self._tile_anchor: tuple[float, float] | None = None
+        self._tile_frame: tuple[int, int] = (0, 0)
+        self._tile_preview = None
+        self._tile_merges: list[tuple[int, Path]] = []
+        self._tile_merging: int | None = None
         self._last_preview = None
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
@@ -755,13 +765,27 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         s = self.stack_session.adopt(result.path, metric=0.0)
         self.stack_trigger.slice_landed()
+        if self.mosaic is not None and self._tile_anchor is None:
+            # First slice anchors the tile: its position is the tile's
+            # position, and moving ~a third of a field from here is the
+            # gesture that seals it.
+            self._tile_anchor = result.position
+            h, w = ((self._last_preview.shape[:2])
+                    if self._last_preview is not None else (0, 0))
+            self._tile_frame = (w, h)
+            self._tile_preview = (self._last_preview.copy()
+                                  if self._last_preview is not None else None)
         try:
             from ..process.stitch import read_bayer_dng
             self.assembly.add_slice(
                 read_bayer_dng(self.stack_session.dir / s.filename)[::2, ::2])
         except Exception:
             pass                       # the preview must never block capture
-        self.strip.set_note(f"slice {s.index} ✓ — keep racking")
+        if self.mosaic is not None:
+            self.strip.set_note(f"slice {s.index} ✓ — keep racking; "
+                               "slide on when the field is done")
+        else:
+            self.strip.set_note(f"slice {s.index} ✓ — keep racking")
 
     def _adopt_tile(self, result: CaptureResult) -> None:
         h, w = ((self._last_preview.shape[:2])
@@ -775,8 +799,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_stack_toggled(self, on: bool) -> None:
         if on:
             if self.mosaic is not None:
-                self.strip.set_note("finish the mosaic before starting a stack")
-                self.focus.stack.setChecked(False)
+                # Stacked mosaic. No session yet: each field's stack is
+                # created lazily at its first slice and sealed by the
+                # slide to the next field, so the whole mosaic is one
+                # rhythm -- rack, pause, rack, pause, slide -- with no
+                # button between fields.
+                self.assembly.reset()
+                self.stack_window.place((420, 330))
+                self.stack_window.show()
+                self.stack_trigger.arm()
+                self.strip.set_note("stacked mosaic — rack to stack this "
+                                   "field; sliding on seals the tile")
                 return
             self.stack_session = StackSession(self.settings.capture_root,
                                       self.subject.subject)
@@ -792,11 +825,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.strip.set_note("stack armed — rack to the first plane and "
                                "hold")
         else:
+            self.stack_trigger.disarm()
+            if self.mosaic is not None:
+                # Chip off mid-mosaic keeps what was racked: the current
+                # field's slices seal into their tile right now.
+                self._seal_tile_stack()
+                self.stack_window.hide()
+                return
             # The chip going off without Finish being pressed keeps the
             # slices and skips the merge -- the folder is complete and can
             # be merged later from its manifest. Finish and Discard are the
             # explicit endings, and they live in the window.
-            self.stack_trigger.disarm()
             if not self._stack_ending:
                 self.stack_window.hide()
                 self.stack_session = None
@@ -849,11 +888,120 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _fire_stack_slice(self) -> bool:
         """The trigger pulling the shutter. Runs on the UI thread, from the
-        signal stream; StillCapture does the work off it."""
-        if self.stack_session is None or self.capture.busy:
+        signal stream; StillCapture does the work off it.
+
+        In a stacked mosaic the first rack-pause at a new field is also
+        what opens that tile's stack -- lazily, so panning across fields
+        without racking never litters the mosaic with empty folders.
+        """
+        if self.capture.busy:
             return False
+        if self.stack_session is None:
+            if self.mosaic is None or not self.focus.stack.isChecked():
+                return False
+            self.stack_session = self.mosaic.begin_stack_tile(
+                self.subject.subject)
+            if self.setup is not None:
+                obj = self.setup.scope.turret.objective
+                self.stack_session.set_meta(
+                    objective=obj.label if obj else None,
+                    illumination=self.setup.illumination.display)
+            self._tile_anchor = None
+            self._tile_preview = None
+            self.assembly.reset()
         return self.capture.trigger(self.setup, subject=self.subject.subject,
                                     slide=self.subject.slide_note)
+
+    #: Sliding this fraction of a field away from a tile's anchor seals it.
+    #: Past deliberate-move territory (jitter is a few percent), well short
+    #: of the ~80% slide to the next tile position.
+    SEAL_FRACTION = 0.35
+
+    def _maybe_seal_tile(self, s) -> None:
+        """The slide-away gesture, watched from the live stream."""
+        if (self.stack_session is None or self.mosaic is None
+                or self._tile_anchor is None or s.stage_pos is None
+                or self.capture.busy):
+            return
+        ax, ay = self._tile_anchor
+        w, h = self._tile_frame
+        if (abs(s.stage_pos[0] - ax) > self.SEAL_FRACTION * w
+                or abs(s.stage_pos[1] - ay) > self.SEAL_FRACTION * h):
+            self._seal_tile_stack()
+
+    def _seal_tile_stack(self) -> None:
+        """Whatever was racked at this field becomes the tile.
+
+        Nothing was clicked: sliding to the next field is the gesture.
+        One slice is not a stack -- the exposure itself becomes an
+        ordinary tile; two or more queue a background merge, and by the
+        time the operator finishes the next field the previous tile is
+        usually done. Zero slices means the operator just passed through.
+        """
+        done, self.stack_session = self.stack_session, None
+        anchor, self._tile_anchor = self._tile_anchor, None
+        preview, self._tile_preview = self._tile_preview, None
+        if done is None or self.mosaic is None:
+            return
+        import shutil
+        n = len(done.slices)
+        frame = self._tile_frame
+        if preview is None:
+            preview = self._last_preview
+        if n == 0:
+            shutil.rmtree(done.dir, ignore_errors=True)
+            return
+        if n == 1:
+            src = done.dir / done.slices[0].filename
+            tile = self.mosaic.adopt(src, anchor, frame)
+            shutil.rmtree(done.dir, ignore_errors=True)
+            self.slidemap.tile_added(anchor, preview)
+            self.strip.set_note(f"tile {tile.index} sealed — one exposure")
+        else:
+            tile = self.mosaic.adopt_stack(done, anchor, frame)
+            self.slidemap.tile_added(anchor, preview, state="merging",
+                                     label=f"×{n}")
+            self._queue_tile_merge(tile.index, done.dir)
+            self.strip.set_note(f"tile {tile.index} sealed — {n} slices "
+                               "merging behind you; keep going")
+        self.assembly.reset()
+
+    def _queue_tile_merge(self, index: int, directory) -> None:
+        """One worker, tiles in order, the map as the status surface."""
+        self._tile_merges.append((index, Path(directory)))
+        self._next_tile_merge()
+
+    def _next_tile_merge(self) -> None:
+        if self._tile_merging is not None or not self._tile_merges:
+            return
+        index, directory = self._tile_merges.pop(0)
+        self._tile_merging = index
+        smoothing = self.settings.stack_smoothing
+        feather = self.settings.stack_feather
+
+        def work():
+            from ..process.stack import merge
+            try:
+                # Always bayer, whatever the free-standing preference: the
+                # stitcher reads bayer tiles.
+                merge(directory, output="bayer", smoothing=smoothing,
+                      feather=feather)
+                self.bridge.tile_merge.emit((index, True, ""))
+            except Exception as exc:
+                self.bridge.tile_merge.emit((index, False, str(exc)))
+
+        threading.Thread(target=work, daemon=True,
+                         name=f"tile-merge-{index}").start()
+
+    @QtCore.Slot(object)
+    def _on_tile_merge(self, message) -> None:
+        index, ok, note = message
+        self._tile_merging = None
+        self.slidemap.set_tile_state(index, "ok" if ok else "failed")
+        if not ok:
+            self.strip.set_note(f"tile {index} merge failed — {note}; "
+                               "the stitcher will retry it")
+        self._next_tile_merge()
 
     def _run_stack_merge(self, directory) -> None:
         opts = dict(output=self.settings.stack_output,
@@ -903,6 +1051,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     objective=obj.label if obj else None,
                     illumination=self.setup.illumination.display)
         else:
+            # A field still being stacked seals first -- ending the mosaic
+            # is as much a "done with this field" gesture as sliding away.
+            self._seal_tile_stack()
             # The manifest is already current, so closing is just letting go
             # -- but a finished mosaic almost always wants stitching, and
             # making the operator go hunting through a menu for the obvious
@@ -910,9 +1061,13 @@ class MainWindow(QtWidgets.QMainWindow):
             done, self.mosaic = self.mosaic, None
             self.slidemap.set_mosaic(False)
             if done is not None and len(done.tiles) >= 2:
+                pending = len(self._tile_merges) + (
+                    1 if self._tile_merging is not None else 0)
                 box = QtWidgets.QMessageBox(self)
                 box.setWindowTitle("Mosaic finished")
-                box.setText(f"{len(done.tiles)} tiles in {done.dir.name}.")
+                box.setText(f"{len(done.tiles)} tiles in {done.dir.name}."
+                            + (f" {pending} still merging — stitching will "
+                               "wait for them." if pending else ""))
                 box.setInformativeText("Stitch them now?")
                 later = box.addButton("Later",
                                       QtWidgets.QMessageBox.ButtonRole.RejectRole)
@@ -929,8 +1084,27 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_undo_tile(self) -> None:
         if self.mosaic is None:
             return
+        # A field mid-stack: undo means "scrap what I racked here", before
+        # any recorded tile is touched.
+        if self.stack_session is not None:
+            import shutil
+            n = len(self.stack_session.slices)
+            shutil.rmtree(self.stack_session.dir, ignore_errors=True)
+            self.stack_session = None
+            self._tile_anchor = None
+            self._tile_preview = None
+            self.assembly.reset()
+            self.shutter.set_result(f"{n} slice{'s' if n != 1 else ''} "
+                                    "scrapped — field reset")
+            return
+        last = self.mosaic.tiles[-1] if self.mosaic.tiles else None
+        if last is not None and self._tile_merging == last.index:
+            self.strip.set_note("that tile is mid-merge — a moment")
+            return
         tile = self.mosaic.undo()
         if tile is not None:
+            self._tile_merges = [(i, d) for i, d in self._tile_merges
+                                 if i != tile.index]
             self.slidemap.tile_removed()
             self.shutter.set_result(f"tile {tile.index} deleted")
 
@@ -1022,6 +1196,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, "Mosaic tile folder", start)
             if not directory:
                 return
+        if self._tile_merging is not None or self._tile_merges:
+            # Wait for the background tile merges rather than letting the
+            # stitcher's own merge-on-demand race the queue over the same
+            # folder. Poll and reopen; the merges are seconds each.
+            pending = len(self._tile_merges) + 1
+            self.strip.set_note(f"waiting on {pending} tile "
+                                f"merge{'s' if pending != 1 else ''} "
+                                "before stitching…")
+            QtCore.QTimer.singleShot(
+                700, lambda: self._stitch_mosaic(directory))
+            return
         StitchDialog(directory, self._run_stitch, self).exec()
 
     def _run_stitch(self, directory, scale, dialog) -> None:
@@ -1093,6 +1278,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_frame(s.preview, s.peaking)
         self.slidemap.update_live(s)
         self.stack_trigger.observe(s)
+        self._maybe_seal_tile(s)
         self._last_preview = s.preview
         if s.turret_event is not None:
             self._on_turret_event(s.turret_event)

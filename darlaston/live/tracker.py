@@ -100,6 +100,11 @@ class Snapshot:
     pos: tuple[float, float]        # world centre, preview pixels
     size: tuple[int, int]           # (w, h) of the view it was taken from
     thumb: np.ndarray               # small BGR copy
+    #: Mosaic-tile bookkeeping (unused for reconnaissance snapshots):
+    #: "ok", "merging" while a stacked tile's merge runs, "failed" if it
+    #: did not; label is a small badge ("×13" for a 13-slice stack).
+    state: str = "ok"
+    label: str = ""
 
 
 @dataclass
@@ -158,8 +163,17 @@ class SlideMap:
 
     # ---- mosaic tiles ----------------------------------------------------
 
-    def add_tile(self, pos: tuple[float, float], preview: np.ndarray) -> None:
-        self.tiles.append(self._snap(pos, preview))
+    def add_tile(self, pos: tuple[float, float], preview: np.ndarray,
+                 state: str = "ok", label: str = "") -> None:
+        snap = self._snap(pos, preview)
+        snap.state = state
+        snap.label = label
+        self.tiles.append(snap)
+
+    def set_tile_state(self, index: int, state: str) -> None:
+        """By mosaic tile index (1-based, adoption order)."""
+        if 1 <= index <= len(self.tiles):
+            self.tiles[index - 1].state = state
 
     def pop_tile(self) -> None:
         if self.tiles:
