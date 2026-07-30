@@ -313,7 +313,7 @@ def cand_production(lumas):
     """darlaston.process.stack._depth_map -- the pipeline merge() runs.
     If this ever measures worse than a research candidate above, that
     candidate is the next port."""
-    return _depth_map(np.stack(lumas))
+    return _depth_map(np.stack(lumas))[0]
 
 
 def _sml(luma, pool=1.5):
