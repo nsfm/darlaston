@@ -56,6 +56,13 @@ class StackAssembly(QtWidgets.QWidget):
         self.discard.setToolTip("Delete this stack — slices and all.")
         self.close_btn = QtWidgets.QPushButton("Close")
         self.close_btn.hide()
+        self.options = QtWidgets.QToolButton()
+        self.options.setText("⚙")
+        self.options.setToolTip("Merge options — how the stack becomes "
+                                "one image.")
+        self.options.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.options.setProperty("role", "seg")
         for b in (self.view_toggle, self.finish, self.discard,
                   self.close_btn):
             b.setProperty("role", "seg")
@@ -82,6 +89,7 @@ class StackAssembly(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(4)
         row.addWidget(self.view_toggle)
+        row.addWidget(self.options)
         row.addWidget(self.status, 1)
         row.addWidget(self.discard)
         row.addWidget(self.finish)
@@ -97,6 +105,50 @@ class StackAssembly(QtWidgets.QWidget):
     def _on_view(self, on: bool) -> None:
         self._mode = "depth" if on else "image"
         self._render()
+
+    def configure(self, settings) -> None:
+        """Build the merge-options menu, bound straight to the settings.
+
+        Three knobs, each a statement about the subject that the merge
+        cannot make alone. Defaults are the measured winners from
+        tools/stack_bench.py; the menu exists for the subjects the bench
+        has not met yet.
+        """
+        menu = QtWidgets.QMenu(self.options)
+        menu.setStyleSheet(self.window().styleSheet())
+
+        def group(title, field, choices):
+            # A disabled item as the header -- our stylesheet renders
+            # QMenu sections as bare separators, which is too cryptic for
+            # three anonymous groups.
+            if menu.actions():
+                menu.addSeparator()
+            head = menu.addAction(title.upper())
+            head.setEnabled(False)
+            acts = QtGui.QActionGroup(menu)
+            current = getattr(settings, field)
+            for label, value in choices:
+                act = menu.addAction(label)
+                act.setCheckable(True)
+                act.setChecked(value == current)
+                acts.addAction(act)
+
+                def pick(_=False, f=field, v=value):
+                    setattr(settings, f, v)
+                    settings.save()
+                act.triggered.connect(pick)
+
+        group("Glow smoothing", "stack_smoothing",
+              [("off — trust every pixel", "off"),
+               ("normal", "normal"),
+               ("strong — diffuse more glow", "strong")])
+        group("Seam feather", "stack_feather",
+              [("subtle (1 px)", 1.0), ("normal (2 px)", 2.0),
+               ("wide (4 px)", 4.0)])
+        group("Output", "stack_output",
+              [("raw bayer DNG (small)", "bayer"),
+               ("linear RGB DNG (3× size)", "linear")])
+        self.options.setMenu(menu)
 
     def set_merging(self, done: int | None, total: int | None,
                     message: str = "") -> None:

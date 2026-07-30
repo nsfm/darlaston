@@ -27,6 +27,15 @@ itself, so: pool small (accurate but speckled), then let each pixel take the
 weighted median depth of its luma-similar neighbours, votes weighted by their
 own sharpness evidence. On the synthetic halo case this took the band from
 54%% to 3%% misassigned and the depth boundary from +-11.5 px to +-0.9.
+
+Two further measured stages (see tools/stack_bench.py, where every one of
+these earns its place): a log-parabolic fit through the winner's z-neighbours
+makes depth *continuous* -- integer depth costs ~0.29 RMSE on a continuously
+sloping surface, sub-slice depth measures ~0.10 -- and push-pull diffusion
+re-interpolates pixels whose winning slice has no fine-scale energy, which
+is what removes the terracing Nate reported in glow aprons: a defocused
+edge's rings have gradients (they fool Tenengrad confidence) but no fine
+detail (they cannot fool a barely-pooled Laplacian).
 """
 from __future__ import annotations
 
@@ -57,10 +66,18 @@ POOL_SIGMA = 1.5
 REFINE_RADIUS = 8
 REFINE_BINS = 8
 REFINE_RANGE = 0.15
-#: Feather of the blend at depth boundaries, half-res px: the winning
-#: slice's one-hot mask is blurred this much, so seams cross-fade instead
-#: of stepping.
+#: Feather of the blend at depth boundaries, half-res px: each slice's
+#: territory mask is blurred this much, so seams cross-fade instead of
+#: stepping.
 FEATHER_SIGMA = 2.0
+#: Diffusion gate: fine-scale (Laplacian) energy of the winning slice,
+#: as a smoothstep between these fractions of its own 90th percentile.
+#: Placed by measurement on the terrace scene: misassigned glow pixels sit
+#: at ~0.01-0.09, genuine focused texture at ~0.16+. Tenengrad confidence
+#: cannot make this cut -- the misassigned pixels measure *more* confident,
+#: which is exactly why the terraces existed.
+DIFFUSE_LO = 0.10
+DIFFUSE_HI = 0.35
 
 
 def _luma_half(raw: np.ndarray) -> np.ndarray:
@@ -69,10 +86,19 @@ def _luma_half(raw: np.ndarray) -> np.ndarray:
 
 
 def _sharpness(luma: np.ndarray) -> np.ndarray:
+    """Pooled Tenengrad, Weber-normalised by local mean intensity.
+
+    The normalisation is measured, not decorative (tools/stack_bench.py:
+    glow-band composite error 100 -> 66): gradient magnitude scales with
+    absolute brightness, so a bright smooth glow outvotes dim in-focus
+    texture. Relative contrast does not. (Sum-modified-Laplacian, the
+    literature's favourite, measured *worse* here -- twice as much glow-band
+    error -- so Tenengrad stays.)
+    """
     gx = cv2.Sobel(luma, cv2.CV_32F, 1, 0)
     gy = cv2.Sobel(luma, cv2.CV_32F, 0, 1)
-    mag = gx * gx + gy * gy
-    return cv2.GaussianBlur(mag, (0, 0), POOL_SIGMA)
+    mag = cv2.GaussianBlur(gx * gx + gy * gy, (0, 0), POOL_SIGMA)
+    return mag / (cv2.boxFilter(luma, -1, (15, 15)) + 1.0)
 
 
 def _refine_depth(depth: np.ndarray, guide: np.ndarray,
@@ -126,6 +152,107 @@ def _refine_depth(depth: np.ndarray, guide: np.ndarray,
     return out
 
 
+def _push_pull(depth: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    """Fill low-weight regions by pyramid diffusion from high-weight ones.
+
+    Confident pixels keep their depth; unconfident ones take a smooth
+    interpolation of the nearest confident neighbourhood. No luma is
+    involved, which is the point: the glow's own ring structure cannot
+    terrace what never consults it.
+    """
+    levels = []
+    dw = (depth * weight).astype(np.float32)
+    w = weight.astype(np.float32)
+    while min(w.shape) > 4:
+        levels.append((dw, w))
+        dw, w = cv2.pyrDown(dw), cv2.pyrDown(w)
+    filled = dw / np.maximum(w, 1e-9)
+    for dw, w in reversed(levels):
+        filled = cv2.pyrUp(filled, dstsize=(w.shape[1], w.shape[0]))
+        alpha = np.clip(w, 0.0, 1.0)
+        filled = alpha * (dw / np.maximum(w, 1e-9)) + (1 - alpha) * filled
+    return filled
+
+
+#: Diffusion presets for the smoothing knob. "off" trusts the refined
+#: depth everywhere; "strong" pushes more borderline pixels into the
+#: interpolation (measured fine at (0.15, 0.45); (0.2, 0.6) collapses,
+#: which is why there is no "extreme").
+SMOOTHING = {
+    "off": None,
+    "normal": (DIFFUSE_LO, DIFFUSE_HI),
+    "strong": (0.15, 0.45),
+}
+
+
+def _depth_map(lumas: np.ndarray, progress=None, total: int = 0,
+               diffuse: tuple[float, float] | None = (DIFFUSE_LO,
+                                                      DIFFUSE_HI)) -> np.ndarray:
+    """Aligned half-res lumas (n, h2, w2) -> continuous depth map (float32).
+
+    Four measured stages, each earning its place on tools/stack_bench.py:
+    small-pooled Tenengrad argmax (accurate, speckled); joint-bilateral
+    weighted-median refinement (halo); log-parabolic sub-slice interpolation
+    through the winner's z-neighbours (quantisation -- integer depth costs
+    ~0.29 RMSE on a continuous surface, this measures ~0.10-0.13); and
+    push-pull diffusion over pixels whose winning slice has no fine-scale
+    energy (terracing -- defocused glow rings have gradients but no fine
+    detail, so they are interpolated over instead of believed).
+    """
+    n = len(lumas)
+    h2, w2 = lumas[0].shape
+    depth = np.zeros((h2, w2), np.uint8)
+    conf = np.full((h2, w2), -1.0, np.float32)
+    left = np.full((h2, w2), -1.0, np.float32)     # field at winner - 1
+    right = np.full((h2, w2), -1.0, np.float32)    # field at winner + 1
+    prev = None
+    for i in range(n):
+        field = _sharpness(lumas[i])
+        better = field > conf
+        depth[better] = i
+        left[better] = prev[better] if prev is not None else -1.0
+        right[better] = -1.0
+        if i > 0:
+            landed = (depth == i - 1) & ~better
+            right[landed] = field[landed]
+        np.maximum(conf, field, out=conf)
+        prev = field
+        if progress:
+            progress("measuring", i + 1, total or n)
+
+    raw = depth.copy()
+    guide = np.take_along_axis(lumas, depth[None].astype(np.int64), 0)[0]
+    depth = _refine_depth(depth, guide, conf)
+    depth = cv2.medianBlur(depth, DEPTH_MEDIAN)
+
+    # Sub-slice offset where the refinement kept the argmax winner --
+    # elsewhere the fields describe a peak the refinement rejected.
+    l0 = np.log(conf + 1e-9)
+    ll = np.log(np.maximum(left, 0) + 1e-9)
+    lr = np.log(np.maximum(right, 0) + 1e-9)
+    denom = ll - 2 * l0 + lr
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dz = 0.5 * (ll - lr) / denom
+    ok = ((depth == raw) & (left >= 0) & (right >= 0)
+          & (denom < -1e-9) & (raw > 0) & (raw < n - 1))
+    out = depth.astype(np.float32) + np.where(
+        ok, np.clip(np.nan_to_num(dz), -0.5, 0.5), 0.0).astype(np.float32)
+
+    if diffuse is None:
+        return out
+
+    # Fine-scale energy of the slice the *refined* depth actually selects
+    # (measured: gathering at the raw argmax instead costs 8.5% -> 14.2%
+    # wrong in the glow band). Glow and bare glass diffuse; texture holds.
+    lo, hi = diffuse
+    win = np.take_along_axis(lumas, depth[None].astype(np.int64), 0)[0]
+    lap = cv2.Laplacian(win, cv2.CV_32F, ksize=3)
+    fine = cv2.GaussianBlur(lap * lap, (0, 0), 1.0)
+    t = fine / (np.percentile(fine, 90) + 1e-9)
+    t = np.clip((t - lo) / (hi - lo), 0.0, 1.0)
+    return _push_pull(out, t * t * (3 - 2 * t))
+
+
 def _register(lumas: list[np.ndarray]) -> list[tuple[float, float]]:
     """Cumulative shift of each slice relative to the first, half-res px."""
     shifts = [(0.0, 0.0)]
@@ -134,7 +261,12 @@ def _register(lumas: list[np.ndarray]) -> list[tuple[float, float]]:
         if hann is None:
             hann = cv2.createHanningWindow((a.shape[1], a.shape[0]),
                                            cv2.CV_32F)
-        (dx, dy), response = cv2.phaseCorrelate(a, b, hann)
+        # OpenCV 5's phaseCorrelate applies the window to its inputs IN
+        # PLACE. Without the copies, middle slices got windowed twice (once
+        # as `a`, once as `b`) and end slices once, poisoning every
+        # across-z comparison downstream -- found when the terrace scene
+        # measured 6.4% wrong through the bench and 70% through merge().
+        (dx, dy), response = cv2.phaseCorrelate(a.copy(), b.copy(), hann)
         ok = (response > 0.03 and abs(dx) < MAX_BREATHING
               and abs(dy) < MAX_BREATHING)
         last = shifts[-1]
@@ -147,8 +279,9 @@ def _register(lumas: list[np.ndarray]) -> list[tuple[float, float]]:
     return shifts
 
 
-def merge(directory: Path | str, progress=None,
-          output: str = "bayer") -> tuple[Path, dict]:
+def merge(directory: Path | str, progress=None, output: str = "bayer",
+          smoothing: str = "normal",
+          feather: float = FEATHER_SIGMA) -> tuple[Path, dict]:
     """The whole run: load, align, map depth, blend, write. (path, report).
 
     `output` is "bayer" or "linear", and bayer is the default because of an
@@ -177,48 +310,40 @@ def merge(directory: Path | str, progress=None,
 
     shifts = _register(lumas)
 
-    # Sharpness on *aligned* lumas, so the depth map and the pixels it
-    # selects agree about where everything is. A running argmax keeps only
-    # three half-res planes -- winner index, winner's sharpness, winner's
-    # luma -- instead of the whole field stack.
+    # Align the lumas in place, then hand the stack to the depth pipeline.
+    # tools/stack_bench.py drives the same function on synthetic scenes, so
+    # what is measured there is what runs here.
     h2, w2 = lumas[0].shape
-    depth = np.zeros((h2, w2), np.uint8)
-    conf = np.full((h2, w2), -1.0, np.float32)
-    guide = np.zeros((h2, w2), np.float32)
+    aligned = np.empty((n, h2, w2), np.float32)
     for i, (luma, (sx, sy)) in enumerate(zip(lumas, shifts)):
         if abs(sx) > 0.01 or abs(sy) > 0.01:
             m = np.float32([[1, 0, -sx], [0, 1, -sy]])
             luma = cv2.warpAffine(luma, m, (w2, h2),
                                   flags=cv2.INTER_LINEAR,
                                   borderMode=cv2.BORDER_REPLICATE)
-        field = _sharpness(luma)
-        better = field > conf
-        depth[better] = i
-        guide[better] = luma[better]
-        np.maximum(conf, field, out=conf)
-        if progress:
-            progress("measuring", i + 1, n)
+        aligned[i] = luma
     del lumas
-
-    depth = _refine_depth(depth, guide, conf)
-    depth = cv2.medianBlur(depth, DEPTH_MEDIAN)
-    del guide, conf
+    depth = _depth_map(aligned, progress=progress, total=n,
+                       diffuse=SMOOTHING.get(smoothing,
+                                             (DIFFUSE_LO, DIFFUSE_HI)))
+    del aligned
 
     # Blend at full resolution, one slice at a time: demosaic, align, add.
-    # Weights follow the *refined* depth -- a blurred one-hot of each
-    # slice's territory -- not the raw sharpness fields, or every halo the
-    # refinement removed would sneak straight back in through the blend.
-    # Blurring a partition of unity keeps it one, so no normalising pass.
+    # Weights follow the *refined* depth -- a hat function of the
+    # continuous depth around each slice's index, so a pixel at depth 3.4
+    # is 60% slice 3 and 40% slice 4 -- not the raw sharpness fields, or
+    # every halo the refinement removed would sneak straight back in
+    # through the blend. Hats over a real-valued map partition unity, and
+    # blurring a partition of unity keeps it one: no normalising pass.
     h, w = raws[0].shape
     acc = np.zeros((h, w, 3), np.float32)
     for i, (raw, (sx, sy)) in enumerate(zip(raws, shifts)):
-        won = (depth == i)
-        if not won.any():
+        hat = np.clip(1.0 - np.abs(depth - i), 0.0, 1.0)
+        if not (hat > 1e-4).any():
             if progress:
                 progress("blending", i + 1, n)
             continue
-        wgt = cv2.GaussianBlur(won.astype(np.float32), (0, 0),
-                               FEATHER_SIGMA)
+        wgt = cv2.GaussianBlur(hat, (0, 0), feather) if feather > 0 else hat
         rgb = cv2.cvtColor(raw, cv2.COLOR_BayerGR2BGR).astype(np.float32)
         if abs(sx) > 0.01 or abs(sy) > 0.01:
             m = np.float32([[1, 0, -sx * 2], [0, 1, -sy * 2]])
@@ -285,7 +410,7 @@ def merge(directory: Path | str, progress=None,
     # depth-consuming tool expects -- this is what a stereo pair or a
     # wigglegram will be synthesised from. depth_view.png is the same map
     # dressed for looking at, and stays because it earned it.
-    dmap = (depth.astype(np.float32) / max(n - 1, 1) * 255).astype(np.uint8)
+    dmap = np.clip(depth / max(n - 1, 1) * 255, 0, 255).astype(np.uint8)
     cv2.imwrite(str(session.dir / "depth.png"), dmap)
     cv2.imwrite(str(session.dir / "depth_view.png"),
                 cv2.applyColorMap(dmap, cv2.COLORMAP_VIRIDIS))
@@ -296,7 +421,7 @@ def merge(directory: Path | str, progress=None,
         "width": w, "height": h,
         "max_breathing_px": round(max(abs(v) for s in shifts for v in s) * 2,
                                   1),
-        "depth_levels": int(len(np.unique(depth))),
+        "depth_levels": int(len(np.unique(np.round(depth)))),
     }
     return written, report
 

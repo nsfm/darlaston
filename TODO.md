@@ -196,11 +196,57 @@ Ordered within each section by how much it would change what gets built.
       ask too. Running argmax replaced the field stack (~360 MB less on 20
       slices); merge is 41 s for 20 slices. Regression test holds the
       synthetic halo band under 10%.
+- [x] ~~**Terracing in glow aprons (one ridge per exposure).**~~ Nate's field
+      report, root-caused as integer depth quantisation: in a glow band the
+      winner at each radius is whichever slice's defocused edge-ring lands
+      there — contour lines of the argmax. Fixed by two measured stages on
+      the new benchmark (`tools/stack_bench.py`, five synthetic scenes with
+      ground truth): log-parabolic sub-slice depth (slope RMSE 0.298 → 0.099
+      against the 0.289 integer floor) and push-pull diffusion gated on
+      *fine-scale* Laplacian energy of the winning slice (glow rings have
+      gradients but no fine detail; Tenengrad confidence measured the wrong
+      pixels as MORE confident). Terrace scene: 21.4% → 6.4% wrong. Weber
+      normalisation (÷ local mean) of the focus measure: composite error in
+      the band 100 → 66. Research sweep (Zerene/Helicon docs, SFF
+      literature, four open-source stackers read at source) confirmed the
+      architecture — continuous depth + two-frame lerp + vote-gate-then-
+      inpaint is what every shipped solution converges on — and the bench
+      *refuted* four plausible ideas from the same sweep: guided-filter
+      pooling, SML as primary measure, band-passed luma, and Guo's
+      whole-curve Gaussian fit (worse in-pipeline on 4 of 5 scenes).
+- [x] ~~**OpenCV 5 phaseCorrelate mutates its inputs.**~~ Found because the
+      terrace scene measured 6.4% wrong through the bench and 70% through
+      merge(): cv2 5.0's phaseCorrelate applies the Hann window to its
+      input arrays IN PLACE. Three real call sites shielded with copies:
+      stack registration (middle slices were windowed twice, ends once),
+      the live stage tracker (every frame correlated a twice-windowed past
+      against a once-windowed present — a standing tracking bias), and
+      mosaic registration (at small overlaps the strips were *views* into
+      tile lumas reused for other neighbours). Regression test pins it.
+- [x] ~~**Stacking knobs.**~~ Gear menu in the assembly window, bound to
+      persisted settings: glow smoothing (off/normal/strong — presets over
+      the diffusion gate, "extreme" deliberately absent because (0.2, 0.6)
+      measured catastrophic), seam feather (1/2/4 px), output
+      (bayer/linear). Defaults are the bench winners.
 - [ ] **Stack polish, next pass.** Respect `keep_slices` after a verified
       merge; a `metric` per slice is recorded as 0.0 (thread the real value
       from signals); coverage-complete could suggest finishing; real-glass
       trigger thresholds need a session on the Zeiss — the floor
       self-calibrates but has never met real hand tremor.
+- [ ] **Measured candidates in waiting** (from the research sweep, each goes
+      through `tools/stack_bench.py` before shipping): CombineZP's ramp
+      subtraction (monotone-vs-peaked profile test — the only shipped
+      glow-specific detector found anywhere); EDF-style reassignment (snap
+      blended pixels to the nearest real slice value); GFF base/detail
+      split (smooth weights for low frequencies, tight for detail —
+      targets low-frequency residual halo); per-slice photometric gain
+      normalisation (Zerene does it by default; terracing's third
+      mechanism); 16-bit depth.png export (8-bit quantises the now-
+      continuous map); a retouch brush ("take this region from slice N" —
+      both commercial vendors' answer to the physically unfixable halo,
+      cheap for us since aligned slices + depth map already exist);
+      capture-side step-size hint from NA/magnification (3-4 steps per
+      DoF is the community rule and we know both numbers).
 - [ ] **The dream composition: stacked mosaics.** Both halves now exist and
       share the same session shape. A mosaic tile becomes a stack folder,
       tiles close as you leave them (stack merges in the background), and

@@ -205,6 +205,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.assembly.discard_requested.connect(self._discard_stack)
         self.stack_window = FloatingPanel("stack — assembling", self.view)
         self.assembly.close_requested.connect(self.stack_window.hide)
+        self.assembly.configure(self.settings)
         self.stack_window.set_relative(0.55, 0.55)
         _fill(self.stack_window, self.assembly)
         self.stack_window.hide()
@@ -855,11 +856,15 @@ class MainWindow(QtWidgets.QMainWindow):
                                     slide=self.subject.slide_note)
 
     def _run_stack_merge(self, directory) -> None:
+        opts = dict(output=self.settings.stack_output,
+                    smoothing=self.settings.stack_smoothing,
+                    feather=self.settings.stack_feather)
+
         def work():
             from ..process.stack import merge
             try:
                 path, report = merge(
-                    directory,
+                    directory, **opts,
                     progress=lambda stage, i, n: self.bridge.stack_merge.emit(
                         ("progress", stage, i, n)))
                 self.bridge.stack_merge.emit(("done", (

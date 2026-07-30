@@ -472,7 +472,12 @@ class LivePipeline:
             self._hann = cv2.createHanningWindow(
                 (small.shape[1], small.shape[0]), cv2.CV_32F)
             return None, 0.0
-        (dx, dy), response = cv2.phaseCorrelate(prev, small, self._hann)
+        # OpenCV 5's phaseCorrelate windows its inputs IN PLACE. `small` is
+        # stored above as the next frame's `prev`, so without the copies
+        # every frame correlated a twice-windowed past against a
+        # once-windowed present -- a standing bias in the stage tracking.
+        (dx, dy), response = cv2.phaseCorrelate(prev.copy(), small.copy(),
+                                                self._hann)
         sx = full_shape[1] / small.shape[1]
         sy = full_shape[0] / small.shape[0]
         return (dx * sx, dy * sy), float(response)

@@ -355,3 +355,48 @@ def test_merge_does_not_halo_past_a_bright_edge(tmp_path):
     rim = float((~near)[rim_band].mean())
     assert halo < 0.10, f"halo band {halo:.1%} taken from the wrong slice"
     assert rim < 0.10, f"subject rim {rim:.1%} eroded by the background"
+
+def test_merge_does_not_terrace_in_glow(tmp_path):
+    """Nate's field report as a regression test: stepped ridges in the glow
+    apron, one per exposure -- integer depth quantisation made visible by
+    the defocused edge's rings. The terrace scene from tools/stack_bench.py
+    through the real merge; the glow band's depth must stay close to the
+    glass it actually is, not step through the slices."""
+    from tools.stack_bench import scene_terrace, WHITE
+    from darlaston.process.stack import merge
+
+    slices, gt, regions = scene_terrace()
+    n = len(slices)
+    session = StackSession(tmp_path, subject="terrace")
+    for i, s in enumerate(slices):
+        raw = np.clip(s, 0, WHITE).astype(np.uint16)
+        p = tmp_path / f"c{i}.dng"
+        dng.write_bayer_streamed(
+            p, lambda st, c: raw[st:st + c], raw.shape[0], raw.shape[1],
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            bits=12, white=4095)
+        session.adopt(p, metric=0.5)
+
+    merge(session.dir, output="bayer")
+    dmap = cv2.imread(str(session.dir / "depth.png"), cv2.IMREAD_GRAYSCALE)
+    depth = dmap.astype(np.float32) / 255 * (n - 1)
+
+    band = regions["glow band"]
+    err = np.abs(depth[band] - gt[band])
+    wrong = float((err > 0.5).mean())
+    assert wrong < 0.12, \
+        f"{wrong:.1%} of the glow band left the glass depth — terracing"
+
+def test_register_does_not_mutate_lumas():
+    """OpenCV 5's phaseCorrelate applies its window to the *inputs*, in
+    place. _register must shield the lumas -- they are the depth pipeline's
+    input, and windowed-in-place lumas cost the terrace scene 6.4% -> 70%
+    wrong when this regressed silently."""
+    from darlaston.process.stack import _register
+    rng = np.random.default_rng(3)
+    lumas = [rng.uniform(100, 3000, (240, 320)).astype(np.float32)
+             for _ in range(4)]
+    before = [l.copy() for l in lumas]
+    _register(lumas)
+    for l, b in zip(lumas, before):
+        assert np.array_equal(l, b), "registration mutated a luma"

@@ -270,7 +270,10 @@ def _refine_pair(a: np.ndarray, b: np.ndarray,
         sb = cv2.resize(sb, (aw // down, ah // down),
                         interpolation=cv2.INTER_AREA)
     hann = cv2.createHanningWindow((sa.shape[1], sa.shape[0]), cv2.CV_32F)
-    (rx, ry), response = cv2.phaseCorrelate(sa, sb, hann)
+    # Copies, not views: OpenCV 5's phaseCorrelate windows its inputs IN
+    # PLACE, and at down == 1 these are views into the tile lumas -- which
+    # are reused to register the tile's other neighbours.
+    (rx, ry), response = cv2.phaseCorrelate(sa.copy(), sb.copy(), hann)
 
     limit = MAX_RESIDUAL * min(sa.shape)
     if abs(rx) > limit or abs(ry) > limit or response < MIN_RESPONSE:

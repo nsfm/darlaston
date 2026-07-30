@@ -89,6 +89,13 @@ class Settings:
     #: a slide photograph is published, which for this field is often.
     artist: str = ""
     copyright: str = ""
+    #: Stack-merge knobs, surfaced in the assembly window's options menu.
+    #: Defaults are the measured winners on tools/stack_bench.py; the knobs
+    #: exist because the right smoothing is partly a statement about the
+    #: subject, and that judgement belongs to the photographer.
+    stack_output: str = "bayer"      # bayer | linear (RGB, ~3x the size)
+    stack_smoothing: str = "normal"  # off | normal | strong (glow diffusion)
+    stack_feather: float = 2.0       # blend feather at depth seams, px
 
     def __post_init__(self) -> None:
         if not self.capture_root:
