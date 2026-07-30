@@ -198,11 +198,21 @@ Ordered within each section by how much it would change what gets built.
       crowded into the top third of the scale. Obvious the moment a focus
       pull filled the frame with that background. Both ends are set now,
       which lifted every parallax and aperture render at once.
-- [ ] **Spin it, and print it.** Depth plus texture is a heightfield:
-      an orbiting turntable render for sharing, and a `.ply`/`.obj` export
-      for anyone who wants to hold a diatom. "I 3D printed this from my
-      own microscope" is the loudest sentence available to this project.
-      Cheap — both halves already exist and the mesh is a grid.
+- [x] ~~**Spin it, and print it.**~~ `process/mesh.py`: the heightfield
+      as binary PLY with per-vertex colour, and `turntable.webm`, the
+      surface lit from an orbiting light. Verified watertight — every
+      edge used exactly twice across all 217k triangles — because a
+      slicer refuses an open sheet, so the border is skirted down to a
+      flat base and capped. The light orbits rather than the camera:
+      rotating the object needs a real renderer and a depth buffer,
+      moving the light needs a dot product, reads as the same "solid
+      thing" cue and cannot tear at silhouettes because there are none.
+      Two limits are written into the PLY's own header rather than left
+      for someone to discover: a focus stack sees only the surface
+      facing the objective, so this is a relief of the subject and not a
+      model of it; and z is an exaggeration, because depth is measured
+      in slices and nothing in the capture path measures fine-focus
+      travel in microns.
 - [ ] **The plate export.** Darlaston and Möller *arranged* diatoms —
       patterns, rosettes, taxonomic plates. Lay N captures into a labelled
       plate with scale bars computed from real optics (magnification,
@@ -211,8 +221,18 @@ Ordered within each section by how much it would change what gets built.
       µm coordinates, which for a catalogued mount is a genuinely archival
       artifact. The soul-of-the-project item: the app named after an
       arranger, making arrangements.
-- [ ] **Autostereogram.** Magic Eye, from the same depth map. Completely
-      silly, nobody has done it with a diatom, an afternoon at most.
+- [x] ~~**Autostereogram.**~~ Thimbleby's algorithm in
+      `wiggle.autostereogram`, filled with a smooth tileable texture
+      rather than random dots — dots do encode the surface but give the
+      eye nothing to lock onto while diverging. Two bugs found by
+      looking at it: the separation used a constant denominator instead
+      of `(2 - mu*Z)`, swinging by ~100 px so nothing could fuse; and
+      the links point left while the render walked right-to-left, so
+      every pixel copied from a neighbour that did not exist yet and the
+      output was uninitialised memory that looked convincingly like
+      random-dot noise. Test measures the pattern's repeat period in two
+      regions and requires the nearer one to repeat tighter.
+
 - [ ] **Down-then-back-up stacks.** Nate racks down through the subject
       and back up, so slice order revisits planes: the merge is untouched
       (argmax picks the sharpest wherever it lives) but slice index stops

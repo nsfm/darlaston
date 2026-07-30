@@ -526,3 +526,41 @@ def test_refocus_moves_the_sharp_plane(tmp_path):
     far = refocus(img, depth, 1.0, aperture=10.0)
     assert sharpness(near, "left") > 5 * sharpness(near, "right")
     assert sharpness(far, "right") > 5 * sharpness(far, "left")
+
+def test_autostereogram_encodes_depth_in_its_period(tmp_path):
+    """A Magic Eye is only real if the pattern's repeat *period* tracks
+    the depth: nearer surfaces must repeat at a shorter interval. Two
+    flat halves at different depths, and the measured period of each
+    half must differ in the right direction."""
+    from darlaston.process.wiggle import autostereogram
+
+    H, W = 300, 900
+    rng = np.random.default_rng(2)
+    raw = np.clip(rng.normal(1500, 200, (H, W)), 0, 4095).astype(np.uint16)
+    dng.write_bayer_streamed(
+        tmp_path / "stacked.dng", lambda s, c: raw[s:s + c], H, W,
+        preview=dng.make_preview(raw, bayer=True, white=4095),
+        bits=12, white=4095)
+    depth = np.zeros((H, W), np.uint8)
+    depth[:, W // 2:] = 255                    # right half at the far end
+    cv2.imwrite(str(tmp_path / "depth.png"), depth)
+
+    path = autostereogram(tmp_path, eye=120, mu=0.5)
+    img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+    def period(strip):
+        """Shift with the best self-similarity, in [30, 90) px."""
+        best, at = -1e18, 0
+        a = strip - strip.mean()
+        for s in range(30, 90):
+            b = np.roll(a, -s, axis=1)[:, :-s]
+            score = float((a[:, :-s] * b).mean())
+            if score > best:
+                best, at = score, s
+        return at
+
+    h0, h1 = img.shape[0] // 4, 3 * img.shape[0] // 4
+    near = period(img[h0:h1, 200:440])          # depth 0 -> nearer
+    far = period(img[h0:h1, 640:880])           # depth 255 -> further
+    assert near < far, \
+        f"near half must repeat tighter: near {near} px, far {far} px"

@@ -1030,16 +1030,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def work():
             from ..process.aperture import focus_pull
+            from ..process.mesh import export_ply, turntable
             from ..process.relief import dic
-            from ..process.wiggle import stereo, wigglegram
+            from ..process.wiggle import autostereogram, stereo, wigglegram
             try:
-                wob = wigglegram(directory, invert=invert)
+                # Ordered by how long each takes, so the quick wins land
+                # while the operator is still looking at the folder.
+                wigglegram(directory, invert=invert)
                 stereo(directory, invert=invert)
                 dic(directory, invert=invert)
+                export_ply(directory, invert=invert)
+                autostereogram(directory, invert=invert)
                 focus_pull(directory, invert=invert)
+                turntable(directory, invert=invert)
                 self.bridge.wiggle.emit(
-                    (f"{wob.name}, focus pull, anaglyph, stereo pair and "
-                     f"DIC render → {directory.name}", True))
+                    ("wobble, focus pull, turntable, stereo pair, anaglyph, "
+                     f"autostereogram, DIC and mesh → {directory.name}",
+                     True))
             except Exception as exc:
                 self.bridge.wiggle.emit((f"wigglegram failed — {exc}",
                                          False))

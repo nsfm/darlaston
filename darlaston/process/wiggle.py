@@ -222,3 +222,88 @@ if __name__ == "__main__":
     d = sys.argv[1]
     print(wigglegram(d))
     print(*stereo(d))
+
+
+#: Eye separation in output pixels for the autostereogram. 260 at a
+#: normal viewing distance is about right for most people; too wide and
+#: the eyes cannot diverge enough to fuse it.
+EYE_PX = 260
+#: How much of the separation the depth is allowed to modulate. The
+#: classic value; higher makes the relief deeper and the fusion harder.
+DEPTH_MU = 0.32
+#: Autostereogram output width. The pattern must repeat several times
+#: across the frame for the effect to work at all.
+SIRDS_W = 1400
+
+
+def autostereogram(directory: Path | str, invert: bool = False,
+                   eye: int = EYE_PX, mu: float = DEPTH_MU) -> Path:
+    """A Magic Eye of the subject, as `autostereogram.png`.
+
+    Thimbleby's algorithm: walk each row left to right, and for every
+    pixel link it to the one an eye-separation away -- a separation that
+    *narrows* where the surface is nearer -- then paint linked pixels the
+    same colour. The relief appears when the eyes diverge onto the
+    repeating pattern, because the links encode it and nothing else does.
+
+    Coloured noise rather than dots: a random field of the subject's own
+    palette fuses more comfortably than black-and-white speckle, and it
+    hides the pattern's periodicity better.
+    """
+    directory = Path(directory)
+    img, depth = load_pair(directory, width=SIRDS_W, invert=invert)
+    h, w = depth.shape
+    # Depth in [0, 1], near = 1, so nearer surfaces get a tighter
+    # separation and pop toward the viewer.
+    z = np.clip((depth - depth.min()) /
+                max(float(np.ptp(depth)), 1e-6), 0, 1).astype(np.float32)
+
+    rng = np.random.default_rng(0)
+    # A smooth tileable texture rather than per-pixel noise. Random dots
+    # are the classic fill and they do encode the surface, but the eye
+    # has nothing to lock onto while diverging, so they are miserable to
+    # fuse; blobs a few pixels across give it a handle. Tinted from the
+    # subject's own palette so the fused relief looks like a specimen
+    # rather than like television static.
+    tile_w = max(8, eye // 2)
+    tex = rng.normal(size=(h, tile_w, 3)).astype(np.float32)
+    tex = cv2.GaussianBlur(tex, (0, 0), 2.2)
+    tex -= tex.min()
+    tex /= max(float(tex.max()), 1e-6)
+    palette = img.reshape(-1, 3)[rng.integers(0, h * w, 512)].astype(
+        np.float32)
+    lo, hi = np.percentile(palette, 10, axis=0), np.percentile(
+        palette, 90, axis=0)
+    tex = np.clip(lo + (hi - lo) * tex, 0, 255).astype(np.uint8)
+    out = np.empty((h, w, 3), np.uint8)
+
+    for y in range(h):
+        same = np.arange(w, dtype=np.int32)          # pixel -> its twin
+        # Thimbleby's separation: eye * (1 - mu*Z) / (2 - mu*Z). The
+        # denominator matters -- dividing by a constant instead swings
+        # the separation by a hundred pixels and nothing fuses.
+        sep = np.round(eye * (1.0 - mu * z[y])
+                       / (2.0 - mu * z[y])).astype(np.int32)
+        for x in range(w):
+            s = sep[x]
+            left, right = x - (s + 1) // 2, x + s // 2
+            if 0 <= left and right < w:
+                # Walk any existing chain to its root before linking, or
+                # long-range constraints get lost and the relief tears.
+                k = same[left]
+                while k != same[k]:
+                    k = same[k]
+                same[right] = k
+        # Left to right, because the links point left: rendering the
+        # other way reads row[same[x]] before that pixel exists, which
+        # filled the picture with uninitialised memory and looked
+        # exactly like the random-dot fill it was supposed to replace.
+        row = np.empty((w, 3), np.uint8)
+        for x in range(w):
+            row[x] = (tex[y, x % tile_w] if same[x] == x
+                      else row[same[x]])
+        out[y] = row
+
+    target = directory / "autostereogram.png"
+    cv2.imwrite(str(target), out)
+    return target

@@ -60,8 +60,9 @@ class StackAssembly(QtWidgets.QWidget):
         self.wiggle_btn = QtWidgets.QPushButton("Render depth")
         self.wiggle_btn.setToolTip(
             "Everything the depth map can make: a looping wobble, a focus\n"
-            "pull, a red/cyan anaglyph, a crossed-eye stereo pair and a\n"
-            "DIC-style relief image, written beside the stack.")
+            "pull, a lit turntable, a stereo pair, an anaglyph, a Magic\n"
+            "Eye, a Darlaston Inferred Contrast relief and a printable\n"
+            "mesh — all written beside the stack.")
         self.wiggle_btn.hide()
         self.options = QtWidgets.QToolButton()
         self.options.setText("⚙")
