@@ -9,7 +9,34 @@ Built for large diatom arrangements shot on an ordinary microscope with a
 ToupTek camera, brightfield, darkfield and phase, where the goal is a stitched,
 focus-stacked photograph rather than a measurement.
 
-**Status: planned, not yet implemented.**
+**Status: working, and used on real glass.** Capture, calibration, mosaic
+stitching, focus stacking and the composition of the two all run end to end
+on a ToupTek E3ISPM20000KPA and a 1960s Zeiss Universal.
+
+## What it does
+
+- **Captures** 12-bit raw to DNG through its own TIFF writer — no raw library
+  — with 76 EXIF tags describing the optics it was taken through.
+- **Tracks the stage from the image itself.** No encoders: consecutive preview
+  frames are phase-correlated and the offsets integrate into a position, which
+  builds a slide map you can pin and navigate by.
+- **Stitches mosaics** with *position-constrained* registration. It never
+  searches, because correlation confidence cannot detect a wrong match; it only
+  refines within a window around where the stage said it went.
+- **Stacks focus** without touching the computer. Rack the fine focus, pause,
+  rack again: the trigger watches the live sharpness field and fires the
+  shutter itself.
+- **Composes the two.** With both modes on, each field's rack-pauses build that
+  tile's own stack, and *sliding to the next field seals it* — the merge runs in
+  the background while you are already racking the next one. Single shots and
+  stacks mix freely in one mosaic.
+- **Renders the depth map**, which every stack keeps: a wigglegram, a focus
+  pull, a lit turntable, a stereo pair, a red/cyan anaglyph, an autostereogram,
+  a printable watertight mesh, and a relief image we call **DIC — Darlaston
+  Inferred Contrast**, which looks like differential interference contrast and
+  is not. (It shades the gradient of measured focus depth. Real DIC responds to
+  refractive index through the whole specimen. The resemblance is real; the
+  physics is not the same, and the name says so on purpose.)
 
 | | |
 |---|---|

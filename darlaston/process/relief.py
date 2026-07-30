@@ -1,4 +1,9 @@
-"""Relief rendering from a stack's depth map: differential contrast, faked.
+"""Darlaston Inferred Contrast: relief rendering from a stack's depth map.
+
+The name is Nate's, and it is load-bearing. These images look like
+differential interference contrast and are not DIC, so calling them
+"DIC" with a different expansion keeps the resemblance and refuses the
+claim -- which is the honest way to publish something this convincing.
 
 Differential interference contrast puts a shear between two sheared copies
 of the wavefront, so the image brightness follows the *gradient of optical
