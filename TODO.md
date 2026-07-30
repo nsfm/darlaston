@@ -164,6 +164,45 @@ Ordered within each section by how much it would change what gets built.
       started) — default matches Nate's rack direction, invertible in the
       gear menu. Test pins that the two halves of a two-plane scene shift
       oppositely between the stereo eyes.
+- [x] ~~**Fake DIC from brightfield.**~~ `process/relief.py`: light the
+      depth map obliquely and shade it, so depth *gradients* become
+      relief — the same kind of quantity differential interference
+      contrast displays, which on a real stand needs a Wollaston prism, a
+      polariser, an analyser and a strain-free objective. Renders
+      `dic.png` (grey) and `dic_tinted.png` (Nomarski-ish warm/cool bias)
+      beside the stack, and rides along with the wigglegram button.
+      Depth alone renders as smooth putty (it cannot resolve finer than a
+      slice) and image texture alone is just an emboss filter, so the
+      surface mixes both; only the ratio matters and 0.07 is where the
+      frustule's form *and* its striae both read, swept against a real
+      13-slice stack. Labelled a render, not a measurement — true DIC
+      responds to refractive index through the whole thickness, this
+      responds to where focus peaked. Test: a depth ridge must light one
+      flank and shadow the other, flat field neutral.
+- [ ] **Synthetic aperture: choose the focal plane after the shot.** The
+      all-in-focus composite plus per-pixel depth is exactly what a light
+      field camera hands you, so blurring by |depth − target| lets the
+      focal plane and the aperture be *chosen in post*. Two artifacts from
+      one machine: a slider that racks focus through a finished still, and
+      a **cinematic focus pull** — a slow shallow-depth drift through the
+      subject, the shot a cinematographer would set up. A photography
+      technique (Lytro, and every rack-focus in film) that no microscopy
+      tool offers. Highest delight per hour on this list.
+- [ ] **Spin it, and print it.** Depth plus texture is a heightfield:
+      an orbiting turntable render for sharing, and a `.ply`/`.obj` export
+      for anyone who wants to hold a diatom. "I 3D printed this from my
+      own microscope" is the loudest sentence available to this project.
+      Cheap — both halves already exist and the mesh is a grid.
+- [ ] **The plate export.** Darlaston and Möller *arranged* diatoms —
+      patterns, rosettes, taxonomic plates. Lay N captures into a labelled
+      plate with scale bars computed from real optics (magnification,
+      relay, pixel pitch — all known) rather than eyeballed. Pairs with
+      turning the slide map into a printable finding aid: pins, thumbnails,
+      µm coordinates, which for a catalogued mount is a genuinely archival
+      artifact. The soul-of-the-project item: the app named after an
+      arranger, making arrangements.
+- [ ] **Autostereogram.** Magic Eye, from the same depth map. Completely
+      silly, nobody has done it with a diatom, an afternoon at most.
 - [ ] **Down-then-back-up stacks.** Nate racks down through the subject
       and back up, so slice order revisits planes: the merge is untouched
       (argmax picks the sharpest wherever it lives) but slice index stops

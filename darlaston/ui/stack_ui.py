@@ -59,9 +59,9 @@ class StackAssembly(QtWidgets.QWidget):
         self.close_btn.hide()
         self.wiggle_btn = QtWidgets.QPushButton("Wigglegram")
         self.wiggle_btn.setToolTip(
-            "Synthesise parallax from the depth map: a looping wobble, a\n"
-            "red/cyan anaglyph, and a crossed-eye stereo pair, written\n"
-            "beside the stack.")
+            "Render the depth map: a looping wobble, a red/cyan anaglyph,\n"
+            "a crossed-eye stereo pair, and a DIC-style relief image,\n"
+            "written beside the stack.")
         self.wiggle_btn.hide()
         self.options = QtWidgets.QToolButton()
         self.options.setText("⚙")

@@ -85,8 +85,8 @@ def _develop(rgb: np.ndarray, white: int) -> np.ndarray:
     return (np.clip(rgb / peak, 0, 1) ** (1 / 2.2) * 255).astype(np.uint8)
 
 
-def _load(directory: Path | str, width: int = WIGGLE_W,
-          invert: bool = False):
+def load_pair(directory: Path | str, width: int = WIGGLE_W,
+              invert: bool = False):
     """(image, signed depth) at output scale, from a stack session dir.
 
     Depth polarity is a convention, not a fact: slice 1 is wherever the
@@ -144,7 +144,7 @@ def wigglegram(directory: Path | str, amplitude: float = AMPLITUDE,
     and previews inline in more chat clients. Same frames either way.
     """
     directory = Path(directory)
-    img, depth = _load(directory, invert=invert)
+    img, depth = load_pair(directory, invert=invert)
     peak = amplitude * img.shape[1]
     seq = []
     for k in range(frames):
@@ -184,7 +184,7 @@ def stereo(directory: Path | str, amplitude: float = AMPLITUDE,
     Full output width: unlike the wobble, a stereo pair rewards zooming.
     """
     directory = Path(directory)
-    img, depth = _load(directory, width=10 ** 9, invert=invert)
+    img, depth = load_pair(directory, width=10 ** 9, invert=invert)
     peak = amplitude * img.shape[1]
     left = _view(img, depth, +peak / 2)
     right = _view(img, depth, -peak / 2)

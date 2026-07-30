@@ -1029,12 +1029,14 @@ class MainWindow(QtWidgets.QMainWindow):
         invert = self.settings.wiggle_invert
 
         def work():
+            from ..process.relief import dic
             from ..process.wiggle import stereo, wigglegram
             try:
                 wob = wigglegram(directory, invert=invert)
                 stereo(directory, invert=invert)
+                dic(directory, invert=invert)
                 self.bridge.wiggle.emit(
-                    (f"{wob.name}, anaglyph and stereo pair → "
+                    (f"{wob.name}, anaglyph, stereo pair and DIC render → "
                      f"{directory.name}", True))
             except Exception as exc:
                 self.bridge.wiggle.emit((f"wigglegram failed — {exc}",

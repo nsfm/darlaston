@@ -470,3 +470,36 @@ def test_wigglegram_parallax_follows_depth(tmp_path):
     assert dx_near * dx_far < 0, \
         f"halves must shift oppositely, got {dx_near:.2f} and {dx_far:.2f}"
     assert abs(dx_near - dx_far) > 2.0, "parallax too small to read"
+
+def test_dic_render_lights_slopes_from_one_side(tmp_path):
+    """The DIC fake, as an assertion: a ramp in depth must render bright
+    on one flank and dark on the other, and a flat field must render as
+    the neutral middle. That asymmetry is what makes it read as relief
+    rather than as an edge filter."""
+    from darlaston.process.relief import dic
+
+    H, W = 400, 600
+    rng = np.random.default_rng(9)
+    raw = np.clip(rng.normal(1600, 60, (H, W)), 0, 4095).astype(np.uint16)
+    dng.write_bayer_streamed(
+        tmp_path / "stacked.dng", lambda s, c: raw[s:s + c], H, W,
+        preview=dng.make_preview(raw, bayer=True, white=4095),
+        bits=12, white=4095)
+    # A single ridge running vertically: up one side, down the other.
+    x = np.arange(W, dtype=np.float32)
+    ridge = np.clip(255 - np.abs(x - W / 2) * (255 / (W / 4)), 0, 255)
+    depth = np.tile(ridge, (H, 1)).astype(np.uint8)
+    cv2.imwrite(str(tmp_path / "depth.png"), depth)
+
+    grey_path, tint_path = dic(tmp_path, azimuth=0.0, detail=0.0)
+    assert grey_path.exists() and tint_path.exists()
+    out = cv2.imread(str(grey_path), cv2.IMREAD_GRAYSCALE).astype(np.float32)
+
+    m = 40
+    rising = float(out[m:-m, W // 4 - 40:W // 4 + 40].mean())
+    falling = float(out[m:-m, 3 * W // 4 - 40:3 * W // 4 + 40].mean())
+    flat = float(out[m:-m, :m].mean())
+    assert (rising - 128) * (falling - 128) < 0, \
+        f"flanks must light oppositely, got {rising:.0f} and {falling:.0f}"
+    assert abs(flat - 128) < 12, f"flat field should be neutral, got {flat:.0f}"
+    assert abs(rising - falling) > 40, "relief too faint to read"
