@@ -32,6 +32,7 @@ class StackAssembly(QtWidgets.QWidget):
     finish_requested = QtCore.Signal()
     discard_requested = QtCore.Signal()
     close_requested = QtCore.Signal()
+    wiggle_requested = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -56,6 +57,12 @@ class StackAssembly(QtWidgets.QWidget):
         self.discard.setToolTip("Delete this stack — slices and all.")
         self.close_btn = QtWidgets.QPushButton("Close")
         self.close_btn.hide()
+        self.wiggle_btn = QtWidgets.QPushButton("Wigglegram")
+        self.wiggle_btn.setToolTip(
+            "Synthesise parallax from the depth map: a looping wobble, a\n"
+            "red/cyan anaglyph, and a crossed-eye stereo pair, written\n"
+            "beside the stack.")
+        self.wiggle_btn.hide()
         self.options = QtWidgets.QToolButton()
         self.options.setText("⚙")
         self.options.setToolTip("Merge options — how the stack becomes "
@@ -64,11 +71,12 @@ class StackAssembly(QtWidgets.QWidget):
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         self.options.setProperty("role", "seg")
         for b in (self.view_toggle, self.finish, self.discard,
-                  self.close_btn):
+                  self.close_btn, self.wiggle_btn):
             b.setProperty("role", "seg")
         self.finish.clicked.connect(self.finish_requested)
         self.discard.clicked.connect(self.discard_requested)
         self.close_btn.clicked.connect(self.close_requested)
+        self.wiggle_btn.clicked.connect(self.wiggle_requested)
         self.view_toggle.toggled.connect(self._on_view)
         # Depth view is the default: watching the shape of the subject fill
         # in is the show, and it is a better teacher of the rack-pause
@@ -93,6 +101,7 @@ class StackAssembly(QtWidgets.QWidget):
         row.addWidget(self.status, 1)
         row.addWidget(self.discard)
         row.addWidget(self.finish)
+        row.addWidget(self.wiggle_btn)
         row.addWidget(self.close_btn)
 
         col = QtWidgets.QVBoxLayout(self)
@@ -149,6 +158,9 @@ class StackAssembly(QtWidgets.QWidget):
         group("Output", "stack_output",
               [("raw bayer DNG (small)", "bayer"),
                ("linear RGB DNG (3× size)", "linear")])
+        group("Wigglegram depth", "wiggle_invert",
+              [("racking down goes deeper", False),
+               ("inverted — my stacks rock backwards", True)])
         self.options.setMenu(menu)
 
     def set_merging(self, done: int | None, total: int | None,
@@ -162,13 +174,16 @@ class StackAssembly(QtWidgets.QWidget):
             self.progress.setValue(done)
         self.status.setText(message)
 
-    def set_finished(self, message: str) -> None:
+    def set_finished(self, message: str, wiggle: bool = False) -> None:
         """The merge is over. The stack's endings have all happened, so the
-        control buttons give way to the only remaining act: closing."""
+        control buttons give way to closing -- and, when the merge
+        succeeded, to the depth map's party trick."""
         self.progress.hide()
         self.status.setText(message)
         self.finish.hide()
         self.discard.hide()
+        self.wiggle_btn.setVisible(wiggle)
+        self.wiggle_btn.setEnabled(True)
         self.close_btn.show()
 
     def reset(self) -> None:
@@ -180,6 +195,7 @@ class StackAssembly(QtWidgets.QWidget):
         self.progress.hide()
         self.status.setText("")
         self.close_btn.hide()
+        self.wiggle_btn.hide()
         self.finish.show()
         self.finish.setEnabled(True)
         self.discard.show()

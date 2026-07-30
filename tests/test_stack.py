@@ -431,3 +431,42 @@ def test_every_smoothing_preset_keeps_the_depth_map_honest(tmp_path):
                  / 255 * (n - 1))
         wrong = float((np.abs(depth[band] - gt[band]) > 0.5).mean())
         assert wrong < 0.25, f"{name}: {wrong:.1%} of the glow band is wrong"
+
+def test_wigglegram_parallax_follows_depth(tmp_path):
+    """The depth map drives the parallax, as an assertion: a scene whose
+    left half is near and right half is far must shift its halves in
+    opposite directions between a stereo pair's eyes. Also pins that the
+    artifacts (webm or webp fallback, webp, stereo pair, anaglyph) land."""
+    from darlaston.process.wiggle import stereo, wigglegram
+
+    rng = np.random.default_rng(5)
+    H, W = 480, 640
+    raw = np.clip(rng.normal(1500, 500, (H, W)), 0, 4095).astype(np.uint16)
+    dng.write_bayer_streamed(
+        tmp_path / "stacked.dng", lambda s, c: raw[s:s + c], H, W,
+        preview=dng.make_preview(raw, bayer=True, white=4095),
+        bits=12, white=4095)
+    depth = np.zeros((H, W), np.uint8)
+    depth[:, W // 2:] = 255
+    cv2.imwrite(str(tmp_path / "depth.png"), depth)
+
+    wob = wigglegram(tmp_path)
+    pair, ana = stereo(tmp_path)
+    assert wob.exists() and pair.exists() and ana.exists()
+    assert (tmp_path / "wiggle.webp").exists()
+
+    # The pair is [right | left]; correlate each half of the scene between
+    # the two eyes and demand opposite horizontal shifts.
+    both = cv2.imread(str(pair), cv2.IMREAD_GRAYSCALE).astype(np.float32)
+    right, left = both[:, :W], both[:, W:]
+    m = 60                                     # stay clear of the seam
+    hann = cv2.createHanningWindow((W // 2 - 2 * m, H - 2 * m), cv2.CV_32F)
+    (dx_near, _), _ = cv2.phaseCorrelate(
+        left[m:-m, m:W // 2 - m].copy(), right[m:-m, m:W // 2 - m].copy(),
+        hann)
+    (dx_far, _), _ = cv2.phaseCorrelate(
+        left[m:-m, W // 2 + m:-m].copy(),
+        right[m:-m, W // 2 + m:-m].copy(), hann)
+    assert dx_near * dx_far < 0, \
+        f"halves must shift oppositely, got {dx_near:.2f} and {dx_far:.2f}"
+    assert abs(dx_near - dx_far) > 2.0, "parallax too small to read"

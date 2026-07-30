@@ -151,12 +151,26 @@ Ordered within each section by how much it would change what gets built.
       the weighted blend creates, exactly as frame averaging does. Verified
       on the real 18-slice stack: relative mean 0.173 against the slices'
       0.174. A regression test holds the levels together from now on.
-- [ ] **Wigglegram / stereo from the depth map** — Nate's idea and a genuinely
-      good one. `depth.png` is now plain grayscale (near dark, far light),
-      the encoding depth consumers expect; `depth_view.png` keeps the pretty
-      colormap. Depth + all-in-focus is everything DIBR needs: synthesise two
-      or three parallax views and emit an anaglyph or a wobble GIF. The data
-      is already on disk after every merge.
+- [x] ~~**Wigglegram / stereo from the depth map.**~~ Dessert, served:
+      `process/wiggle.py` synthesises parallax views from stacked.dng +
+      depth.png (backward warp, depth softened so edge tears become leans,
+      amplitude 1.2% of width). Artifacts land beside the stack:
+      `wiggle.webm` (VP9 — HARD MODE request; cv2 5's VideoWriter encodes
+      it despite a cosmetic tag warning, verified by readback), the
+      auto-looping `wiggle.webp`, a crossed-eye `stereo_pair.png`, and a
+      red/cyan `anaglyph.png` on a desaturated base. Wigglegram button in
+      the finished stack window + Capture menu entry for old stacks.
+      Depth polarity is a habit, not a fact (slice 1 is wherever racking
+      started) — default matches Nate's rack direction, invertible in the
+      gear menu. Test pins that the two halves of a two-plane scene shift
+      oppositely between the stereo eyes.
+- [ ] **Down-then-back-up stacks.** Nate racks down through the subject
+      and back up, so slice order revisits planes: the merge is untouched
+      (argmax picks the sharpest wherever it lives) but slice index stops
+      being monotonic depth, which muddies depth.png as *geometry* — the
+      wigglegram's z is capture order. Options: teach the habit (one
+      direction reads best), or order slices by estimated z at merge time
+      (cross-slice sharpness correlation could recover the turning point).
 - [x] ~~**Stack output re-mosaicked, 119 → 40 MB.**~~ Nate asked whether the
       merge could be re-mosaicked, and the answer is better than yes:
       bilinear demosaic passes each site's native value through untouched, so
@@ -228,7 +242,7 @@ Ordered within each section by how much it would change what gets built.
       feather (1/2/4 px), output (bayer/linear).
 - [x] ~~**A/B on two real stacks of the same subject** (Nate's 25×/0.65
       diatoms, 13 slices each).~~ He reported the *older* merge looked
-      better — more even glow, more striae — and he was right. Measured
+      better — more even glow, more striae — and they were right. Measured
       end to end, fine detail against the best single slice and
       manufactured glow structure against a typical slice:
       off 0.753/0.716, light 0.752/0.549, normal 0.736/0.287,

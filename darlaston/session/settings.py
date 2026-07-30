@@ -94,6 +94,9 @@ class Settings:
     #: exist because the right smoothing is partly a statement about the
     #: subject, and that judgement belongs to the photographer.
     stack_output: str = "bayer"      # bayer | linear (RGB, ~3x the size)
+    #: Wigglegram depth polarity. Slice 1 is wherever the operator started
+    #: racking, so "near" is a habit, not a fact; this follows the habit.
+    wiggle_invert: bool = False
     #: off | light | normal | strong. "light" is the default because it is
     #: the only setting that costs nothing measurable: detail equal to
     #: winner-takes-all, a quarter less glow ring. "normal" trades 2% of

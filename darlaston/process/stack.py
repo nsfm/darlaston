@@ -76,7 +76,7 @@ FEATHER_SIGMA = 2.0
 #: what I first assumed. NARROW below 1 means a trusted pixel takes its own
 #: slice outright instead of averaging with a neighbour: the plain tent
 #: blend measured 1.06-1.07 fine detail against one-hot's 1.27-1.31, and
-#: that gap *is* the striae he saw the older merge keep. WIDE is the other
+#: that gap *is* the striae they saw the older merge keep. WIDE is the other
 #: half: cross-fading two defocused slices does not produce intermediate
 #: defocus, it produces both of their glow rings at partial opacity --
 #: measured, the tent blend manufactures MORE glow structure (0.58-0.61)

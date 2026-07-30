@@ -74,6 +74,7 @@ class Bridge(QtCore.QObject):
     stitch = QtCore.Signal(object)
     stack_merge = QtCore.Signal(object)
     tile_merge = QtCore.Signal(object)
+    wiggle = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
@@ -122,6 +123,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.stitch.connect(self._on_stitch)
         self.bridge.stack_merge.connect(self._on_stack_merge)
         self.bridge.tile_merge.connect(self._on_tile_merge)
+        self.bridge.wiggle.connect(self._on_wiggle_done)
         self.mosaic: MosaicSession | None = None
         self.stack_session: StackSession | None = None
         self.stack_trigger = StackTrigger(self._fire_stack_slice)
@@ -160,6 +162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
         capture_menu.addAction("Stitch mosaic…", self._stitch_mosaic)
+        capture_menu.addAction("Wigglegram from stack…", self._wiggle_dialog)
         capture_menu.addSeparator()
         # In the menu rather than the rail: it is set once per illumination
         # style and then left alone, and the rail is already too full to
@@ -213,6 +216,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.assembly = StackAssembly()
         self.assembly.finish_requested.connect(self._finish_stack)
         self.assembly.discard_requested.connect(self._discard_stack)
+        self.assembly.wiggle_requested.connect(self._on_wiggle)
         self.stack_window = FloatingPanel("stack — assembling", self.view)
         self.assembly.close_requested.connect(self.stack_window.hide)
         self.assembly.configure(self.settings)
@@ -856,6 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stack_ending = False
         self.assembly.finish.setEnabled(False)
         self.assembly.discard.setEnabled(False)
+        self._wiggle_dir = done.dir
         self._run_stack_merge(done.dir)
 
     def _discard_stack(self) -> None:
@@ -1003,6 +1008,46 @@ class MainWindow(QtWidgets.QMainWindow):
                                "the stitcher will retry it")
         self._next_tile_merge()
 
+    _wiggle_dir = None
+
+    def _wiggle_dialog(self) -> None:
+        """Parallax artifacts from any finished stack on disk."""
+        start = str(self._wiggle_dir or self.settings.capture_root)
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Stack folder (with stacked.dng + depth.png)", start)
+        if directory:
+            self._run_wiggle(Path(directory))
+
+    def _on_wiggle(self) -> None:
+        if self._wiggle_dir is not None:
+            self.assembly.wiggle_btn.setEnabled(False)
+            self._run_wiggle(self._wiggle_dir)
+
+    def _run_wiggle(self, directory: Path) -> None:
+        self.strip.set_note("synthesising parallax…")
+
+        invert = self.settings.wiggle_invert
+
+        def work():
+            from ..process.wiggle import stereo, wigglegram
+            try:
+                wob = wigglegram(directory, invert=invert)
+                stereo(directory, invert=invert)
+                self.bridge.wiggle.emit(
+                    (f"{wob.name}, anaglyph and stereo pair → "
+                     f"{directory.name}", True))
+            except Exception as exc:
+                self.bridge.wiggle.emit((f"wigglegram failed — {exc}",
+                                         False))
+
+        threading.Thread(target=work, daemon=True, name="wiggle").start()
+
+    @QtCore.Slot(object)
+    def _on_wiggle_done(self, message) -> None:
+        note, ok = message
+        self.strip.set_note(note)
+        self.assembly.wiggle_btn.setEnabled(True)
+
     def _run_stack_merge(self, directory) -> None:
         opts = dict(output=self.settings.stack_output,
                     smoothing=self.settings.stack_smoothing,
@@ -1037,8 +1082,9 @@ class MainWindow(QtWidgets.QMainWindow):
         _kind, note, ok = message
         # The session is already gone either way -- Finish and Discard have
         # nothing left to act on -- so the buttons give way to Close. On
-        # failure the folder is still on disk, mergeable later.
-        self.assembly.set_finished(note)
+        # failure the folder is still on disk, mergeable later. Success
+        # also unlocks the depth map's party trick.
+        self.assembly.set_finished(note, wiggle=ok)
         self.strip.set_note(note)
 
     def _on_mosaic_requested(self, on: bool) -> None:
