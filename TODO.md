@@ -179,15 +179,25 @@ Ordered within each section by how much it would change what gets built.
       responds to refractive index through the whole thickness, this
       responds to where focus peaked. Test: a depth ridge must light one
       flank and shadow the other, flat field neutral.
-- [ ] **Synthetic aperture: choose the focal plane after the shot.** The
-      all-in-focus composite plus per-pixel depth is exactly what a light
-      field camera hands you, so blurring by |depth − target| lets the
-      focal plane and the aperture be *chosen in post*. Two artifacts from
-      one machine: a slider that racks focus through a finished still, and
-      a **cinematic focus pull** — a slow shallow-depth drift through the
-      subject, the shot a cinematographer would set up. A photography
-      technique (Lytro, and every rack-focus in film) that no microscopy
-      tool offers. Highest delight per hour on this list.
+- [x] ~~**Synthetic aperture: choose the focal plane after the shot.**~~
+      `process/aperture.py`. The stack kept what a photograph normally
+      throws away — which plane was sharp — so the choice is reversible:
+      blur each pixel by how far its depth sits from a chosen plane, and
+      widen that per unit depth to open the aperture. Two artifacts: a
+      still refocused anywhere, and `focus_pull.webm`, the plane drifting
+      through the subject on video with smoothstep easing at both ends
+      (a constant-rate pull reads as a machine sweeping) and a reversed
+      tail so it loops without a jump cut. Layered rendering — the image
+      blurred once at six radii, each pixel reading between the two
+      layers matching its defocus — because per-pixel blur is exact and
+      unusably slow. Occlusion is not modelled (a defocused foreground
+      softens rather than bleeding over its background), the same honest
+      limit the parallax renders carry.
+- [x] ~~**Renders were washing out.**~~ `_develop` set a white point and
+      no black point, so a brightfield field — mostly bright background —
+      crowded into the top third of the scale. Obvious the moment a focus
+      pull filled the frame with that background. Both ends are set now,
+      which lifted every parallax and aperture render at once.
 - [ ] **Spin it, and print it.** Depth plus texture is a heightfield:
       an orbiting turntable render for sharing, and a `.ply`/`.obj` export
       for anyone who wants to hold a diatom. "I 3D printed this from my

@@ -215,3 +215,68 @@ def test_no_optics_means_no_invented_numbers():
     meta = from_setup(setup, exposure_us=1000, gain_pct=100)
     assert meta.focal_length_mm == pytest.approx(16.0)
     assert meta.f_number is None
+
+
+def test_thumbnail_extracts_preview_without_reading_the_file(tmp_path):
+    """The desktop thumbnailer, as an assertion. Two properties matter:
+    it recovers the embedded preview, and it does so by reading the
+    header rather than the file -- a stitched composite is gigabytes and
+    a thumbnailer that slurps one hangs the file manager it serves."""
+    import cv2
+    import numpy as np
+    from darlaston.process import dng
+    from darlaston.process.thumbnail import preview, write_thumbnail
+
+    rng = np.random.default_rng(4)
+    h, w = 600, 900
+    raw = np.clip(rng.normal(1800, 300, (h, w)), 0, 4095).astype(np.uint16)
+    path = tmp_path / "big.dng"
+    dng.write_bayer_streamed(
+        path, lambda s, c: raw[s:s + c], h, w,
+        preview=dng.make_preview(raw, bayer=True, white=4095),
+        bits=12, white=4095)
+
+    thumb = preview(path)
+    assert thumb.ndim == 3 and thumb.shape[2] == 3
+    assert max(thumb.shape[:2]) <= 640, "preview should be small"
+    assert float(thumb.std()) > 1.0, "preview must not be blank"
+
+    out = write_thumbnail(path, tmp_path / "t.png", size=128)
+    written = cv2.imread(str(out))
+    assert max(written.shape[:2]) == 128
+
+    # Reading is bounded: count the bytes actually pulled off disk.
+    import builtins
+    real_open = builtins.open
+    pulled = []
+
+    class Counting:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def read(self, n=-1):
+            data = self._fh.read(n)
+            pulled.append(len(data))
+            return data
+
+        def __getattr__(self, name):
+            return getattr(self._fh, name)
+
+        def __enter__(self):
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *a):
+            return self._fh.__exit__(*a)
+
+    def counting_open(*args, **kw):
+        fh = real_open(*args, **kw)
+        return Counting(fh) if str(args[0]).endswith(".dng") else fh
+
+    builtins.open = counting_open
+    try:
+        preview(path)
+    finally:
+        builtins.open = real_open
+    assert sum(pulled) <= 8 << 20, \
+        f"read {sum(pulled)} bytes; a thumbnailer must not slurp the file"

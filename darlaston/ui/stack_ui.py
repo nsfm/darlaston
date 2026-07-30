@@ -57,11 +57,11 @@ class StackAssembly(QtWidgets.QWidget):
         self.discard.setToolTip("Delete this stack — slices and all.")
         self.close_btn = QtWidgets.QPushButton("Close")
         self.close_btn.hide()
-        self.wiggle_btn = QtWidgets.QPushButton("Wigglegram")
+        self.wiggle_btn = QtWidgets.QPushButton("Render depth")
         self.wiggle_btn.setToolTip(
-            "Render the depth map: a looping wobble, a red/cyan anaglyph,\n"
-            "a crossed-eye stereo pair, and a DIC-style relief image,\n"
-            "written beside the stack.")
+            "Everything the depth map can make: a looping wobble, a focus\n"
+            "pull, a red/cyan anaglyph, a crossed-eye stereo pair and a\n"
+            "DIC-style relief image, written beside the stack.")
         self.wiggle_btn.hide()
         self.options = QtWidgets.QToolButton()
         self.options.setText("⚙")

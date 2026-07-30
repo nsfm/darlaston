@@ -76,13 +76,23 @@ def _read_composite(path: Path) -> tuple[np.ndarray, int]:
 
 
 def _develop(rgb: np.ndarray, white: int) -> np.ndarray:
-    """The composite, made displayable: grey-world, headroom, gamma."""
+    """The composite, made displayable: grey-world, levels, gamma.
+
+    Both ends of the range are set, not just the top. A brightfield field
+    is mostly bright background, so scaling from zero leaves everything
+    crowded into the last third of the scale and the renders come out
+    pale -- visible immediately in a focus pull, where the whole frame is
+    that background.
+    """
     rgb = rgb / max(float(white), 1.0)
     means = [max(float(rgb[:, :, c].mean()), 1e-6) for c in range(3)]
     for c in range(3):
         rgb[:, :, c] *= means[1] / means[c]
-    peak = float(np.percentile(rgb, 99.7)) or 1.0
-    return (np.clip(rgb / peak, 0, 1) ** (1 / 2.2) * 255).astype(np.uint8)
+    black = float(np.percentile(rgb, 0.5))
+    peak = float(np.percentile(rgb, 99.7))
+    span = max(peak - black, 1e-6)
+    return (np.clip((rgb - black) / span, 0, 1) ** (1 / 2.2)
+            * 255).astype(np.uint8)
 
 
 def load_pair(directory: Path | str, width: int = WIGGLE_W,

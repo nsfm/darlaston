@@ -162,7 +162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
         capture_menu.addAction("Stitch mosaic…", self._stitch_mosaic)
-        capture_menu.addAction("Wigglegram from stack…", self._wiggle_dialog)
+        capture_menu.addAction("Render depth from stack…", self._wiggle_dialog)
         capture_menu.addSeparator()
         # In the menu rather than the rail: it is set once per illumination
         # style and then left alone, and the rail is already too full to
@@ -1029,15 +1029,17 @@ class MainWindow(QtWidgets.QMainWindow):
         invert = self.settings.wiggle_invert
 
         def work():
+            from ..process.aperture import focus_pull
             from ..process.relief import dic
             from ..process.wiggle import stereo, wigglegram
             try:
                 wob = wigglegram(directory, invert=invert)
                 stereo(directory, invert=invert)
                 dic(directory, invert=invert)
+                focus_pull(directory, invert=invert)
                 self.bridge.wiggle.emit(
-                    (f"{wob.name}, anaglyph, stereo pair and DIC render → "
-                     f"{directory.name}", True))
+                    (f"{wob.name}, focus pull, anaglyph, stereo pair and "
+                     f"DIC render → {directory.name}", True))
             except Exception as exc:
                 self.bridge.wiggle.emit((f"wigglegram failed — {exc}",
                                          False))

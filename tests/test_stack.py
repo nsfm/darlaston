@@ -503,3 +503,26 @@ def test_dic_render_lights_slopes_from_one_side(tmp_path):
         f"flanks must light oppositely, got {rising:.0f} and {falling:.0f}"
     assert abs(flat - 128) < 12, f"flat field should be neutral, got {flat:.0f}"
     assert abs(rising - falling) > 40, "relief too faint to read"
+
+def test_refocus_moves_the_sharp_plane(tmp_path):
+    """Synthetic aperture, as an assertion: two textured halves at
+    opposite depths, and choosing a plane must sharpen one while
+    softening the other -- and choosing the other plane must swap them."""
+    from darlaston.process.aperture import refocus
+
+    H, W = 300, 600
+    rng = np.random.default_rng(11)
+    img = np.clip(rng.normal(128, 60, (H, W, 3)), 0, 255).astype(np.uint8)
+    depth = np.zeros((H, W), np.float32)
+    depth[:, :W // 2] = -1.0
+    depth[:, W // 2:] = 1.0
+
+    def sharpness(im, half):
+        s = slice(0, W // 2) if half == "left" else slice(W // 2, W)
+        g = cv2.cvtColor(im[:, s], cv2.COLOR_BGR2GRAY).astype(np.float32)
+        return float(cv2.Laplacian(g, cv2.CV_32F).var())
+
+    near = refocus(img, depth, -1.0, aperture=10.0)
+    far = refocus(img, depth, 1.0, aperture=10.0)
+    assert sharpness(near, "left") > 5 * sharpness(near, "right")
+    assert sharpness(far, "right") > 5 * sharpness(far, "left")
