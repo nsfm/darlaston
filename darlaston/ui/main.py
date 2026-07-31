@@ -29,7 +29,8 @@ from ..capture.stack import StackSession, StackTrigger
 from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
 from ..live.focus import Illumination, Region
-from ..live.pipeline import LivePipeline, LiveSignals
+from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
+                             LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
                              ScopeProfile, Setup, Turret)
 from ..session.settings import Settings
@@ -1468,13 +1469,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if s.turret_event is not None:
             self._on_turret_event(s.turret_event)
 
-        # The instruments repaint at a third of the frame rate. A histogram
-        # and a focus trace are read as trends, not as individual frames, and
-        # at 30 Hz their repaints cost more of the UI thread than the live
-        # image itself. The *data* is still folded in every frame -- only the
-        # drawing is thinned.
+        # The instruments repaint at a fraction of the frame rate. A
+        # histogram and a focus trace are read as trends, not as individual
+        # frames, and at 30 Hz their repaints cost more of the UI thread
+        # than the live image itself. The focus trace still accumulates
+        # every frame and only its drawing is thinned; the levels are now
+        # computed at this same divisor, which is why it is shared.
         self._tick = getattr(self, "_tick", 0) + 1
-        if self._tick % 3 == 0:
+        if self._tick % INSTRUMENT_DIVISOR == 0:
             if self.perf_window.isVisible():
                 self.perf.update_costs(s.costs, s.stats)
             self.histogram.set_data(s.histogram, s.clipped_fraction,

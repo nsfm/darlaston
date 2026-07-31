@@ -37,6 +37,13 @@ from .tracker import StageTracker
 from .turret import TurretDetector, TurretEvent, model_signatures
 
 
+#: How many frames pass between instrument repaints. Shared with the UI's
+#: own throttle rather than written twice, because the two have to agree:
+#: computing the levels less often than they are drawn shows a stale
+#: histogram, and more often is work nobody ever sees.
+INSTRUMENT_DIVISOR = 3
+
+
 @dataclass(frozen=True)
 class LiveSignals:
     """Everything the UI is allowed to know about a frame."""
@@ -145,6 +152,9 @@ class LivePipeline:
         #: explicit copy, the histogram is its own array, and the tracker,
         #: turret and peaking all resize into new buffers of their own.
         self._planes: list[np.ndarray] | None = None
+        #: Last (histogram, per-channel clipping, black fraction), reused on
+        #: the frames between instrument repaints.
+        self._levels: tuple | None = None
         self._analysed = 0
         #: Per-feature frame costs, always running. live/profile.py
         #: explains why this is not behind a flag.
@@ -354,18 +364,38 @@ class LivePipeline:
                                       for _ in range(n)]
             planes = cv2.split(data, buf)             # B, G, R
             gray = planes[1]
-            hists = [cv2.calcHist([p], [0], None, [256], [0, 256]).ravel()
-                     for p in planes]
-            total = float(gray.size)
-            per = (float(hists[2][255] / total), float(hists[1][255] / total),
-                   float(hists[0][255] / total))
-            hist = hists[1]
         else:
+            planes = None
             gray = data
+
+        # The levels are computed at the rate they are *looked at*, not at
+        # frame rate. The exposure histogram repaints at a third of the
+        # frame rate because it is read as a trend, and unlike the focus
+        # trace nothing accumulates here between repaints -- the widget
+        # simply takes the newest array -- so two of every three of these
+        # were being thrown away unread. They are the most thread-hungry
+        # work in the loop, which makes them the wrong thing to do at full
+        # rate on a machine that has been told to use four threads.
+        #
+        # Subsampling the pixels was the obvious alternative and is unsafe:
+        # a one-pixel-tall clipped streak, which is a slide edge or a dust
+        # line, disappears entirely from a row-strided histogram and takes
+        # the clipping warning with it. Sampling every pixel less often
+        # still sees it, one frame late.
+        if self._levels is None or self._analysed % INSTRUMENT_DIVISOR == 0:
             total = float(gray.size)
-            hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
-            per = (0.0, float(hist[255] / total), 0.0)
-        black = float(hist[0] / total)
+            if planes is not None:
+                hists = [cv2.calcHist([p], [0], None, [256], [0, 256]).ravel()
+                         for p in planes]
+                hist = hists[1]
+                per = (float(hists[2][255] / total),
+                       float(hists[1][255] / total),
+                       float(hists[0][255] / total))
+            else:
+                hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+                per = (0.0, float(hist[255] / total), 0.0)
+            self._levels = (hist, per, float(hist[0] / total))
+        hist, per, black = self._levels
 
         # Clipping is judged on green, not on luminance or on any channel.
         #

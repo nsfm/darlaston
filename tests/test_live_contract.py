@@ -256,3 +256,47 @@ def test_the_thread_budget_is_applied_and_bounded():
     assert 1 <= THREAD_BUDGET <= usable_cores()
     apply_thread_budget()
     assert cv2.getNumThreads() == THREAD_BUDGET
+
+
+def test_levels_are_computed_at_the_divisor_but_never_go_stale_or_missing():
+    """The histogram is computed every INSTRUMENT_DIVISOR frames now, so the
+    thing to guard is that every frame still carries a usable one and that a
+    clipped frame is still reported clipped -- one repaint late is fine, never
+    is not. Subsampling pixels was the alternative and it can miss a
+    one-pixel-tall clipped streak outright; this cannot.
+    """
+    import numpy as np
+    from darlaston.camera.buffers import BufferPool, Frame
+    from darlaston.live.pipeline import INSTRUMENT_DIVISOR, LivePipeline
+
+    got = []
+    pipe = LivePipeline(got.append)
+    pool = BufferPool((64, 96, 3), np.uint8, count=4)
+
+    def feed(fill, streak=False):
+        buf = pool.acquire()
+        buf[:] = fill
+        if streak:
+            buf[31, :, 1] = 255            # one row of blown green
+        f = Frame(data=buf, seq=len(got), timestamp=0.0, exposure_us=1000,
+                  gain_pct=100, binned=True, _pool=pool)
+        with f:
+            pipe._analyse(f)
+
+    for _ in range(2 * INSTRUMENT_DIVISOR):
+        feed(40)
+    assert all(s.histogram.shape == (256,) for s in got), \
+        "every frame must carry a histogram, not only the ones that recompute"
+    assert all(s.clipped_fraction == 0.0 for s in got)
+
+    # A one-pixel-tall clipped streak, held. It must be seen within one
+    # instrument period.
+    before = len(got)
+    for _ in range(INSTRUMENT_DIVISOR + 1):
+        feed(40, streak=True)
+    fresh = got[before:]
+    assert any(s.clipped_fraction > 0 for s in fresh), \
+        "a one-row clipped streak was never reported"
+    expected = 1.0 / 64
+    seen = max(s.clipped_fraction for s in fresh)
+    assert abs(seen - expected) < 1e-6, f"clipping mismeasured: {seen}"
