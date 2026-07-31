@@ -45,7 +45,7 @@ on a ToupTek E3ISPM20000KPA and a 1960s Zeiss Universal.
 | [DESIGN.md](DESIGN.md) | entity model, calibration lifetimes, the exposure handoff |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | threading contract and component boundaries |
 | [SUPPORT.md](SUPPORT.md) | which cameras work, which are planned, and which are refused |
-| [LICENSE.EXCEPTION](LICENSE.EXCEPTION) | GPL §7 permission for linking camera SDKs, and why it exists |
+| [LICENSE.EXCEPTION](LICENSE.EXCEPTION) | GPL §7 permission for linking camera SDKs |
 | [TODO.md](TODO.md) | everything asked for, deferred, or left unverified |
 
 ## Why

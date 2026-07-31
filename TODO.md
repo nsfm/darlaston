@@ -784,8 +784,19 @@ Ordered within each section by how much it would change what gets built.
       ("Camera Support Library" — vendor SDKs, tethering, machine vision,
       stage and illumination control) rather than naming `libtoupcam`,
       because we already reach a dozen and the list is meant to grow.
-      Covers linking, runtime loading and bindings. **Nate should read it
-      and own it**: it is their copyright and my draft.
+      Covers linking, runtime loading and bindings. Kept to the operative
+      terms only — the reasoning behind it belongs in this file, not in a
+      licence document. **Nate should read it and own it**: it is their
+      copyright and my draft.
+
+      *Why it is needed:* a microscope camera is reachable only through
+      its manufacturer's proprietary SDK, so without the permission it is
+      doubtful anyone could distribute a working build at all. That would
+      protect nobody's freedom and merely make the program
+      undistributable. Worse than ordinary proprietary in our case: the
+      ToupTek SDK ships with no licence, EULA or copyright notice of any
+      kind, and downstream packagers have each invented a different
+      answer about what it permits.
 - [ ] Verify `focus-stack`'s licence before vendoring (MIT as of Jan 2026).
 
 ## Packaging

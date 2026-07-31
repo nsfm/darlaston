@@ -32,39 +32,15 @@ This permission applies whether the library is linked, loaded at run
 time, or invoked through a binding, and whether or not its own licence
 is compatible with the GNU General Public License.
 
-## Why it exists
+## Scope
 
-A microscope camera is reachable only through its manufacturer's own
-software, and that software is proprietary. Sometimes worse than
-proprietary: the SDK darlaston was first written against ships with no
-licence, no EULA and no copyright notice of any kind, so nobody can say
-what it permits — downstream packagers have each invented a different
-answer, and two of them contradict each other inside the same
-repository.
+This permission grants no rights in the hardware libraries themselves.
+Their own licences are unaffected, and nothing here permits you to
+redistribute them. darlaston does not bundle any of them.
 
-Without this permission, the GPL's terms would make it doubtful whether
-anyone could distribute a working build of darlaston at all, since every
-useful build must reach a camera. That would not protect a single user's
-freedom. It would only make the program undistributable while leaving
-the proprietary SDK exactly as proprietary as it was.
-
-So the permission is deliberately about a *class* of library rather than
-one file. darlaston already reaches a dozen vendor libraries, and the
-list is expected to grow to tethering and industrial-camera libraries.
-Naming them one at a time would mean amending this document — and
-therefore needing the agreement of every contributor — each time someone
-adds support for a camera they own.
-
-## What it does not do
-
-It grants nothing about the hardware libraries themselves. Their own
-licences, where they have any, are unaffected, and this document gives
-you no right to redistribute them. darlaston does not bundle any of
-them; you install your own. See `SUPPORT.md`.
-
-It is also not a general exception. It covers libraries that exist to
-operate imaging hardware. It does not cover linking darlaston with
-proprietary software for any other purpose.
+It applies only to libraries whose purpose is operating imaging
+hardware. It does not permit linking darlaston with proprietary software
+for any other purpose.
 
 ## Removing it
 
