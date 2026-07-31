@@ -261,6 +261,27 @@ class StatusBar(QtWidgets.QFrame):
         self.numbers.setText("   ".join(parts))
 
 
+#: Width the explanation column wraps at. Comfortable for prose and
+#: narrow enough that a numbered list still scans.
+_WRAP_W = 440
+
+
+def _wraps(label: QtWidgets.QLabel) -> None:
+    """Make a word-wrapped label claim the height its text actually needs.
+
+    A wrapping QLabel reports the height of *one long line* unless its
+    size policy opts into heightForWidth, so a vertical layout hands it a
+    single line's worth of space and the rest is drawn over whatever sits
+    beneath. Fixing this by hand is why the first-run page had its own
+    explanation written across its own instructions.
+    """
+    label.setFixedWidth(_WRAP_W)
+    policy = label.sizePolicy()
+    policy.setHeightForWidth(True)
+    policy.setVerticalPolicy(QtWidgets.QSizePolicy.Policy.MinimumExpanding)
+    label.setSizePolicy(policy)
+
+
 class WaitingPage(QtWidgets.QWidget):
     """No camera, connecting, or failed to open.
 
@@ -282,19 +303,46 @@ class WaitingPage(QtWidgets.QWidget):
         self.body.setProperty("role", "body")
         self.body.setWordWrap(True)
         self.body.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        _wraps(self.body)
         self.advice = QtWidgets.QLabel("")
         self.advice.setProperty("role", "advice")
         self.advice.setWordWrap(True)
         self.advice.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        _wraps(self.advice)
         self.advice.hide()
+
+        # What to *do*, numbered, left-aligned. This is the whole reason
+        # the page exists: almost nobody launches this from a terminal,
+        # so an explanation that only reaches a traceback reaches nobody.
+        self.steps = QtWidgets.QLabel("")
+        self.steps.setProperty("role", "body")
+        self.steps.setWordWrap(True)
+        self.steps.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.steps.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        _wraps(self.steps)
+        self.steps.hide()
 
         self.synthetic = QtWidgets.QPushButton("Use the synthetic camera instead")
         self.synthetic.clicked.connect(self.use_synthetic)
+        self.copy_btn = QtWidgets.QPushButton("Copy this message")
+        self.copy_btn.setProperty("role", "seg")
+        self.copy_btn.clicked.connect(self._copy)
+        self.copy_btn.hide()
+
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.setSpacing(8)
+        buttons.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        buttons.addWidget(self.synthetic)
+        buttons.addWidget(self.copy_btn)
+        row = QtWidgets.QWidget()
+        row.setStyleSheet("background: transparent;")
+        row.setLayout(buttons)
 
         col = QtWidgets.QVBoxLayout()
         col.setSpacing(16)
         col.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        for w in (self.pulse, self.heading, self.body, self.advice, self.synthetic):
+        for w in (self.pulse, self.heading, self.body, self.steps,
+                  self.advice, row):
             col.addWidget(w, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
         holder = QtWidgets.QWidget()
@@ -306,6 +354,18 @@ class WaitingPage(QtWidgets.QWidget):
         outer.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(holder, 0, QtCore.Qt.AlignmentFlag.AlignCenter)
 
+    _last = ""
+
+    def _copy(self) -> None:
+        """Put the whole explanation on the clipboard.
+
+        Someone asking for help should be able to paste what they saw,
+        rather than retyping it or photographing their screen."""
+        QtWidgets.QApplication.clipboard().setText(self._last)
+        self.copy_btn.setText("Copied")
+        QtCore.QTimer.singleShot(
+            1500, lambda: self.copy_btn.setText("Copy this message"))
+
     def update_status(self, status) -> None:
         faulted = status.state is CameraState.ERROR
         self.heading.setProperty("role", "fault" if faulted else "heading")
@@ -314,7 +374,25 @@ class WaitingPage(QtWidgets.QWidget):
         self.heading.style().polish(self.heading)
 
         self.body.setText(status.detail or
-                          "Connect a ToupTek camera and it will appear here.")
+                          "Connect a camera and it will appear here.")
+
+        steps = getattr(status, "steps", ())
+        if steps:
+            items = "".join(
+                f"<tr><td valign='top' style='padding-right:8px'>{i}.</td>"
+                f"<td>{step}</td></tr>"
+                for i, step in enumerate(steps, 1))
+            self.steps.setText(
+                f"<div style='margin-top:6px'><b>What to do</b>"
+                f"<table style='margin-top:4px'>{items}</table></div>")
+            self.steps.show()
+        else:
+            self.steps.hide()
+
+        self._last = "\n".join(
+            [status.message or "", status.detail or ""]
+            + [f"{i}. {s}" for i, s in enumerate(steps, 1)]).strip()
+        self.copy_btn.setVisible(bool(faulted and self._last))
         link = status.link
         if link is not None and link.advice:
             self.advice.setText(link.advice)

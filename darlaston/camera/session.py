@@ -23,6 +23,7 @@ from typing import Callable
 from .base import CameraBackend, CameraInfo, CameraState
 from .buffers import Frame
 from . import usb
+from .errors import CameraProblem
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,12 @@ class SessionStatus:
     link: usb.LinkInfo | None = None
     message: str = ""
     detail: str = ""
+    #: Concrete things the operator can do about it, in order. Empty
+    #: unless the failure knew.
+    steps: tuple[str, ...] = ()
+    #: Machine-readable failure category, so the window can offer the
+    #: right button without reading the prose.
+    kind: str = ""
     attempt: int = 0
     next_retry_in: float = 0.0
 
@@ -269,10 +276,18 @@ class CameraSession:
     def _fail(self, exc: Exception) -> None:
         self._teardown()
         wait = self.RETRY_BACKOFF[min(self._attempt, len(self.RETRY_BACKOFF) - 1)]
+        # A typed problem already knows how to describe itself and what to
+        # tell the operator to do; anything else falls back to guessing
+        # from the text, which is what everything used to do.
+        if isinstance(exc, CameraProblem):
+            heading, detail = exc.heading, exc.detail
+            steps, kind = exc.steps, exc.kind
+        else:
+            heading, detail = "Could not open the camera", self._explain(exc)
+            steps, kind = (), ""
         self._publish(CameraState.ERROR, link=usb.probe(),
-                      message="Could not open the camera",
-                      detail=self._explain(exc), attempt=self._attempt,
-                      next_retry_in=wait)
+                      message=heading, detail=detail, steps=steps, kind=kind,
+                      attempt=self._attempt, next_retry_in=wait)
         time.sleep(wait)
 
     @staticmethod

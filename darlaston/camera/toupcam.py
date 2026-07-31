@@ -40,7 +40,8 @@ import numpy as np
 
 from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
-from .errors import is_retryable
+from .errors import (CameraBusy, NoCameraFound, SdkMissing,
+                     SdkTooOld, is_retryable)
 
 #: The rebadge family. ToupTek manufactures for a dozen brands and ships
 #: each one the same SDK with its symbols renamed -- verified binary to
@@ -117,11 +118,8 @@ def _load_brand(root: Path, module: str, soname: str, cls: str,
     missing = [fn for fn in REQUIRED
                if not hasattr(handle, f"{cls}_{fn}")]
     if missing:
-        raise RuntimeError(
-            f"{lib} is too old for darlaston: it has no "
-            f"{', '.join(cls + '_' + m for m in missing)}. A ToupLite "
-            "bundle from 2021 ships a library with this same name; point "
-            "TOUPCAM_SDK at a current SDK instead.")
+        raise SdkTooOld(str(lib),
+                        tuple(f"{cls}_{m}" for m in missing))
     sys.path.insert(0, str(binding))
     return _Vendor(__import__(module), module, cls, prefix)
 
@@ -151,10 +149,7 @@ def load_sdk():
             return _vendor
         except ImportError:
             continue
-    raise RuntimeError(
-        "No ToupTek-family SDK found. Unpack one under ~/toup/sdk-*/ or "
-        "set TOUPCAM_SDK to its root. Supported brands: "
-        + ", ".join(b[0] for b in BRANDS) + ".")
+    raise SdkMissing(tuple(b[0] for b in BRANDS))
 
 
 class ToupcamBackend(CameraBackend):
@@ -177,10 +172,14 @@ class ToupcamBackend(CameraBackend):
     def open(self) -> CameraInfo:
         devices = self._t.Toupcam.EnumV2()
         if not devices:
-            raise RuntimeError("no ToupTek camera found")
+            raise NoCameraFound("ToupTek-family camera")
         self._cam = self._t.Toupcam.Open(devices[self._index].id)
         if not self._cam:
-            raise RuntimeError("failed to open camera (is ToupLite running?)")
+            # The SDK enumerated it and then refused to open it, which in
+            # practice means somebody else already has it.
+            raise CameraBusy(
+                f"{devices[self._index].displayname} is on the bus and "
+                "enumerated, but would not open.")
 
         cam = self._cam
         resolutions = []

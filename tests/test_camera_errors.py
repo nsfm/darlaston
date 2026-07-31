@@ -189,3 +189,55 @@ def test_v4l2_backend_reports_no_raw_and_streams_colour(tmp_path):
         cam.close()
     finally:
         v4l2.cv2.VideoCapture = monkey
+
+
+def test_problems_say_what_to_do_and_survive_to_the_window():
+    """Every failure a first-time user can hit must carry next steps, and
+    they must reach the status the window renders -- an explanation that
+    only exists in a traceback reaches nobody, because nobody starts a
+    GUI from a terminal."""
+    from darlaston.camera.errors import (CameraBusy, CameraProblem,
+                                         NoCameraFound, PermissionDenied,
+                                         SdkMissing, SdkTooOld)
+
+    problems = [SdkMissing(), SdkTooOld("/x/libtoupcam.so", ("Toupcam_a",)),
+                NoCameraFound(), CameraBusy(), PermissionDenied()]
+    kinds = set()
+    for p in problems:
+        assert isinstance(p, CameraProblem)
+        assert p.heading and not p.heading.endswith("."), p.heading
+        assert p.steps, f"{type(p).__name__} tells nobody what to do"
+        # Deliberately not asserting terminal punctuation: a step that is
+        # a command to copy must not end in a full stop, because somebody
+        # will paste it.
+        assert all(len(s.strip()) >= 10 for s in p.steps), p.steps
+        assert str(p), "must still be a usable exception message"
+        kinds.add(p.kind)
+    assert len(kinds) == len(problems), "kinds must distinguish the cases"
+
+
+def test_session_carries_a_problem_through_to_status():
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.errors import SdkMissing
+    from darlaston.camera.session import CameraSession
+
+    published = []
+
+    def boom():
+        raise SdkMissing()
+
+    session = CameraSession(boom, published.append, lambda f: None,
+                            is_present=lambda: True)
+    session.RETRY_BACKOFF = (0.0,)
+    session._try_connect_once = None
+    try:
+        session._try_connect()
+    except SdkMissing as exc:
+        session._fail(exc)
+
+    faults = [s for s in published if s.state is CameraState.ERROR]
+    assert faults, "the failure must be published, not just raised"
+    status = faults[-1]
+    assert status.kind == "sdk-missing"
+    assert status.steps and "--usb" in " ".join(status.steps)
+    assert "traceback" not in status.detail.lower()

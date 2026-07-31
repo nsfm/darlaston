@@ -41,6 +41,7 @@ import numpy as np
 
 from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
+from .errors import CameraBusy, NoCameraFound
 
 #: Raw Bayer fourccs, so a device that *does* offer one can be recognised
 #: and reported. The Imaging Source's industrial cameras are the realistic
@@ -157,13 +158,13 @@ class V4L2Backend(CameraBackend):
         found = (describe(self._node) if self._node
                  else (enumerate_cameras() or [None])[self._index])
         if not found:
-            raise RuntimeError("no V4L2 capture device found")
+            raise NoCameraFound("USB camera")
         self._node = found["node"]
         self._cap = cv2.VideoCapture(self._node, cv2.CAP_V4L2)
         if not self._cap.isOpened():
-            raise RuntimeError(
-                f"{self._node} ({found['card']}) could not be opened — "
-                "another program may hold it")
+            raise CameraBusy(
+                f"{found['card']} at {self._node} is present but would "
+                "not open.")
         # MJPEG where offered: a 1600x1200 YUYV stream is 46 MB/s and will
         # not fit USB 2.0, which is what most of these cameras are on.
         if "MJPG" in found["formats"]:

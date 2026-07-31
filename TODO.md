@@ -311,6 +311,35 @@ Ordered within each section by how much it would change what gets built.
       producer makes Basler/IDS/Daheng cameras enumerate through
       `EnumV2`, that is an industrial-camera backend for one line.
       Entirely unproven — needs a borrowed camera and an hour.
+- [ ] **A retouch brush.** Both commercial stackers' answer to the
+      physically-unfixable halo is a human with a brush, and in our
+      architecture that is cheap: the aligned slices and the depth map
+      already exist on disk, so "take this region from slice N" is a
+      local paint operation on the depth map that then flows through the
+      blend we already have. The zone at a depth discontinuity genuinely
+      has no correct pixel — a ray is observed twice, once sharp and once
+      as a blur circle — so no algorithm will ever finish this job, which
+      is exactly why Zerene and Helicon both ship the brush instead.
+      Wants: a slice picker, a soft round brush, undo, and a live
+      before/after. The stack window is where it belongs.
+- [ ] **Tell people when there is a newer version.** A copy handed to a
+      stranger is a copy that never updates. Check a published version
+      file on a timer, mention it quietly in the status bar, and never
+      block on it or phone home with anything identifying — a lookup of a
+      static file, no telemetry, and an off switch in settings. Ship the
+      switch before the check.
+- [ ] **The turret-belief question is a UX one, not a detection one.**
+      The 16×/0.4-on-a-25× session traced to a prompt being ignored and
+      the turret never being set before the capture, which the software
+      then faithfully recorded. Detection is not the thing to tune. The
+      question is what the app should do when its belief is *stale rather
+      than wrong*: an ignored proposal already marks the objective
+      uncertain, but nothing stops a capture from being written with an
+      uncertain belief, and nothing surfaces it at the moment it matters.
+      Options worth weighing: refuse-and-ask at capture time (harsh but
+      unmissable), write "objective: unconfirmed" into the file rather
+      than a confident wrong number, or make the uncertain state loud in
+      the rail instead of a small "?".
 - [ ] **The slide map as a finding aid.** The other half of the plate
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that

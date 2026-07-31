@@ -88,3 +88,120 @@ def explain(exc: BaseException) -> str:
         return str(exc) or exc.__class__.__name__
     name, advice = _CODES.get(hr, ("unknown", "The camera reported an error."))
     return f"{advice}  [{name} 0x{hr:08X}]"
+
+
+# ---- problems a person has to do something about ---------------------------
+
+class CameraProblem(Exception):
+    """A failure stated as a person would need it stated.
+
+    Three fields, because three questions get asked in order: what is
+    wrong, why, and what do I do now. The last one is why this class
+    exists at all -- the previous code matched substrings against
+    exception text to guess the same thing, which is a heuristic sitting
+    where a fact belongs.
+
+    Nobody starts a GUI from a terminal, so none of this may end up only
+    in a traceback. `kind` is the machine-readable half so the window can
+    offer the right button rather than parsing the prose.
+    """
+
+    kind = "unknown"
+
+    def __init__(self, heading: str, detail: str = "",
+                 steps: tuple[str, ...] = ()) -> None:
+        super().__init__(heading if not detail else f"{heading} — {detail}")
+        self.heading = heading
+        self.detail = detail
+        self.steps = tuple(steps)
+
+
+class SdkMissing(CameraProblem):
+    """No vendor SDK is installed, so no camera of that family can open."""
+
+    kind = "sdk-missing"
+
+    def __init__(self, brands: tuple[str, ...] = ()) -> None:
+        super().__init__(
+            "No camera SDK installed",
+            "These cameras can only be reached through the manufacturer's "
+            "own software, which darlaston does not bundle. It is a "
+            "one-time install.",
+            (
+                "Download the Linux SDK from your camera's manufacturer. "
+                "ToupTek, AmScope, Altair, Bresser, MallinCam, Meade, OGMA, "
+                "Omegon, Orion, RisingCam, SVBony and TS-Optics all publish "
+                "one, and any of them works.",
+                "Unpack it so that a path like "
+                "~/toup/sdk-<version>/linux/x64/libtoupcam.so exists.",
+                "Or set the TOUPCAM_SDK environment variable to wherever you "
+                "unpacked it.",
+                "Restart darlaston.",
+                "If you have an ordinary USB microscope camera instead, "
+                "start darlaston with --usb. It will work without any SDK, "
+                "though such cameras cannot produce raw files.",
+            ))
+
+
+class SdkTooOld(CameraProblem):
+    """A library is installed but predates functions darlaston needs."""
+
+    kind = "sdk-old"
+
+    def __init__(self, path: str, missing: tuple[str, ...]) -> None:
+        super().__init__(
+            "The installed camera SDK is too old",
+            f"{path} is missing {', '.join(missing)}. ToupLite bundles a "
+            "library from 2021 under exactly the same filename as a current "
+            "SDK, so having both installed is easy to do by accident.",
+            ("Download a current SDK from your camera's manufacturer.",
+             "Set TOUPCAM_SDK to point at it, so the old copy is not found "
+             "first.",
+             "Restart darlaston."))
+
+
+class NoCameraFound(CameraProblem):
+    """The SDK loaded and reported no devices."""
+
+    kind = "no-camera"
+
+    def __init__(self, what: str = "camera") -> None:
+        super().__init__(
+            f"No {what} found",
+            "The software is working, but nothing answered on the bus.",
+            ("Check that the camera is plugged in.",
+             "Try a different USB port, and a different cable — a marginal "
+             "cable does not fail cleanly, it renegotiates to USB 2.0 and "
+             "everything simply becomes slow.",
+             "Some cameras take a few seconds after being plugged in."))
+
+
+class CameraBusy(CameraProblem):
+    """Something else already owns the device."""
+
+    kind = "busy"
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(
+            "Another program is using the camera",
+            detail or "The device opened, but something else holds it.",
+            ("Close ToupLite, ToupView, AmScope, or any other capture "
+             "program.",
+             "On a laptop, a video-call application may have claimed it.",
+             "darlaston will connect on its own once the camera is free."))
+
+
+class PermissionDenied(CameraProblem):
+    """Present on the bus, but not openable by this user."""
+
+    kind = "permission"
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(
+            "No permission to open the camera",
+            detail or "The camera is on the bus but this user cannot open "
+            "it. Cameras need a udev rule to be usable without root.",
+            ("Copy the SDK's udev rules file (99-toupcam.rules or your "
+             "brand's equivalent) into /etc/udev/rules.d/.",
+             "Run: sudo udevadm control --reload-rules",
+             "Unplug the camera and plug it back in."))
