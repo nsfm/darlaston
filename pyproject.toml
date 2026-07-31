@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "darlaston"
+description = "Capture, calibration, mosaicking and focus stacking for photomicrography"
+readme = "README.md"
+requires-python = ">=3.11"
+# The base licence, as an SPDX expression. The section 7 additional
+# permission for camera libraries is not an SPDX-listed exception, so it
+# cannot go in this field -- it travels as a licence file instead, which
+# is what shipping both paths below does.
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "LICENSE.EXCEPTION"]
+authors = [{ name = "Nate Dube", email = "nate@ndube.com" }]
+keywords = ["microscopy", "photomicrography", "focus-stacking", "mosaic",
+            "diatoms", "dng", "raw"]
+dynamic = ["version"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    # *headless* is not an accident and must not be "upgraded" to plain
+    # opencv-python. The full wheel bundles its own copy of Qt, which
+    # loads alongside PySide6's and produces the classic "could not load
+    # the Qt platform plugin xcb" crash at startup -- from two Qts in one
+    # process, not from anything wrong with either. Nothing here uses
+    # cv2's own GUI functions; PySide6 is the entire interface.
+    "opencv-python-headless>=4.8",
+    "PySide6>=6.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.urls]
+Homepage = "https://github.com/nsfm/darlaston"
+Documentation = "https://github.com/nsfm/darlaston/blob/main/README.md"
+"Camera support" = "https://github.com/nsfm/darlaston/blob/main/SUPPORT.md"
+
+[project.scripts]
+darlaston = "darlaston.ui.main:main"
+
+[tool.setuptools]
+# Explicit rather than auto-discovered: `spike/`, `tools/` and `tests/`
+# sit beside the package and none of them belong in a wheel.
+packages = [
+    "darlaston",
+    "darlaston.calib",
+    "darlaston.camera",
+    "darlaston.capture",
+    "darlaston.live",
+    "darlaston.process",
+    "darlaston.session",
+    "darlaston.ui",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "darlaston.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
