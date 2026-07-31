@@ -103,6 +103,12 @@ def present(vendor: str | tuple[str, ...] = TOUPTEK_VENDORS) -> bool:
     """
     wanted = (vendor,) if isinstance(vendor, str) else tuple(vendor)
     if not sys.platform.startswith("linux"):
-        return False
+        # Unknown, and unknown has to mean *try*. This gates whether the
+        # session attempts to open a camera at all, so answering "no" off
+        # Linux -- where there is no sysfs to read -- left macOS sitting at
+        # "waiting for a camera" for ever with one plugged in. The cost of
+        # guessing yes is one open that fails and says why; the cost of
+        # guessing no is an application that never works at all.
+        return True
     return any(_read(d / "idVendor") in wanted
                for d in Path("/sys/bus/usb/devices").glob("*"))

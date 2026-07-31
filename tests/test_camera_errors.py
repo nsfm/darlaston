@@ -281,3 +281,135 @@ def test_sdk_sources_never_offer_a_link_they_cannot_serve():
         if source.automatic:
             assert source.url.startswith("https://"), source.url
             assert source.approx_mb > 0, "an automatic fetch states its size"
+
+
+# ---- running somewhere that is not Linux -----------------------------------
+
+def test_library_naming_follows_the_platform(monkeypatch):
+    """BRANDS records the Linux filename because that is where this was
+    written. The vendors ship one archive holding every platform and only the
+    convention changes -- Windows drops the `lib` prefix."""
+    from darlaston.camera import toupcam
+
+    monkeypatch.setattr(toupcam.sys, "platform", "darwin")
+    assert toupcam.library_name("libtoupcam.so") == "libtoupcam.dylib"
+    assert toupcam.library_name("libmeadecam.so") == "libmeadecam.dylib"
+
+    monkeypatch.setattr(toupcam.sys, "platform", "win32")
+    assert toupcam.library_name("libtoupcam.so") == "toupcam.dll"
+
+    monkeypatch.setattr(toupcam.sys, "platform", "linux")
+    assert toupcam.library_name("libtoupcam.so") == "libtoupcam.so"
+
+
+def test_library_directories_match_the_shipped_archive(monkeypatch):
+    """Read off ToupTek 59.30594's actual tree, not assumed: mac/ is a single
+    universal binary, and arm64 Linux is split into glibc and musl builds --
+    which is why that one returns two candidates."""
+    from darlaston.camera import toupcam
+
+    monkeypatch.setattr(toupcam.sys, "platform", "darwin")
+    assert toupcam.library_dirs() == ("mac",)
+
+    monkeypatch.setattr(toupcam.sys, "platform", "linux")
+    monkeypatch.setattr(toupcam.platform, "machine", lambda: "x86_64")
+    assert toupcam.library_dirs() == ("linux/x64",)
+    monkeypatch.setattr(toupcam.platform, "machine", lambda: "aarch64")
+    assert toupcam.library_dirs() == ("linux/arm64/glibc", "linux/arm64/musl")
+    monkeypatch.setattr(toupcam.platform, "machine", lambda: "armv7l")
+    assert toupcam.library_dirs()[0] == "linux/armhf"
+
+    monkeypatch.setattr(toupcam.sys, "platform", "win32")
+    monkeypatch.setattr(toupcam.platform, "machine", lambda: "AMD64")
+    assert toupcam.library_dirs()[0] == "win/x64"
+
+
+def test_the_loader_finds_a_mac_sdk(monkeypatch, tmp_path):
+    """The whole point: an SDK unpacked on a Mac must be found where the
+    vendor actually puts it, without the loader having been told."""
+    from darlaston.camera import toupcam
+
+    root = tmp_path / "sdk-59"
+    (root / "mac").mkdir(parents=True)
+    (root / "python").mkdir()
+    (root / "python" / "toupcam.py").write_text("# binding\n")
+    lib = root / "mac" / "libtoupcam.dylib"
+    lib.write_bytes(b"not a real dylib")
+
+    monkeypatch.setattr(toupcam.sys, "platform", "darwin")
+    seen = {}
+
+    class FakeCDLL:
+        def __init__(self, path, mode=0):
+            seen["path"] = path
+
+        def __getattr__(self, name):
+            return object()          # every REQUIRED symbol present
+
+    monkeypatch.setattr(toupcam.ctypes, "CDLL", FakeCDLL)
+    monkeypatch.setattr(toupcam, "_Vendor",
+                        lambda mod, module, cls, prefix: "loaded")
+    monkeypatch.setattr(toupcam, "__import__", lambda n: object(), raising=False)
+    import builtins
+    monkeypatch.setattr(builtins, "__import__",
+                        lambda n, *a, **k: object() if n == "toupcam"
+                        else __import__(n, *a, **k))
+
+    got = toupcam._load_brand(root, "toupcam", "libtoupcam.so",
+                              "Toupcam", "TOUPCAM")
+    assert got == "loaded"
+    assert seen["path"] == str(lib), "must load the mac build, not guess"
+
+
+def test_presence_unknown_means_try_rather_than_refuse(monkeypatch):
+    """This gates whether the session opens a camera at all. Answering "no"
+    off Linux -- where there is no sysfs to read -- left macOS sitting at
+    "waiting for a camera" for ever with one plugged in."""
+    from darlaston.camera import usb
+
+    monkeypatch.setattr(usb.sys, "platform", "darwin")
+    assert usb.present() is True
+    assert usb.probe().port is None, "still honest that it cannot tell"
+
+    monkeypatch.setattr(usb.sys, "platform", "win32")
+    assert usb.present() is True
+
+
+def test_sdk_verification_accepts_each_platform_build(monkeypatch, tmp_path):
+    """The installer proved the download by finding exactly linux/x64. It has
+    to find mac/ and win/x64 the same way, and still refuse android/x64 --
+    which sorts first and is a valid ELF for the wrong operating system."""
+    from darlaston.camera import sdk_install, toupcam
+
+    root = tmp_path / "toupcam" / "sdk-59"
+    for sub, name in (("android/x64", "libtoupcam.so"),
+                      ("linux/x64", "libtoupcam.so"),
+                      ("mac", "libtoupcam.dylib"),
+                      ("win/x64", "toupcam.dll")):
+        (root / sub).mkdir(parents=True, exist_ok=True)
+        (root / sub / name).write_bytes(b"stub")
+    (root / "python").mkdir()
+    (root / "python" / "toupcam.py").write_text("# binding\n")
+
+    class FakeCDLL:
+        def __init__(self, path, mode=0):
+            self.path = path
+
+        def __getattr__(self, name):
+            return object()
+
+    monkeypatch.setattr(sdk_install.ctypes if hasattr(sdk_install, "ctypes")
+                        else __import__("ctypes"), "CDLL", FakeCDLL,
+                        raising=False)
+    import ctypes
+    monkeypatch.setattr(ctypes, "CDLL", FakeCDLL)
+
+    for plat, machine, expect in (("linux", "x86_64", "linux/x64"),
+                                  ("darwin", "arm64", "mac"),
+                                  ("win32", "AMD64", "win/x64")):
+        monkeypatch.setattr(toupcam.sys, "platform", plat)
+        monkeypatch.setattr(toupcam.platform, "machine", lambda m=machine: m)
+        found = sdk_install._verify(tmp_path / "toupcam", "toupcam")
+        assert found == root, f"{plat}: found {found}"
+        # And never the android build, whatever the platform.
+        assert "android" not in str(found)

@@ -107,6 +107,31 @@ most of the test suite. Develops the whole application without hardware.
 
 ---
 
+### Operating systems
+
+Linux is the tested platform: everything in this document was measured
+there, on the bench camera.
+
+**macOS is wired but unverified.** The vendors ship one archive holding
+every platform, so the pieces that differ are small and are now handled:
+the loader looks for `mac/libtoupcam.dylib` rather than the Linux build
+(ToupTek ships it as a universal binary, so Intel and Apple silicon are
+both covered by the same file), the SDK installer verifies that same
+build, and the USB presence check no longer answers "no camera" simply
+because there is no sysfs to read — which would have left the window
+waiting for ever with a camera plugged in. Those paths are covered by
+tests that simulate the platform. None of it has been run on a Mac, so
+treat it as ready to try rather than as support.
+
+An ordinary webcam is **Linux only**: `--usb` needs V4L2, and while
+OpenCV can open a camera through macOS's own framework, everything that
+finds one and describes it is a V4L2 ioctl. Asked for on another
+platform it now says so rather than connecting to nothing in silence.
+
+**Windows is untested and unclaimed.** The library naming is handled
+(`toupcam.dll`, without the `lib` prefix) but nobody has run it, and
+support that cannot be tested is a claim rather than a feature.
+
 ## Intended
 
 Ordered by how many people it reaches per unit of work.

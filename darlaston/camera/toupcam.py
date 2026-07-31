@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import platform
 import sys
 import threading
 import time
@@ -42,6 +43,49 @@ from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
 from .errors import (CameraBusy, NoCameraFound, SdkMissing,
                      SdkTooOld, is_retryable)
+
+def library_name(soname: str) -> str:
+    """The file this platform's build of a vendor library is called.
+
+    BRANDS records the Linux name because that is where this was written;
+    the vendors ship one archive holding every platform, and only the
+    filename convention changes. Windows drops the `lib` prefix.
+    """
+    stem = soname
+    if stem.startswith("lib"):
+        stem = stem[3:]
+    stem = stem.split(".")[0]
+    if sys.platform == "darwin":
+        return f"lib{stem}.dylib"
+    if sys.platform.startswith("win"):
+        return f"{stem}.dll"
+    return f"lib{stem}.so"
+
+
+def library_dirs() -> tuple[str, ...]:
+    """Where inside a vendor SDK this platform's build lives, best first.
+
+    Read off the archive rather than assumed. ToupTek 59.30594 ships
+    mac/ as a single universal binary covering Intel and Apple silicon,
+    win/{x64,x86,arm64}, and for Linux x64, x86, armhf, armel, ostl and
+    an arm64 split into glibc and musl builds -- which is why arm64
+    returns two candidates and the loader tries both. Anything not
+    matched falls back to the 64-bit desktop build for the platform,
+    since that is what almost everyone is on.
+    """
+    if sys.platform == "darwin":
+        return ("mac",)
+    machine = platform.machine().lower()
+    if sys.platform.startswith("win"):
+        return ("win/arm64",) if "arm" in machine else ("win/x64", "win/x86")
+    if machine in ("aarch64", "arm64"):
+        return ("linux/arm64/glibc", "linux/arm64/musl")
+    if machine.startswith("arm"):
+        return ("linux/armhf", "linux/armel")
+    if machine in ("i386", "i686", "x86"):
+        return ("linux/x86",)
+    return ("linux/x64",)
+
 
 #: The rebadge family. ToupTek manufactures for a dozen brands and ships
 #: each one the same SDK with its symbols renamed -- verified binary to
@@ -105,9 +149,13 @@ class _Vendor:
 def _load_brand(root: Path, module: str, soname: str, cls: str,
                 prefix: str):
     """Try one brand inside one SDK root. Returns a _Vendor or None."""
-    lib = root / "linux/x64" / soname
     binding = root / "python"
-    if not lib.exists() or not (binding / f"{module}.py").exists():
+    if not (binding / f"{module}.py").exists():
+        return None
+    name = library_name(soname)
+    lib = next((root / d / name for d in library_dirs()
+                if (root / d / name).exists()), None)
+    if lib is None:
         return None
     # RTLD_LOCAL, deliberately: the absolute-path preload exists so the
     # binding's bare-name LoadLibrary finds *this* copy rather than

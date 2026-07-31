@@ -194,36 +194,45 @@ def _verify(unpacked: Path, brand: str) -> Path:
     """
     import ctypes
 
-    from .toupcam import BRANDS, REQUIRED
+    from .toupcam import BRANDS, REQUIRED, library_dirs, library_name
 
     entry = next((b for b in BRANDS if b[0] == brand), None)
     if entry is None:
         raise ValueError(f"unknown brand {brand!r}")
     _module, soname, cls, _prefix = entry
 
-    for lib in sorted(unpacked.rglob(soname)):
-        # Exactly linux/x64, not merely a path containing "x64". The
-        # archive also ships android/x64, which sorts first and is a
-        # perfectly valid ELF for the wrong operating system -- dlopen
-        # fails on its dependencies with a message about libm having an
-        # invalid ELF header, which names nothing that helps.
-        if lib.parent.name != "x64" or lib.parent.parent.name != "linux":
+    name = library_name(soname)
+    wanted = library_dirs()
+    for lib in sorted(unpacked.rglob(name)):
+        # The exact platform subdirectory, not merely a path containing
+        # something that looks like one. The archive ships android/x64
+        # too, which sorts first and is a perfectly valid ELF for the
+        # wrong operating system -- dlopen then fails on its dependencies
+        # with a message about libm having an invalid ELF header, which
+        # names nothing that helps. Matched from the end so the SDK's own
+        # wrapper directory does not have to be guessed.
+        parts = lib.parent.parts
+        match = next((d for d in wanted
+                      if tuple(d.split("/")) == parts[-len(d.split("/")):]),
+                     None)
+        if match is None:
             continue
         handle = ctypes.CDLL(str(lib), mode=ctypes.RTLD_LOCAL)
         missing = [fn for fn in REQUIRED if not hasattr(handle, f"{cls}_{fn}")]
         if missing:
             raise RuntimeError(
-                f"the downloaded {soname} is missing "
+                f"the downloaded {name} is missing "
                 f"{', '.join(missing)} -- it is not a current SDK")
-        # linux/x64/lib*.so -> the root two levels up, which is what the
-        # loader expects to be handed.
-        root = lib.parent.parent.parent
+        # Up out of the platform subdirectory, however deep it was, to the
+        # root the loader expects to be handed.
+        root = lib.parents[len(match.split("/"))]
         if not (root / "python").is_dir():
             raise RuntimeError(
                 f"the archive has no python bindings beside {lib}")
         return root
     raise RuntimeError(
-        f"no {soname} for x64 was found in the downloaded archive")
+        f"no {name} for {'/'.join(wanted)} was found in the "
+        f"downloaded archive")
 
 
 def installed() -> list[str]:

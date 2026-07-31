@@ -1596,13 +1596,22 @@ def _readout(key: str, value_widget: QtWidgets.QLabel) -> QtWidgets.QHBoxLayout:
 
 def _list_cameras() -> int:
     """Everything on this machine darlaston could drive, and how well."""
-    from ..camera import usb
-    from ..camera.v4l2 import enumerate_cameras
+    import sys as _sys
 
+    from ..camera import usb
+
+    linux = _sys.platform.startswith("linux")
     link = usb.probe()
-    if link.port:
-        print(f"ToupTek family: {link.product or 'camera'} on {link.port} "
-              f"(vendor {link.vendor}, link {link.speed_mbps or '?'} Mbps)")
+    if link.port or not linux:
+        if link.port:
+            print(f"ToupTek family: {link.product or 'camera'} on {link.port} "
+                  f"(vendor {link.vendor}, link {link.speed_mbps or '?'} Mbps)")
+        else:
+            # No sysfs to read, so the bus cannot be surveyed. Ask the SDK
+            # instead of reporting "none", which off Linux would be a
+            # statement about this code rather than about the machine.
+            print("ToupTek family: cannot survey the bus on this platform, "
+                  "asking the driver directly")
         try:
             from ..camera.toupcam import ToupcamBackend
             cam = ToupcamBackend()
@@ -1618,6 +1627,11 @@ def _list_cameras() -> int:
     else:
         print("ToupTek family: none on the bus")
 
+    if not linux:
+        print("\nV4L2 / UVC: Linux only. On this platform an ordinary "
+              "webcam is not reachable this way.")
+        return 0
+    from ..camera.v4l2 import enumerate_cameras
     found = enumerate_cameras()
     print(f"\nV4L2 / UVC: {len(found)} capture device"
           f"{'' if len(found) == 1 else 's'}")
@@ -1654,6 +1668,15 @@ def main() -> int:
         allow_synthetic = False
         presence = None                      # synthetic is always there
     elif args.usb:
+        if not sys.platform.startswith("linux"):
+            # cv2 can open a webcam here through the platform's own
+            # framework, but everything that finds one and describes it is
+            # V4L2 ioctls against /dev/video. Saying so beats connecting to
+            # nothing in silence.
+            print("--usb needs V4L2, which is Linux only. A ToupTek-family "
+                  "camera works on this platform; an ordinary webcam does "
+                  "not, yet.")
+            return 2
         def make() -> CameraBackend:
             from ..camera.v4l2 import V4L2Backend
             return V4L2Backend()

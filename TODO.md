@@ -996,9 +996,20 @@ Ordered within each section by how much it would change what gets built.
       vendors replace these archives in place. Only ToupTek has a
       verified direct link; the rest get their download page and a button
       that opens it. Tested against the real vendor.
-- [ ] **Windows testing.** Support that cannot be tested is a claim, not a
-      feature. Linux and macOS supported, Windows best-effort until someone
-      with the hardware actually runs it.
+- [ ] **macOS: wired, unverified.** The platform-specific pieces are done
+      and tested by simulation -- the loader finds `mac/libtoupcam.dylib`
+      (a universal binary, so Intel and Apple silicon share one file), the
+      SDK installer verifies that build, `--list-cameras` stops claiming
+      "none on the bus" where there is no sysfs to survey, and the presence
+      check answers *try* rather than *no*, which had left the window
+      waiting for ever with a camera plugged in. Nobody has run it on a
+      Mac. Next: pull it down there, `--list-cameras`, then a capture.
+      Known remaining: `--usb` is Linux only (V4L2 ioctls), and config
+      lives in `~/.config/darlaston` rather than `~/Library`, which works
+      and is consistent but is not the platform convention.
+- [ ] **Windows testing.** Library naming is handled (`toupcam.dll`, no
+      `lib` prefix) and nothing else has been looked at. Support that
+      cannot be tested is a claim, not a feature.
 
 ## Later
 
