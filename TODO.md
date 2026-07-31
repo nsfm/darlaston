@@ -1002,9 +1002,19 @@ Ordered within each section by how much it would change what gets built.
 
 ## Later
 
-- [ ] **Gallery and basic develop view (v2).** Most microscopists are not raw
-      photographers; they want a JPEG and sliders in the app. `develop.py`'s
-      primitives are kept warm for this.
+- [x] ~~**It writes a photograph now, not only a negative.**~~ Every output
+      was a raw file: you could shoot a fifteen-tile stacked arrangement and
+      be unable to send it to anybody. Captures, merged stacks and stitched
+      composites now leave a JPEG beside the raw, developed in
+      `process/develop.py` from the levels and white balance the raw itself
+      declares so the two agree. Default is both; no ordinary camera ships
+      set to raw only. JPEG-only *skips* the raw rather than deleting it,
+      and never applies to a tile or a slice, which the stitcher and merge
+      read back.
+- [ ] **Gallery and basic develop view (v2).** The sidecar above is the
+      camera's JPEG, one honest rendering with no choices in it. This is the
+      other half: browsing what you shot, and a few sliders over the raw for
+      people who are not raw photographers and never will be.
 - [ ] **Setup card** — "what's your setup?", neofetch style. Drafted in
       `session/setup_card.py`; Nate is workshopping the design.
 - [ ] **Audio focus tone.** Nobody in the surveyed field does this. Demoted
@@ -1015,5 +1025,7 @@ Ordered within each section by how much it would change what gets built.
       TMC2209 + RP2040, ~$35. Optional accelerator only; the unmodified-scope
       workflow must be complete without it. DISCOVERY.md §9b.
 - [ ] Setup editor, so the provisional scope in `ui/main.py` can go away.
-- [ ] Session resumability and disk budgeting, needed once mosaics reach 40
-      tiles (~47 GB of slices if none are discarded).
+- [ ] Session resumability, needed once mosaics reach 40 tiles. The
+      *budgeting* half is done: free space is on the status bar permanently,
+      brass under 20 GB and red under 2, so a session no longer dies of a
+      full disk without warning. Resuming an interrupted one is still open.
