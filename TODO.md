@@ -65,10 +65,15 @@ Ordered within each section by how much it would change what gets built.
       24.0 ms against a 25 ms budget with every optional feature off, so
       there was no headroom at all; peaking and a sweep took it to 31.3 ms
       and it dropped frames.
-- [x] ~~**Live loop profiled again, on the real camera this time.**~~ Three
-      measured changes, worth 24.0 to 12.8 ms on a quiet machine, drops to
-      zero. Nearly all of it was allocation and scale factors rather than
-      arithmetic: splitting the preview into planes allocated three fresh
+- [x] ~~**Live loop profiled again, on the real camera this time.**~~ Worth
+      24.0 ms to 8.9 ms, and frames dropped to zero at every core count
+      tested. Nearly all of it was allocation and scale factors rather than
+      arithmetic, and the same scale-factor trap turned up in three separate
+      places, so it is worth stating once as a rule: **OpenCV only has a
+      fast box-average INTER_AREA path when the scale factor is a whole
+      number, and reducing to a smaller size with a worse factor is
+      routinely slower than reducing to a larger one with a good factor.**
+      Specifically, splitting the preview into planes allocated three fresh
       2.2 MP buffers per frame, 3217 minor page faults of kernel mapping and
       zeroing 6.6 MB thirty times a second, which was almost the whole of
       that stage against about 0.8 ms of actual deinterleave. The tracker
@@ -88,15 +93,34 @@ Ordered within each section by how much it would change what gets built.
       two cores -- which means less work arriving, not cheaper work, is the
       cure. Capping 40 to 15 took a two-core machine from 185% of a core to
       80%, more than any feature in the table can give. Defaults are now 40
-      at eight cores or more, 30 at four, 15 below that.
-- [ ] **Turret watch is the largest stage left**, 4.3 to 7.0 ms depending on
-      load, for a feature that detects a human turning a turret. Its comment
-      claims it is "cheap per frame -- a 256-square resize and a mean", which
-      the measurement does not support, so either the comment is wrong or an
-      expensive path runs every frame. It is also the obvious candidate for
-      running at a divisor, unlike the tracker: an objective change takes
-      about a second of hand movement, where the tracker genuinely needs
-      every frame (see below).
+      at eight cores or more, 30 at four, 15 below that. After both that and
+      the stage work, every size tested fits its budget and drops nothing:
+      sixteen cores 8.9 ms and 297% of a core, four cores 12.6 ms and 156%,
+      two cores 24.8 ms and 92% -- a two-core laptop now runs the whole
+      application inside a single core, where before it needed most of two
+      and still dropped a sixth of the frames.
+- [ ] **Faster analysis does not quiet the fans by itself**, and the panel
+      cannot show why. Halving the frame cost took the loop from 30 fps to
+      about 40 at essentially unchanged CPU: the work per frame fell and the
+      number of frames rose to match, because the camera was always
+      delivering more than the loop could take. Only the rate cap converts
+      that saving into silence, which is the argument for it being the first
+      thing the over-budget hint names.
+- [x] ~~**Turret watch**~~ was the largest stage left and turned out to be
+      the same trap a third time: it built its 256 square from the full
+      frame, 1824/256 is 7.125, and that one downscale was 3.88 ms of a
+      4.01 ms stage. It now reduces the quarter-size frame the tracker
+      already made. A/B through the real pipeline over five rotations: byte
+      identical proposals, directions and confidences, 5.18 ms to 0.70 ms.
+      A divisor was measured too and is *not* worth taking -- safe up to
+      N=3, but only 0.35 ms once the resize is fixed, against tripled
+      detection latency.
+- [ ] **Turret belief is the rotation sign, not the detector.** The A/B
+      above reproduces it cleanly and rules out the arithmetic: driving the
+      mock through a rotation with direction +1 reads back as -1, and four
+      of five rotations name the wrong objective on *both* routes. So this
+      is the optical path's sign convention, which is the UX question
+      already raised rather than a detection-tuning one.
 - [ ] **The tracker must not run at a divisor**, recorded so it is not
       re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
       0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
