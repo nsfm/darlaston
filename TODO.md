@@ -164,12 +164,24 @@ Ordered within each section by how much it would change what gets built.
       detection latency.
 - [x] ~~**GPU acceleration: measured, and declined for now.**~~ OpenCV 5
       has a working OpenCL path here through `cv2.UMat`, needing no new
-      dependency, and on speed it delivers: the whole per-frame chain runs
-      14.83 ms on the processor against 3.38 ms on the graphics card, 4.4x,
-      with the upload and download included rather than wished away. Split
-      is 11x, the resizes 8-12x, histograms 3.6x. Sobel and Gaussian blur
-      are *slower* on it, 0.75x and 0.55x, so the focus metric and peaking
-      would want to stay put.
+      dependency. Split is 11x on it, the resizes 8-12x, histograms 3.6x;
+      Sobel and Gaussian blur are *slower*, 0.75x and 0.55x, so the focus
+      metric and peaking would want to stay put.
+      **The 4.4x I first measured was flattered by my own benchmark.** It
+      kept everything resident on the card and came back to host memory
+      twice. The real loop hands data to six consumers that want host
+      memory -- phase correlation, the turret detector, the blank check,
+      the focus metric, the preview copy Qt keeps, and the histogram values
+      it indexes -- and each is a download. Written the way the loop would
+      actually need it: 22.52 ms against 14.26 ms, **1.58x**, not 4.4x.
+      And it is not a switch. `cv2.ocl.setUseOpenCL(True)` does nothing on
+      its own -- measured 7.14 ms against 7.47 ms for a split -- because
+      the acceleration only engages for `cv2.UMat` inputs. So it is a
+      change to every line that touches a frame, plus a numpy path kept
+      alongside for the machines that cannot use it.
+      There is also a clincher for the one stage worth offloading: a GPU
+      preview scale is about 1.56 ms with its transfers, and the `fast`
+      setting already does it on the processor in about 1 ms.
       **The watts say the opposite of the milliseconds, and the watts are
       what the question was about.** Paced at 40 fps, moving that chain to
       the card frees 0.14 of a processor core and costs 10.2 W at the card.
