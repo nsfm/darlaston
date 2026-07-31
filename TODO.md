@@ -797,7 +797,17 @@ Ordered within each section by how much it would change what gets built.
       ToupTek SDK ships with no licence, EULA or copyright notice of any
       kind, and downstream packagers have each invented a different
       answer about what it permits.
-- [ ] Verify `focus-stack`'s licence before vendoring (MIT as of Jan 2026).
+- [x] ~~Verify `focus-stack`'s licence before vendoring.~~ Moot: nothing
+      was vendored. The merge in `process/stack.py` is ours end to end —
+      constrained phase-correlation alignment, Weber-normalised Tenengrad,
+      joint-bilateral weighted-median depth refinement, sub-slice
+      interpolation and push-pull diffusion, every stage of it placed by
+      measurement on `tools/stack_bench.py`. Two comments cite
+      PetteriAimonen/focus-stack by name because its approach was read and
+      then *tested against ours* — the Guo whole-curve fit lost on 4 of 5
+      bench scenes and was not adopted. Reading a project and citing what
+      you learned is not vendoring, and no third-party stacking code is in
+      the tree.
 
 ## Packaging
 
