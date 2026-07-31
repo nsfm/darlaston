@@ -39,6 +39,7 @@ from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
+from .darkroom_ui import ARTIFACTS, PlateDialog, RenderDialog
 from .stack_ui import StackAssembly
 from .stitch_ui import StitchDialog
 from .photographer_ui import PhotographerDialog
@@ -161,8 +162,6 @@ class MainWindow(QtWidgets.QMainWindow):
         capture_menu = self.toolbar.add_menu("Capture")
         capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
-        capture_menu.addAction("Stitch mosaic…", self._stitch_mosaic)
-        capture_menu.addAction("Render depth from stack…", self._wiggle_dialog)
         capture_menu.addSeparator()
         # In the menu rather than the rail: it is set once per illumination
         # style and then left alone, and the rail is already too full to
@@ -176,6 +175,19 @@ class MainWindow(QtWidgets.QMainWindow):
             "sections, where no part of the field is neutral by nature.")
         self.wb_action.toggled.connect(
             lambda on: setattr(self.capture, "white_balance", on))
+
+        # The darkroom is what happens to captures once the microscope is
+        # done with them. Kept out of Capture, which holds the things you
+        # set before and during a session; together they read as a junk
+        # drawer, and every one of these was reachable only from a Python
+        # prompt until now.
+        darkroom = self.toolbar.add_menu("Darkroom")
+        darkroom.addAction("Stitch mosaic…", self._stitch_mosaic)
+        darkroom.addAction("Render depth from stack…", self._wiggle_dialog)
+        darkroom.addAction("Make a plate…", self._plate_dialog)
+        darkroom.addSeparator()
+        darkroom.addAction("Install DNG thumbnailer…",
+                           self._install_thumbnailer)
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -1011,45 +1023,48 @@ class MainWindow(QtWidgets.QMainWindow):
     _wiggle_dir = None
 
     def _wiggle_dialog(self) -> None:
-        """Parallax artifacts from any finished stack on disk."""
+        """Depth artifacts from any finished stack on disk."""
         start = str(self._wiggle_dir or self.settings.capture_root)
         directory = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Stack folder (with stacked.dng + depth.png)", start)
         if directory:
-            self._run_wiggle(Path(directory))
+            RenderDialog(Path(directory), self._run_wiggle, self).exec()
 
     def _on_wiggle(self) -> None:
         if self._wiggle_dir is not None:
             self.assembly.wiggle_btn.setEnabled(False)
-            self._run_wiggle(self._wiggle_dir)
+            RenderDialog(self._wiggle_dir, self._run_wiggle, self).exec()
+            self.assembly.wiggle_btn.setEnabled(True)
 
-    def _run_wiggle(self, directory: Path) -> None:
-        self.strip.set_note("synthesising parallax…")
-
+    def _run_wiggle(self, directory: Path, wanted=None) -> None:
+        wanted = set(wanted or [k for k, _l, _h, on in ARTIFACTS if on])
         invert = self.settings.wiggle_invert
+        self.strip.set_note("synthesising from the depth map…")
 
         def work():
             from ..process.aperture import focus_pull
             from ..process.mesh import export_ply, turntable
             from ..process.relief import dic
             from ..process.wiggle import autostereogram, stereo, wigglegram
-            try:
-                # Ordered by how long each takes, so the quick wins land
-                # while the operator is still looking at the folder.
-                wigglegram(directory, invert=invert)
-                stereo(directory, invert=invert)
-                dic(directory, invert=invert)
-                export_ply(directory, invert=invert)
-                autostereogram(directory, invert=invert)
-                focus_pull(directory, invert=invert)
-                turntable(directory, invert=invert)
-                self.bridge.wiggle.emit(
-                    ("wobble, focus pull, turntable, stereo pair, anaglyph, "
-                     f"autostereogram, DIC and mesh → {directory.name}",
-                     True))
-            except Exception as exc:
-                self.bridge.wiggle.emit((f"wigglegram failed — {exc}",
-                                         False))
+            jobs = [("wiggle", wigglegram), ("stereo", stereo),
+                    ("dic", dic), ("mesh", export_ply),
+                    ("sirds", autostereogram), ("pull", focus_pull),
+                    ("turntable", turntable)]
+            made, failed = [], []
+            for key, fn in jobs:
+                if key not in wanted:
+                    continue
+                try:
+                    fn(directory, invert=invert)
+                    made.append(key)
+                except Exception as exc:
+                    # One artifact failing must not cost the others: they
+                    # are independent renders of the same two files.
+                    failed.append(f"{key} ({exc})")
+            note = f"{len(made)} rendered → {directory.name}"
+            if failed:
+                note += " · failed: " + ", ".join(failed)
+            self.bridge.wiggle.emit((note, not failed))
 
         threading.Thread(target=work, daemon=True, name="wiggle").start()
 
@@ -1058,6 +1073,46 @@ class MainWindow(QtWidgets.QMainWindow):
         note, ok = message
         self.strip.set_note(note)
         self.assembly.wiggle_btn.setEnabled(True)
+
+    def _plate_dialog(self) -> None:
+        start = Path(self._wiggle_dir or self.settings.capture_root)
+        PlateDialog(start, self._run_plate, self).exec()
+
+    def _run_plate(self, sources, target, columns, title, footer) -> None:
+        self.strip.set_note("arranging the plate…")
+
+        def work():
+            from ..process.plate import plate
+            try:
+                path = plate(sources, target, columns=columns,
+                             title=title, footer=footer)
+                self.bridge.wiggle.emit((f"plate → {path.name}", True))
+            except Exception as exc:
+                self.bridge.wiggle.emit((f"plate failed — {exc}", False))
+
+        threading.Thread(target=work, daemon=True, name="plate").start()
+
+    def _install_thumbnailer(self) -> None:
+        """Teach the file manager to show our DNGs.
+
+        It cannot already: the desktop's thumbnailer sniffs our files as
+        image/x-adobe-dng and has no loader for that type, so the preview
+        every one of them carries is never reached.
+        """
+        from ..process.thumbnail import install
+        try:
+            path = install()
+        except Exception as exc:
+            self.strip.set_note(f"could not install thumbnailer — {exc}")
+            return
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Thumbnailer installed")
+        box.setText(f"Wrote {path.name}.")
+        box.setInformativeText(
+            "Restart the file manager (or log out and in), then clear the "
+            "old empty entries:\n\n    rm -rf ~/.cache/thumbnails")
+        box.setStyleSheet(theme.stylesheet())
+        box.exec()
 
     def _run_stack_merge(self, directory) -> None:
         opts = dict(output=self.settings.stack_output,
