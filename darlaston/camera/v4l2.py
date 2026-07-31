@@ -320,7 +320,7 @@ class V4L2Backend(CameraBackend):
                 ok, image = self._cap.read()
                 self._select(previous)
             if not ok or image is None:
-                raise RuntimeError("capture failed — the camera returned "
+                raise RuntimeError("capture failed -- the camera returned "
                                    "no frame")
             return Frame(data=np.ascontiguousarray(image), seq=self._seq,
                          timestamp=time.time(),

@@ -380,7 +380,7 @@ def _explain(exc: Exception) -> str:
     SDK failures are decoded from their numeric code rather than matched on
     their text: the vendor's Linux exception carries no message at all, and
     what `str()` produces is the *signed* form of a code the SDK documents in
-    hex — so string matching could never have recognised one. That is how a
+    hex -- so string matching could never have recognised one. That is how a
     real capture failure once reached the operator as "-2147417825".
     """
     from ..camera.errors import hresult_of

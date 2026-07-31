@@ -115,7 +115,7 @@ def load_pair(directory: Path | str, width: int = WIGGLE_W,
     dmap = directory / "depth.png"
     if not dng.exists() or not dmap.exists():
         raise FileNotFoundError(
-            f"{directory} has no image + depth.png pair — finish the "
+            f"{directory} has no image + depth.png pair -- finish the "
             "stack's merge, or stitch the mosaic, first")
     rgb, white = _read_composite(dng)
     img = _develop(rgb, white)

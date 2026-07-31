@@ -15,7 +15,7 @@ one thing. They are not:
 
 Five objectives times three illuminations is fifteen flats *in principle*. In
 practice one subject is shot with one objective under one illumination, so one
-is needed — and §3 of DESIGN.md removes even that from most sessions.
+is needed -- and §3 of DESIGN.md removes even that from most sessions.
 """
 from __future__ import annotations
 

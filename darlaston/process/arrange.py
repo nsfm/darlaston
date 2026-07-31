@@ -181,7 +181,7 @@ def arrange(specimens: list[Specimen], target: Path | str,
     each to the same size would be prettier and would lie.
     """
     if not specimens:
-        raise ValueError("nothing to arrange — no specimens were found")
+        raise ValueError("nothing to arrange -- no specimens were found")
     # Balance the ring. Specimens arrive sorted by size, and placing them
     # in that order puts every big valve on one side and tips the whole
     # flower over. Dealing alternately from the two ends of the sorted

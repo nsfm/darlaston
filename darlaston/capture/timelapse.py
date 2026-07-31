@@ -57,7 +57,7 @@ class TimelapseStatus:
         if self.free_bytes and self.free_bytes < 5e9:
             bits.append(f"{self.free_bytes / 1e9:.1f} GB free")
         if self.dark_stale:
-            bits.append("dark is stale — reshoot it")
+            bits.append("dark is stale -- reshoot it")
         return " · ".join(bits)
 
 
@@ -114,7 +114,7 @@ class Timelapse:
                 self._emit(shot, count, wait, t0)
                 if self._stop.wait(min(wait, 1.0)):
                     self._emit(shot, count, 0, t0, done=True,
-                               message=f"timelapse stopped — {shot} frames")
+                               message=f"timelapse stopped -- {shot} frames")
                     return
             if not self._capture.trigger(setup, subject=subject, slide=slide,
                                          frames=frames):
@@ -130,7 +130,7 @@ class Timelapse:
                         time.sleep(0.1)
                     shot += 1
                     self._emit(shot, count, 0, t0, done=True,
-                               message=f"timelapse stopped — {shot} frames")
+                               message=f"timelapse stopped -- {shot} frames")
                     return
             shot += 1
             # No "next in" after the final shot -- there is no next.
@@ -138,7 +138,7 @@ class Timelapse:
                     else max(0.0, t0 + shot * interval - time.monotonic()))
             self._emit(shot, count, left, t0)
         self._emit(shot, count, 0, t0, done=True,
-                   message=f"timelapse finished — {shot} frames")
+                   message=f"timelapse finished -- {shot} frames")
 
     def _emit(self, shot: int, count: int, next_in: float, t0: float,
               done: bool = False, message: str = "") -> None:

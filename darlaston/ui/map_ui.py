@@ -245,7 +245,7 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.mosaic_btn.setToolTip(
             "Start a mosaic: every capture becomes a tile in a session "
             "folder,\nplaced on the map at its tracked position. Steer for "
-            "15–25% overlap\nbetween neighbours — the readout says how much "
+            "15–25% overlap\nbetween neighbours -- the readout says how much "
             "you have.")
         self.mosaic_btn.clicked.connect(
             lambda on: self.mosaic_requested.emit(bool(on)))
@@ -330,13 +330,13 @@ class SlideMapPanel(QtWidgets.QWidget):
             return None
         n = len(self.model.tiles)
         if n == 0:
-            return "mosaic — first tile when ready", theme.BRASS
+            return "mosaic -- first tile when ready", theme.BRASS
         if self._pos is None or self._frame[0] <= 0:
             return f"mosaic · {n} tiles", theme.DIM
         best = max((overlap_fraction(self._pos, t.pos, self._frame)
                     for t in self.model.tiles), default=0.0)
         if best <= 0.005:
-            return (f"mosaic · {n} tiles · no overlap — back up", theme.BAD)
+            return (f"mosaic · {n} tiles · no overlap -- back up", theme.BAD)
         colour = theme.GOOD if 0.12 <= best <= 0.35 else theme.BRASS
         return f"mosaic · {n} tiles · overlap {best * 100:.0f}%", colour
 
@@ -360,7 +360,7 @@ class SlideMapPanel(QtWidgets.QWidget):
         elif not self._tracking:
             # Held, not lost: the position resumes when structure returns,
             # but anything cranked over blank glass is not measured.
-            text, colour = "holding — nothing to track", theme.DIM
+            text, colour = "holding -- nothing to track", theme.DIM
         else:
             n = len(self.model.snapshots)
             text = f"tracking · {n} field{'s' if n != 1 else ''} mapped"

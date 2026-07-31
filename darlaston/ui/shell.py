@@ -128,7 +128,7 @@ class StatusBar(QtWidgets.QFrame):
             f"background: {theme.PANEL}; border-top: 1px solid {theme.LINE};")
 
         self.dot = Dot()
-        self.state = QtWidgets.QLabel("—")
+        self.state = QtWidgets.QLabel("--")
         self.state.setProperty("role", "sub")
         self.context = QtWidgets.QLabel("")
         self.context.setProperty("role", "sub")
@@ -291,6 +291,7 @@ class WaitingPage(QtWidgets.QWidget):
     """
 
     use_synthetic = QtCore.Signal()
+    install_sdk_requested = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -324,6 +325,12 @@ class WaitingPage(QtWidgets.QWidget):
 
         self.synthetic = QtWidgets.QPushButton("Use the synthetic camera instead")
         self.synthetic.clicked.connect(self.use_synthetic)
+        # Shown only for the failure it fixes. A button offering to
+        # download a 242 MB vendor archive should not be sitting there
+        # while the camera is merely unplugged.
+        self.install_sdk = QtWidgets.QPushButton("Install camera SDK…")
+        self.install_sdk.clicked.connect(self.install_sdk_requested)
+        self.install_sdk.hide()
         self.copy_btn = QtWidgets.QPushButton("Copy this message")
         self.copy_btn.setProperty("role", "seg")
         self.copy_btn.clicked.connect(self._copy)
@@ -332,6 +339,7 @@ class WaitingPage(QtWidgets.QWidget):
         buttons = QtWidgets.QHBoxLayout()
         buttons.setSpacing(8)
         buttons.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        buttons.addWidget(self.install_sdk)
         buttons.addWidget(self.synthetic)
         buttons.addWidget(self.copy_btn)
         row = QtWidgets.QWidget()
@@ -393,6 +401,8 @@ class WaitingPage(QtWidgets.QWidget):
             [status.message or "", status.detail or ""]
             + [f"{i}. {s}" for i, s in enumerate(steps, 1)]).strip()
         self.copy_btn.setVisible(bool(faulted and self._last))
+        self.install_sdk.setVisible(
+            getattr(status, "kind", "") in ("sdk-missing", "sdk-old"))
         link = status.link
         if link is not None and link.advice:
             self.advice.setText(link.advice)
@@ -463,7 +473,7 @@ class ObjectiveStepper(QtWidgets.QWidget):
         self.next = QtWidgets.QPushButton("›")
         for b in (self.prev, self.next):
             b.setProperty("role", "step")
-        self.label = QtWidgets.QLabel("—")
+        self.label = QtWidgets.QLabel("--")
         self.label.setProperty("role", "value")
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
@@ -506,7 +516,7 @@ class ObjectiveStepper(QtWidgets.QWidget):
 
     def _refresh(self) -> None:
         obj = self._turret.objective if self._turret else None
-        text = obj.label if obj else "—"
+        text = obj.label if obj else "--"
         if obj and self._uncertain:
             text += "  ?"
         self.label.setText(text)

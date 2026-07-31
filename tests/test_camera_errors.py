@@ -241,3 +241,43 @@ def test_session_carries_a_problem_through_to_status():
     assert status.kind == "sdk-missing"
     assert status.steps and "--usb" in " ".join(status.steps)
     assert "traceback" not in status.detail.lower()
+
+
+def test_sdk_install_refuses_an_archive_that_escapes_its_directory(tmp_path):
+    """Unpacking somebody else's zip is the one place here that handles a
+    file we did not write. A member with `../` in its path would be
+    written outside the install directory, so it is refused rather than
+    extracted."""
+    import zipfile
+
+    from darlaston.camera.sdk_install import _safe_extract
+
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("linux/x64/libtoupcam.so", b"fine")
+        zf.writestr("../../escaped.txt", b"not fine")
+
+    into = tmp_path / "into"
+    into.mkdir()
+    with zipfile.ZipFile(archive) as zf:
+        with pytest.raises(ValueError, match="outside"):
+            _safe_extract(zf, into)
+    assert not (tmp_path.parent / "escaped.txt").exists()
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_sdk_sources_never_offer_a_link_they_cannot_serve():
+    """Every entry either has a direct URL we fetch, or a human download
+    page — never a guessed archive link. Sending someone to a 404 is
+    worse than sending them to a page that works."""
+    from darlaston.camera.sdk_install import SOURCES, find
+    from darlaston.camera.toupcam import BRANDS
+
+    known = {b[0] for b in BRANDS}
+    for source in SOURCES:
+        assert source.brand in known, f"{source.brand} is not a known brand"
+        assert source.page.startswith("https://"), source.page
+        assert find(source.brand) is source
+        if source.automatic:
+            assert source.url.startswith("https://"), source.url
+            assert source.approx_mb > 0, "an automatic fetch states its size"

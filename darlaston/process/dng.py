@@ -2,7 +2,7 @@
 
 Two shapes, both verified end to end against darktable-cli 5.4.1:
 
-  * **Bayer DNG** for a single frame — the sensor's own mosaic, so the full raw
+  * **Bayer DNG** for a single frame -- the sensor's own mosaic, so the full raw
     pipeline stays available, written as packed 12-bit because that is what
     the sensor actually produces.
   * **Linear DNG** for anything stacked or stitched, which is demosaiced by
@@ -13,7 +13,7 @@ pidng is gone. It got us to first light and then set four limits at once: the
 full image in IFD0 with no SubIFD to hang a preview from, roughly 3.2 GB of
 working memory to write a 1.6 GB file, uncompressed 16-bit only, and no path
 past 4 GB. `process/tiff.py` replaces it; this module is now only the DNG
-*vocabulary* — which tags a raw developer needs, and what we put in them.
+*vocabulary* -- which tags a raw developer needs, and what we put in them.
 
 Nothing outside camera/ now depends on anything but numpy, OpenCV and Qt.
 """

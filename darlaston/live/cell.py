@@ -1,4 +1,4 @@
-"""LatestFrame — the single most important object in the application.
+"""LatestFrame -- the single most important object in the application.
 
 The live path is a *cell*, not a queue.
 

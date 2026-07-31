@@ -52,7 +52,7 @@ class ObjectiveRow(QtWidgets.QWidget):
         self.na.setDecimals(2)
         self.na.setSingleStep(0.05)
         self.na.setPrefix("NA ")
-        self.na.setSpecialValueText("—")
+        self.na.setSpecialValueText("--")
         self.na.setFixedWidth(78)
 
         self.kind = QtWidgets.QLineEdit()
@@ -196,7 +196,7 @@ class SetupDialog(QtWidgets.QDialog):
         self.condenser_na.setRange(0.0, 1.6)
         self.condenser_na.setDecimals(2)
         self.condenser_na.setSingleStep(0.05)
-        self.condenser_na.setSpecialValueText("— unknown —")
+        self.condenser_na.setSpecialValueText("-- unknown --")
         self.condenser_na.setValue(setup.scope.condenser_na or 0.0)
         self.condenser_na.setToolTip(
             "The condenser's *working* aperture, not the number engraved on "
@@ -204,7 +204,7 @@ class SetupDialog(QtWidgets.QDialog):
             "and the slide;\ndry, air caps it below 1.0, and the iris puts "
             "it anywhere below that.\n\nIt sets how bright each objective "
             "is, because the smaller of the two\napertures gathers the "
-            "light — and above about NA 0.5 that is the\ncondenser, not the "
+            "light -- and above about NA 0.5 that is the\ncondenser, not the "
             "objective. Used only as a first guess; a confirmed\nrotation "
             "teaches the real value.")
 
@@ -236,7 +236,7 @@ class SetupDialog(QtWidgets.QDialog):
         turret_box = QtWidgets.QVBoxLayout()
         turret_box.setSpacing(4)
         header = QtWidgets.QLabel(
-            "In turret order — the order matters for stepping and detection")
+            "In turret order -- the order matters for stepping and detection")
         header.setProperty("role", "key")
         turret_box.addWidget(header)
         positions = list(setup.scope.turret.positions) + [None] * 6

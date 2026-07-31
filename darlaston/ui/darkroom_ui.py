@@ -21,12 +21,12 @@ from . import theme
 #: (key, label, hint, default on). Order is roughly cheapest first, which
 #: is also the order the worker runs them in.
 ARTIFACTS = [
-    ("wiggle", "Wigglegram", "a looping wobble — wiggle.webm and .webp",
+    ("wiggle", "Wigglegram", "a looping wobble -- wiggle.webm and .webp",
      True),
     ("stereo", "Stereo pair and anaglyph",
      "crossed-eye pair, plus red/cyan", True),
     ("dic", "Darlaston Inferred Contrast",
-     "relief shaded from depth — looks like DIC, is not DIC", True),
+     "relief shaded from depth -- looks like DIC, is not DIC", True),
     ("mesh", "Printable mesh", "model.ply, watertight, colour per vertex",
      True),
     ("sirds", "Autostereogram", "a Magic Eye of the subject", False),
@@ -117,7 +117,7 @@ class PlateDialog(QtWidgets.QDialog):
         row.addStretch(1)
 
         self.title = QtWidgets.QLineEdit()
-        self.title.setPlaceholderText("Plate I — arrangement, 25×/0.65")
+        self.title.setPlaceholderText("Plate I -- arrangement, 25×/0.65")
         self.footer = QtWidgets.QLineEdit()
         self.footer.setPlaceholderText("collection, date, mountant…")
         self.columns = QtWidgets.QSpinBox()
@@ -207,13 +207,13 @@ class ArrangeDialog(QtWidgets.QDialog):
 
         head = QtWidgets.QLabel(
             f"<b>{self._directory.name}</b><br>"
-            "Cuts each frustule out and lays them out — what Darlaston did "
+            "Cuts each frustule out and lays them out -- what Darlaston did "
             "with a bristle.")
         head.setWordWrap(True)
 
         self.style = QtWidgets.QComboBox()
         for key, label, hint in self.STYLES:
-            self.style.addItem(f"{label} — {hint}", key)
+            self.style.addItem(f"{label} -- {hint}", key)
         self.title = QtWidgets.QLineEdit()
         self.title.setPlaceholderText("An arrangement")
 
@@ -223,7 +223,7 @@ class ArrangeDialog(QtWidgets.QDialog):
 
         note = QtWidgets.QLabel(
             "Only specimens it can isolate are used. A crowded field where "
-            "valves overlap may yield few or none — that is reported "
+            "valves overlap may yield few or none -- that is reported "
             "rather than guessed at.")
         note.setWordWrap(True)
         note.setProperty("role", "key")

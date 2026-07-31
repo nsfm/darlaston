@@ -187,11 +187,11 @@ class CalibrationService:
         # is still worth having -- it captures the illumination field and the
         # white balance -- but any debris in either frame survives into it, so
         # say so rather than letting it look finished.
-        caveat = ("  (two fields median to their mean — debris survives; "
+        caveat = ("  (two fields median to their mean -- debris survives; "
                   "three or more rejects it)" if len(banked) < 3 else "")
         self._emit(Progress(
             "flat", 1, 1, finished=True,
-            message=(f"from {len(banked)} fields — white balance "
+            message=(f"from {len(banked)} fields -- white balance "
                      f"R {gains[0]:.3f} G 1.000 B {gains[2]:.3f}{caveat}")))
 
     # ---- preview LUT -----------------------------------------------------
@@ -236,7 +236,7 @@ class CalibrationService:
                        values=lut.to_dict())
         sat = "  ".join(f"{n} {v}" for n, v in zip("RGB", lut.saturation))
         self._emit(Progress("lut", len(ladder), len(ladder), finished=True,
-                            message=f"preview saturates at raw — {sat}"))
+                            message=f"preview saturates at raw -- {sat}"))
 
     @staticmethod
     def _suspend_awb(backend) -> Callable[[], None]:

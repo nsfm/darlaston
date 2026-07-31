@@ -98,7 +98,7 @@ class StitchDialog(QtWidgets.QDialog):
             self.go.setEnabled(True)
             self._update()
         except Exception as exc:
-            self.note.setText(f"Cannot read that folder — {exc}")
+            self.note.setText(f"Cannot read that folder -- {exc}")
 
     def _scale(self) -> float:
         return CHOICES[max(0, self.buttons.checkedId())][1]
@@ -108,14 +108,14 @@ class StitchDialog(QtWidgets.QDialog):
             return
         for (label, scale), radio in zip(CHOICES, self._radios):
             g = self._geom[scale]
-            radio.setText(f"{label} — {g['w']} × {g['h']}   "
+            radio.setText(f"{label} -- {g['w']} × {g['h']}   "
                           f"{g['megapixels']:.0f} MP   "
                           f"{g['bytes'] / 1e9:.2f} GB")
             radio.setEnabled(g["fits"])
         g = self._geom[self._scale()]
         if not g["fits"]:
             self.note.setText(
-                "Past the 4 GB a DNG can address — choose a smaller size.")
+                "Past the 4 GB a DNG can address -- choose a smaller size.")
             self.go.setEnabled(False)
             return
         self.go.setEnabled(True)

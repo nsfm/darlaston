@@ -128,7 +128,7 @@ class MosaicSession:
         expected = f"tile_{index:03d}_stack"
         if name != expected:
             raise ValueError(f"stack {name} is not the next tile "
-                             f"({expected}) — tiles adopted out of order?")
+                             f"({expected}) -- tiles adopted out of order?")
         tile = Tile(index=index, filename=f"{name}/stacked.dng",
                     pos=(float(pos[0]), float(pos[1])) if pos else None,
                     frame=(int(frame[0]), int(frame[1])), stack=name)

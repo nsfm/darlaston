@@ -1,6 +1,6 @@
 """Where captures go, and what they are called.
 
-`~/Pictures` is not a guess — it is the platform convention on all three
+`~/Pictures` is not a guess -- it is the platform convention on all three
 targets, and on Linux it is *localised*, so it must be looked up rather than
 hardcoded. A German desktop calls it `~/Bilder`, and a user who relocated it
 expects us to notice.

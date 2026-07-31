@@ -72,7 +72,7 @@ class TimelapseDialog(QtWidgets.QDialog):
         self.interval.setEnabled(not running)
         self.count.setEnabled(not running)
         if running:
-            self.estimate.setText("Running — progress is in the status bar.")
+            self.estimate.setText("Running -- progress is in the status bar.")
 
     def _update_estimate(self) -> None:
         if self._timelapse.running:
@@ -89,7 +89,7 @@ class TimelapseDialog(QtWidgets.QDialog):
                 else f"{secs:.0f} seconds")
         self.estimate.setText(
             f"About {n * _FRAME_BYTES / 1e9:.1f} GB over {span}."
-            + ("  Longer than a dark master lives — reshoot it midway "
+            + ("  Longer than a dark master lives -- reshoot it midway "
                "or expect later frames uncalibrated." if secs > 8 * 3600
                else ""))
 

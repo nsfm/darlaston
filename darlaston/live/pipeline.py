@@ -1,4 +1,4 @@
-"""LivePipeline — frames in, LiveSignals out.
+"""LivePipeline -- frames in, LiveSignals out.
 
 This module is the boundary described in ARCHITECTURE.md 4, and the rules are
 not stylistic:

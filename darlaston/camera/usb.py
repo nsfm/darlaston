@@ -58,7 +58,7 @@ class LinkInfo:
             return None
         if self.speed_mbps <= HIGH_SPEED:
             return ("The link negotiated USB 2.0. Full-resolution capture needs "
-                    "USB 3.0, so this is usually a cable or a front-panel port — "
+                    "USB 3.0, so this is usually a cable or a front-panel port -- "
                     "try a shorter, well-shielded cable directly into a rear "
                     "USB 3 socket.")
         return None

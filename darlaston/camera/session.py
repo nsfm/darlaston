@@ -1,4 +1,4 @@
-"""CameraSession — owns the handle, the state machine, and reconnection.
+"""CameraSession -- owns the handle, the state machine, and reconnection.
 
 Nothing else opens or closes a camera.
 

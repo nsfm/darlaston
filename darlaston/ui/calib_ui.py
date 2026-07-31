@@ -6,7 +6,7 @@ the diatom is beautiful and calibration can wait. Capture anyway, and the file
 records what it did and did not have.
 
 The flat entry usually shows a count rather than a button, because blank fields
-are banked automatically while hunting for a subject — most of the time enough
+are banked automatically while hunting for a subject -- most of the time enough
 are already in hand before anyone thinks to ask.
 """
 from __future__ import annotations
@@ -91,7 +91,7 @@ class CalibrationButton(QtWidgets.QPushButton):
         self.setToolTip(
             "Dark, flat, white balance and preview profile for this "
             "configuration.\nClick to open. Missing products are a nag, "
-            "not a gate — capture anyway\nand the file records what it "
+            "not a gate -- capture anyway\nand the file records what it "
             "did and did not have.")
         self._restyle()
 
@@ -122,7 +122,7 @@ class CalibrationPanel(QtWidgets.QWidget):
                          "Blank fields are banked automatically while you hunt "
                          "for a subject.\nFour at distinct stage positions are "
                          "enough to median away slide debris.")
-        self.wb = _Row("white balance", "—",
+        self.wb = _Row("white balance", "--",
                        "Measured from the flat. A featureless illuminated "
                        "field is neutral by definition.")
         self.wb.button.setEnabled(False)

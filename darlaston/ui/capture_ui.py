@@ -103,7 +103,7 @@ class ShutterBar(QtWidgets.QWidget):
         self.arrow.setToolTip(
             "Average several exposures into one file.\n"
             "Noise falls as the square root: ×16 is two stops cleaner.\n"
-            "Hold still for the whole burst — motion between frames ghosts "
+            "Hold still for the whole burst -- motion between frames ghosts "
             "the average.")
 
         self._menu = QtWidgets.QMenu(self)
@@ -195,7 +195,7 @@ class SubjectField(QtWidgets.QWidget):
             f"QLineEdit:focus {{ border-color: {theme.BRASS}; }}")
 
         self.slide = QtWidgets.QLineEdit()
-        self.slide.setPlaceholderText("slide — mountant, coverslip, source")
+        self.slide.setPlaceholderText("slide -- mountant, coverslip, source")
         self.slide.setStyleSheet(self.edit.styleSheet())
 
         col = QtWidgets.QVBoxLayout(self)
@@ -294,7 +294,7 @@ class SettingsDialog(QtWidgets.QDialog):
             path = probe.resolve(setup=self._setup, seq=7, subject="dopamine")
             self.preview.setText(str(path))
         except Exception as exc:
-            self.preview.setText(f"invalid pattern — {exc}")
+            self.preview.setText(f"invalid pattern -- {exc}")
 
     def _save(self) -> None:
         self._settings.capture_root = self.root.text()

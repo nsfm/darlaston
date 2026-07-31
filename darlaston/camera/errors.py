@@ -20,7 +20,7 @@ from __future__ import annotations
 _CODES: dict[int, tuple[str, str]] = {
     0x8000FFFF: ("E_UNEXPECTED",
                  "The camera refused a setting while it was running. This is "
-                 "a bug in darlaston's mode handling — please report it."),
+                 "a bug in darlaston's mode handling -- please report it."),
     0x80004001: ("E_NOTIMPL",
                  "This camera model does not support that feature."),
     0x80070005: ("E_ACCESSDENIED",
@@ -29,26 +29,26 @@ _CODES: dict[int, tuple[str, str]] = {
     0x8007000E: ("E_OUTOFMEMORY", "The system is out of memory."),
     0x80070057: ("E_INVALIDARG",
                  "The camera rejected an argument. This is a bug in "
-                 "darlaston — please report it."),
+                 "darlaston -- please report it."),
     0x80004003: ("E_POINTER",
                  "The camera was handed a null pointer. This is a bug in "
-                 "darlaston — please report it."),
+                 "darlaston -- please report it."),
     0x80004005: ("E_FAIL", "The camera reported a generic failure."),
     0x8001010E: ("E_WRONG_THREAD",
                  "The camera was called from the wrong thread. This is a bug "
-                 "in darlaston — please report it."),
+                 "in darlaston -- please report it."),
     0x8007001F: ("E_GEN_FAILURE",
                  "The camera stopped responding. This is almost always "
                  "physical: try a different USB 3 port, reseat the cable, or "
                  "avoid a hub. The link can also drop under a long session."),
     0x800700AA: ("E_BUSY",
-                 "The camera is already in use — another copy of darlaston "
+                 "The camera is already in use -- another copy of darlaston "
                  "or ToupLite may have it open."),
     0x8000000A: ("E_PENDING", "The camera has no data ready yet."),
     0x8001011F: ("E_TIMEOUT",
                  "The camera did not deliver the frame in time. If the "
                  "exposure is long this may just need more patience; if it "
-                 "repeats, the link may have dropped to USB 2.0 — usually "
+                 "repeats, the link may have dropped to USB 2.0 -- usually "
                  "the cable."),
     0x80072743: ("E_UNREACH", "The camera is unreachable over the network."),
     0x800704C7: ("E_CANCELLED", "The operation was cancelled."),
@@ -110,7 +110,7 @@ class CameraProblem(Exception):
 
     def __init__(self, heading: str, detail: str = "",
                  steps: tuple[str, ...] = ()) -> None:
-        super().__init__(heading if not detail else f"{heading} — {detail}")
+        super().__init__(heading if not detail else f"{heading} -- {detail}")
         self.heading = heading
         self.detail = detail
         self.steps = tuple(steps)
@@ -124,22 +124,16 @@ class SdkMissing(CameraProblem):
     def __init__(self, brands: tuple[str, ...] = ()) -> None:
         super().__init__(
             "No camera SDK installed",
-            "These cameras can only be reached through the manufacturer's "
-            "own software, which darlaston does not bundle. It is a "
-            "one-time install.",
+            "Your camera needs a driver made by the company that built "
+            "it. This only has to be done once.",
             (
-                "Download the Linux SDK from your camera's manufacturer. "
-                "ToupTek, AmScope, Altair, Bresser, MallinCam, Meade, OGMA, "
-                "Omegon, Orion, RisingCam, SVBony and TS-Optics all publish "
-                "one, and any of them works.",
-                "Unpack it so that a path like "
-                "~/toup/sdk-<version>/linux/x64/libtoupcam.so exists.",
-                "Or set the TOUPCAM_SDK environment variable to wherever you "
-                "unpacked it.",
-                "Restart darlaston.",
+                "Click Install camera SDK below. darlaston will download "
+                "it and check that it works.",
+                "Or download it yourself from your camera maker's website "
+                "and unzip it into ~/toup/.",
                 "If you have an ordinary USB microscope camera instead, "
-                "start darlaston with --usb. It will work without any SDK, "
-                "though such cameras cannot produce raw files.",
+                "start darlaston with --usb. Those need no driver, but "
+                "they cannot produce raw files.",
             ))
 
 
@@ -170,7 +164,7 @@ class NoCameraFound(CameraProblem):
             f"No {what} found",
             "The software is working, but nothing answered on the bus.",
             ("Check that the camera is plugged in.",
-             "Try a different USB port, and a different cable — a marginal "
+             "Try a different USB port, and a different cable -- a marginal "
              "cable does not fail cleanly, it renegotiates to USB 2.0 and "
              "everything simply becomes slow.",
              "Some cameras take a few seconds after being plugged in."))

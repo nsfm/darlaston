@@ -1,4 +1,4 @@
-"""'What's your setup?' — a shareable summary of the rig.
+"""'What's your setup?' -- a shareable summary of the rig.
 
 Microscopy forums ask this constantly and the answers are always a paragraph of
 half-remembered model numbers. The app already knows the camera, the sensor,
@@ -66,7 +66,7 @@ def _rows(setup, info=None, link=None, calibration=None) -> list[Row]:
     turret = []
     for i, o in enumerate(scope.turret.positions):
         if o is None:
-            turret.append("—")
+            turret.append("--")
         else:
             turret.append(f"[{o.label}]" if i == scope.turret.current else o.label)
     if turret:
@@ -130,5 +130,5 @@ def render_markdown(setup, info=None, link=None, calibration=None) -> str:
     """For pasting into a forum post, where ASCII art tends not to survive."""
     rows = _rows(setup, info, link, calibration)
     out = [f"**{setup.camera.display}** on **{setup.scope.name}**", ""]
-    out += [f"- **{r.key}** — {r.value}" for r in rows]
+    out += [f"- **{r.key}** -- {r.value}" for r in rows]
     return "\n".join(out)

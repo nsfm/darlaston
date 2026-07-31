@@ -134,9 +134,17 @@ def load_sdk():
     global _vendor
     if _vendor is not None:
         return _vendor
-    roots = ([Path(os.environ["TOUPCAM_SDK"])] if os.environ.get("TOUPCAM_SDK")
-             else [p for pattern in ("toup/sdk-*", "toup")
-                   for p in sorted(Path.home().glob(pattern), reverse=True)])
+    if os.environ.get("TOUPCAM_SDK"):
+        roots = [Path(os.environ["TOUPCAM_SDK"])]
+    else:
+        from .sdk_install import INSTALL_ROOT
+        # Anything darlaston installed itself comes first: it was
+        # verified when it landed, whereas a hand-unpacked ~/toup could
+        # be the 2021 ToupLite copy.
+        roots = [p for p in sorted(INSTALL_ROOT.glob("*"), reverse=True)
+                 if p.is_dir()]
+        roots += [p for pattern in ("toup/sdk-*", "toup")
+                  for p in sorted(Path.home().glob(pattern), reverse=True)]
     for root in roots:
         for module, soname, cls, prefix in BRANDS:
             found = _load_brand(root, module, soname, cls, prefix)

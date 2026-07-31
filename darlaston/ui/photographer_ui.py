@@ -6,7 +6,7 @@ instrument; the person does not, and a slide photograph without attribution
 is a photograph that cannot be published, credited or licensed.
 
 Deliberately small, and deliberately empty by default. An unset copyright
-notice is worse than none — it looks like a claim that the work is unowned —
+notice is worse than none -- it looks like a claim that the work is unowned --
 so blank fields write no tag at all.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ class PhotographerDialog(QtWidgets.QDialog):
         self.name.setPlaceholderText("your name, as you want it credited")
 
         self.licence = QtWidgets.QComboBox()
-        self.licence.addItem("— none —", "")
+        self.licence.addItem("-- none --", "")
         for label, template in LICENCES:
             self.licence.addItem(label, template)
 
@@ -94,7 +94,7 @@ class PhotographerDialog(QtWidgets.QDialog):
         self.note.setText(
             "Written into every capture from now on.\n" + "\n".join(bits)
             if bits else
-            "Nothing set — captures carry no attribution, which is fine "
+            "Nothing set -- captures carry no attribution, which is fine "
             "until you share one.")
 
     def _save(self) -> None:

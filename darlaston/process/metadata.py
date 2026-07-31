@@ -26,7 +26,7 @@ def ascii_safe(text: str) -> str:
     """
     if not text:
         return text
-    swap = {"×": "x", "·": "-", "—": "-", "–": "-", "’": "'",
+    swap = {"×": "x", "·": "-", "--": "-", "–": "-", "’": "'",
             "“": '"', "”": '"', "µ": "u", "°": "deg"}
     for a, b in swap.items():
         text = text.replace(a, b)

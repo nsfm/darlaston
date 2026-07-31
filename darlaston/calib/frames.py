@@ -2,14 +2,14 @@
 
 Three products, three different ways of being made:
 
-  * **Dark** — average N frames with the light off. Averaging is right here:
+  * **Dark** -- average N frames with the light off. Averaging is right here:
     the signal is constant and the noise is not, so sqrt(N) applies directly.
-  * **Flat** — *median* several blank fields at different stage positions.
+  * **Flat** -- *median* several blank fields at different stage positions.
     Median rather than mean, because the whole point is to reject debris that
     happens to be in one frame. Slide debris moves with the stage and cancels;
     sensor dust and the illumination field do not, which is exactly the
     separation wanted.
-  * **White balance** — measured from the flat, since a featureless illuminated
+  * **White balance** -- measured from the flat, since a featureless illuminated
     field is neutral by definition. Not an estimate.
 """
 from __future__ import annotations

@@ -345,7 +345,7 @@ class FocusGroup(QtWidgets.QWidget):
         self.stack = _Toggle("stack", "Capture a Z-stack: rack the fine "
                                       "focus, pause, and a slice is taken.\n"
                                       "Rack again for the next. The knob is "
-                                      "the whole interface —\nnothing is "
+                                      "the whole interface --\nnothing is "
                                       "clicked between slices.")
         self.stack.toggled.connect(self._on_stack)
         self.peaking = _Toggle("peak", "Highlight the sharpest edges in the "
@@ -459,7 +459,7 @@ class CoverageMeter(QtWidgets.QWidget):
         p.setPen(DIM)
         p.drawText(QtCore.QRect(0, 18, w, 16),
                    QtCore.Qt.AlignmentFlag.AlignCenter,
-                   "covered — sweep complete" if done
+                   "covered -- sweep complete" if done
                    else f"{self._value * 100:.0f}% through focus"
                    + ("  still finding structure"
                       if self._value >= 0.999 else ""))
