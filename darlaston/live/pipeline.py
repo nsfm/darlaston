@@ -411,16 +411,28 @@ class LivePipeline:
 
         mark = self.meter.since("stage tracking", mark)
 
-        # Turret watch. Cheap per frame -- a 256-square resize and a mean --
-        # and the expensive log-polar step only runs on the one frame where a
-        # rotation finishes.
+        # Turret watch, from the downsample the tracker already made.
+        #
+        # This was believed to be "a 256-square resize and a mean", and the
+        # mean is indeed free -- but the resize was 3.88 ms of a 4.01 ms
+        # stage, because it fell into exactly the trap documented above:
+        # 1824/256 is 7.125, so INTER_AREA takes its generic gather path and
+        # one downscale cost more than the whole-frame work it was meant to
+        # avoid. Reducing the existing quarter-size frame instead costs
+        # 0.02 ms, and is the same box average applied in two passes.
+        # Measured over 30 rotations on real frames, 29 give a bit-identical
+        # proposal; the thirtieth agrees on which objective and differs only
+        # in confidence, on a frame already clipped to white.
+        #
+        # The log-polar step really does only run on the frame a rotation
+        # finishes, and costs 1.37 ms when it does.
         turret_event = None
         if self._turret is not None:
             # Exposure times gain is what the brightness reading has to be
             # divided by; without it the level says more about the last
             # slider touched than about which objective is in place.
             turret_event = self._turret_det.feed(
-                gray, self._turret,
+                small, self._turret,
                 exposure_gain=max(frame.exposure_us * frame.gain_pct, 1),
                 signatures=self._signatures, learned=self._learned)
 
