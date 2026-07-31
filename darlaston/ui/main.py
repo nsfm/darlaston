@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import shutil
 import signal
 import sys
 import threading
@@ -151,6 +152,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # After the widgets exist and before the first frame arrives, so the
         # preview is never briefly drawn at a quality nobody chose.
         self._apply_performance()
+        self._refresh_disk()
+        self._disk_timer = QtCore.QTimer(self)
+        self._disk_timer.timeout.connect(self._refresh_disk)
+        self._disk_timer.start(15000)
         self.pipeline.start()
         self.session.start()
 
@@ -1317,6 +1322,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self.perf_window.show()
         else:
             self.perf_window.hide()
+
+    def _refresh_disk(self) -> None:
+        """Room left where captures land.
+
+        Polled on a timer rather than folded into the frame signal: it is a
+        filesystem call, it changes on the scale of a capture rather than a
+        frame, and the capture folder can be moved or unplugged between two
+        of them -- so a failure here reports nothing rather than raising on
+        the UI thread.
+        """
+        root = self.settings.capture_root
+        try:
+            # The folder may not exist until the first capture creates it,
+            # so ask about the nearest parent that does.
+            probe = Path(root)
+            while not probe.exists() and probe != probe.parent:
+                probe = probe.parent
+            free = shutil.disk_usage(probe).free
+        except OSError:
+            free = None
+        self.strip.set_disk(free, root)
 
     def _sync_raw_requirement(self) -> None:
         """Tell the capture whether this frame is a photograph or a part.

@@ -386,3 +386,32 @@ def test_old_settings_files_still_load():
     assert s.artist == "Nate" and s.stack_smoothing == "normal"
     assert s.preview_quality == "fast" and s.cpu_threads == 0
     assert json.loads(json.dumps({k: v for k, v in old.items()}))
+
+
+def test_disk_readout_warns_before_it_is_too_late(qapp):
+    """A stacked mosaic writes tens of gigabytes without mentioning it. The
+    warning has to arrive while there is still room to do something about it,
+    which means gigabytes rather than megabytes."""
+    from darlaston.ui import theme
+    from darlaston.ui.shell import StatusBar
+
+    bar = StatusBar()
+
+    bar.set_disk(int(500e9), "/pictures")
+    assert bar.disk.text() == "500 GB free"
+    assert not bar.disk.styleSheet(), "plenty of room needs no colour"
+
+    # Under ten it gains a decimal, because "9 GB" and "9.4 GB" are
+    # different answers to "does one more tile fit".
+    bar.set_disk(int(9.4e9), "/pictures")
+    assert bar.disk.text() == "9.4 GB free"
+
+    bar.set_disk(int(12e9), "/pictures")
+    assert theme.BRASS in bar.disk.styleSheet(), "low should be visible"
+    bar.set_disk(int(1.2e9), "/pictures")
+    assert theme.BAD in bar.disk.styleSheet(), "critical should be alarming"
+    assert bar.DISK_CRITICAL_GB < bar.DISK_LOW_GB
+
+    # And an unreachable capture folder reports nothing rather than lying.
+    bar.set_disk(None)
+    assert bar.disk.text() == ""

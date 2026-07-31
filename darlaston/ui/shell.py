@@ -173,6 +173,13 @@ class StatusBar(QtWidgets.QFrame):
         self.numbers = QtWidgets.QLabel("")
         self.numbers.setProperty("role", "sub")
 
+        # Room left, always on show. A stacked mosaic writes tens of
+        # gigabytes without ever mentioning it -- forty tiles at thirty
+        # slices is about 47 GB -- and the first time anybody finds that out
+        # should not be a session dying halfway through a slide.
+        self.disk = QtWidgets.QLabel("")
+        self.disk.setProperty("role", "sub")
+
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(10, 0, 12, 0)
         row.setSpacing(10)
@@ -182,10 +189,39 @@ class StatusBar(QtWidgets.QFrame):
         row.addStretch(1)
         row.addWidget(self.preview)
         row.addWidget(self.rate)
+        row.addWidget(self.disk)
         row.addWidget(self.numbers)
         self._base = ""
         self._note = ""
         self._res_filled = False
+
+    #: Below this, the readout turns brass. A single stacked tile is
+    #: comfortably a gigabyte once its slices are counted, so a warning that
+    #: waits for the last few hundred megabytes arrives after the point
+    #: where anything could have been done about it.
+    DISK_LOW_GB = 20.0
+    #: And below this it is red: not enough for one more tile.
+    DISK_CRITICAL_GB = 2.0
+
+    def set_disk(self, free_bytes: int | None, root: str = "") -> None:
+        """Show the room left where captures are being written."""
+        if free_bytes is None:
+            self.disk.setText("")
+            self.disk.setToolTip("")
+            return
+        gb = free_bytes / 1e9
+        text = f"{gb:.0f} GB free" if gb >= 10 else f"{gb:.1f} GB free"
+        colour = ""
+        if gb < self.DISK_CRITICAL_GB:
+            colour = f"color: {theme.BAD};"
+        elif gb < self.DISK_LOW_GB:
+            colour = f"color: {theme.BRASS};"
+        self.disk.setText(text)
+        self.disk.setStyleSheet(colour)
+        self.disk.setToolTip(
+            f"Room left on the volume holding {root or 'your captures'}.\n"
+            "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
+            if root else "Room left where captures are written.")
 
     def select_rate(self, fps: int) -> None:
         at = self.rate.findData(int(fps))
