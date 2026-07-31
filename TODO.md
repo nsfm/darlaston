@@ -193,10 +193,18 @@ Ordered within each section by how much it would change what gets built.
       obvious compromise of offloading only the preview scale.
       The interesting configuration would be the integrated Intel graphics,
       which are already powered for the display and so have no waking to
-      pay for -- but `intel-compute-runtime` is not installed here, the ICD
-      points at a library that does not exist, and OpenCV consequently only
-      ever sees the NVIDIA card. That is a system package, not something a
-      microscopist's machine can be assumed to have.
+      pay for. It is not available on this machine, and the reason is not a
+      missing package: `intel-compute-runtime` is installed, ocl-icd does
+      load it, and OpenCV really does map `libigdrcl.so`. The runtime then
+      refuses the hardware -- `Unknown device: deviceId: 9bc4`, which is
+      this CometLake-H GT2 -- because Intel dropped Gen8 through Gen11 from
+      the mainline NEO releases. It would need the 24.35 legacy line from
+      the AUR. Not chased further: the integrated part shares system memory
+      with the processor rather than bringing its own, and has a fraction
+      of the discrete card's compute, so its ceiling sits below the 1.58x
+      the discrete card managed -- for the same integration cost. That last
+      point is reasoning rather than measurement, since the runtime will
+      not run here to be measured.
       Worth revisiting only if the live view ever needs full sensor
       resolution, where the arithmetic would grow past what the transfer
       and the wake cost. Today the loop uses about 15 ms of a 25 ms budget
