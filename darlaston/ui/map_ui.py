@@ -100,6 +100,16 @@ class _Canvas(QtWidgets.QWidget):
     # ---- paint -----------------------------------------------------------
 
     def paintEvent(self, event) -> None:
+        import time as _t
+
+        from .widgets import UI_METER
+        _m = _t.perf_counter()
+        try:
+            self._paint(event)
+        finally:
+            UI_METER.since("slide map paint", _m)
+
+    def _paint(self, event) -> None:
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(theme.SUNK))
         p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))

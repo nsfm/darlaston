@@ -32,6 +32,7 @@ from .cell import LatestFrame
 from .coverage import FocusCoverage
 from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
                     Region, measure, region_rect)
+from .profile import Meter
 from .tracker import StageTracker
 from .turret import TurretDetector, TurretEvent, model_signatures
 
@@ -92,6 +93,8 @@ class LiveSignals:
     #: UI asks and the operator confirms.
     turret_event: TurretEvent | None = None
     stats: dict = field(default_factory=dict)
+    #: Per-feature milliseconds for the frame loop, smoothed.
+    costs: dict = field(default_factory=dict)
 
 
 class LivePipeline:
@@ -135,6 +138,9 @@ class LivePipeline:
         self._prev_small: np.ndarray | None = None
         self._hann: np.ndarray | None = None
         self._analysed = 0
+        #: Per-feature frame costs, always running. live/profile.py
+        #: explains why this is not behind a flag.
+        self.meter = Meter()
         self._tick = threading.Event()
         self._t_last = time.perf_counter()
         self._rate = 0.0
@@ -314,6 +320,7 @@ class LivePipeline:
             coverage_acc = self._coverage
 
         data = frame.data
+        mark = time.perf_counter()
         # Green rather than luminance, for the same reason the clipping
         # warning uses it: the ISP boosts blue about three times to neutralise
         # this sensor, so blue pins in the preview at roughly a fifth of full
@@ -358,11 +365,15 @@ class LivePipeline:
         # honest to within about 12% and carries most of the luminance anyway.
         clipped = per[1]               # green
 
+        mark = self.meter.since("decode + histogram", mark)
+
         rect = region_rect(gray.shape, region, custom)
         score = measure(gray, metric, prefilter, rect)
         trace.push(score)
         gh, gw = gray.shape[:2]
         norm_rect = (rect[0] / gw, rect[1] / gh, rect[2] / gw, rect[3] / gh)
+
+        mark = self.meter.since("focus metric", mark)
 
         small = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_AREA)
         small_f = small.astype(np.float32)
@@ -378,6 +389,8 @@ class LivePipeline:
         self._still_for = 0 if moving else self._still_for + 1
         settled = self._still_for >= 8
 
+        mark = self.meter.since("stage tracking", mark)
+
         # Turret watch. Cheap per frame -- a 256-square resize and a mean --
         # and the expensive log-polar step only runs on the one frame where a
         # rotation finishes.
@@ -391,16 +404,30 @@ class LivePipeline:
                 exposure_gain=max(frame.exposure_us * frame.gain_pct, 1),
                 signatures=self._signatures, learned=self._learned)
 
+        if self._turret is not None:
+            mark = self.meter.since("turret watch", mark)
+        else:
+            self.meter.skip("turret watch")
+            mark = time.perf_counter()
+
         if self._blank is None:
             from .blank import BlankDetector
             self._blank = BlankDetector()
         blank = self._blank.looks_blank(small)
+
+        mark = self.meter.since("blank check", mark)
 
         # The sharpness field is the expensive part, so it is computed once
         # and shared: peaking draws it, coverage accumulates it.
         field = None
         if (peaking_on or sweeping) and self._analysed % self._peaking_divisor == 0:
             field = self._peaking(gray)
+
+        if field is not None:
+            mark = self.meter.since("sharpness field", mark)
+        else:
+            self.meter.skip("sharpness field")
+            mark = time.perf_counter()
 
         peak_map = field if peaking_on else None
         coverage = coverage_remaining = None
@@ -421,6 +448,12 @@ class LivePipeline:
             if coverage_acc.active:
                 coverage_remaining = coverage_acc.overlay((rh, rw))
 
+        if sweeping:
+            mark = self.meter.since("coverage", mark)
+        else:
+            self.meter.skip("coverage")
+            mark = time.perf_counter()
+
         self._analysed += 1
         self._tick.set()
         now = time.perf_counter()
@@ -430,6 +463,9 @@ class LivePipeline:
             self._rate = 0.9 * self._rate + 0.1 * (1.0 / dt)
 
         delivered, dropped = self._cell.stats
+        # The preview copy is charged to the UI, because that is
+        # who it exists for: the widget outlives the buffer pool.
+        self.meter.frame()
         self._emit(LiveSignals(
             seq=frame.seq,
             timestamp=frame.timestamp,
@@ -457,6 +493,7 @@ class LivePipeline:
             stats={"analysed_fps": self._rate, "delivered": delivered,
                    "dropped": dropped, "exposure_us": frame.exposure_us,
                    "gain_pct": frame.gain_pct},
+            costs=self.meter.snapshot(),
         ))
 
     def _track(self, small: np.ndarray, full_shape) -> tuple[tuple[float, float] | None, float]:

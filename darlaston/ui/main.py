@@ -37,6 +37,7 @@ from .about import AboutDialog
 from .calib_ui import CalibrationButton, CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
+from .perf_ui import PerfPanel
 from .setup_ui import SetupDialog
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
@@ -157,6 +158,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # every name having to change when the third tool appears.
         instrument = self.toolbar.add_menu("Instrument")
         instrument.addAction("Microscope setup…", self._open_setup)
+        self.perf_action = instrument.addAction("Performance")
+        self.perf_action.setCheckable(True)
+        self.perf_action.setToolTip(
+            "Show what each feature costs per frame, so the expensive ones "
+            "can be found rather than guessed at.")
+        self.perf_action.toggled.connect(self._toggle_perf)
         # Its own menu rather than a corner of Capture: attribution is the
         # one part of a file's provenance the instrument cannot supply, and
         # burying it is how photographs get published uncredited.
@@ -223,6 +230,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_panel.capture_dark.connect(self._do_dark)
         self.calib_panel.build_flat.connect(self._do_flat)
         self.calib_panel.build_lut.connect(self._do_lut)
+        # Performance, in a floating panel like the others. Off by
+        # default: it is a diagnostic, and a permanent cost table is a
+        # thing you stop seeing.
+        self.perf = PerfPanel()
+        self.perf_window = FloatingPanel("performance", self.view)
+        self.perf_window.set_relative(0.30, 0.06)
+        _fill(self.perf_window, self.perf)
+        self.perf_window.hide()
+
         self.calib_window = FloatingPanel("calibration", self.view)
         self.calib_window.set_relative(0.04, 0.06)
         _fill(self.calib_window, self.calib_panel)
@@ -1286,6 +1302,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         return False
 
+    def _toggle_perf(self, on: bool) -> None:
+        if on:
+            self.perf.set_budget(self.settings_rate())
+            self.perf_window.place((330, 320))
+            self.perf_window.show()
+        else:
+            self.perf_window.hide()
+
+    def settings_rate(self) -> int:
+        """The frame cap the loop is currently trying to hit."""
+        return int(self.session.framerate_cap or 40)
+
     def _open_setup(self) -> None:
         if self.setup is None:
             return
@@ -1446,6 +1474,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # drawing is thinned.
         self._tick = getattr(self, "_tick", 0) + 1
         if self._tick % 3 == 0:
+            if self.perf_window.isVisible():
+                self.perf.update_costs(s.costs, s.stats)
             self.histogram.set_data(s.histogram, s.clipped_fraction,
                                     s.black_fraction, s.channel_clipped)
             self.focus.set_data(s.focus_trace, s.focus_fraction_of_peak)

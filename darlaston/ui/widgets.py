@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..live.profile import Meter
+
 INK = QtGui.QColor("#e8e6e3")
 DIM = QtGui.QColor("#6b6864")
 PANEL = QtGui.QColor("#0b0d0b")
@@ -12,6 +14,11 @@ GOOD = QtGui.QColor("#5fb37a")
 WARN = QtGui.QColor("#d9a441")
 BAD = QtGui.QColor("#d0605e")
 BRASS = QtGui.QColor("#c89b4a")
+
+#: Paint costs land in the same table as the pipeline's feature costs, so
+#: "the preview" and "the slide map" can be compared against "peaking"
+#: rather than each being a separate mystery.
+UI_METER = Meter()
 
 
 class LiveView(QtWidgets.QWidget):
@@ -34,6 +41,15 @@ class LiveView(QtWidgets.QWidget):
                            QtWidgets.QSizePolicy.Policy.Expanding)
 
     def set_frame(self, rgb: np.ndarray, peaking: np.ndarray | None) -> None:
+        import time as _t
+        _m = _t.perf_counter()
+        try:
+            self._set_frame(rgb, peaking)
+        finally:
+            UI_METER.since("preview scale", _m)
+
+    def _set_frame(self, rgb: np.ndarray,
+                   peaking: np.ndarray | None) -> None:
         """Scale to the widget here, so painting is a straight blit.
 
         Qt's SmoothPixmapTransform resampling a 2.2 MP frame down to the
