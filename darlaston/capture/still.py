@@ -20,7 +20,7 @@ import numpy as np
 
 from ..calib import frames as F
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
-from ..process import dng
+from ..process import develop, dng
 from ..process.metadata import from_setup
 from ..session.settings import Settings, next_sequence
 
@@ -95,6 +95,11 @@ class StillCapture:
         #: polarised-light interference colours, fluorescence, stained
         #: sections -- where any estimate is a guess dressed as a measurement.
         self.white_balance = True
+        #: Set while a mosaic or stack session is open. Those captures are
+        #: ingredients rather than photographs -- the stitcher and the merge
+        #: read the raws back -- so a "JPEG only" preference must not apply
+        #: to them, however the operator has it set.
+        self.raw_required = False
         #: Write single frames as packed 12-bit. The sensor is 12-bit, so
         #: this is lossless and saves a quarter of every file: measured
         #: 39.9 MB down to 30.0 MB on a real 20 MP frame. Off writes 16-bit,
@@ -258,23 +263,52 @@ class StillCapture:
             # It gets a linear DNG, which says exactly that, rather than
             # a file claiming a Bayer pattern it does not have.
             decoded = out.ndim == 3
-            preview = dng.make_preview(
-                out, bayer=not (mono or decoded), black=black, white=white,
-                neutral=None if (mono or decoded)
-                else (neutral or dng.grey_world_neutral(out)))
-            if decoded:
-                written = dng.write_linear_streamed(
-                    path, lambda s, c: out[s:s + c],
-                    out.shape[0], out.shape[1], preview=preview,
-                    black=black, white=white,
-                    neutral=neutral or (1.0, 1.0, 1.0), meta=meta)
-            else:
-                written = dng.write_bayer_streamed(
-                    path, lambda s, c: out[s:s + c],
-                    out.shape[0], out.shape[1],
-                    preview=preview, pattern=pattern, black=black,
-                    white=white, neutral=neutral or (1.0, 1.0, 1.0),
-                    meta=meta, bits=bits)
+            shot = None if (mono or decoded) else (
+                neutral or dng.grey_world_neutral(out))
+
+            # What this capture is *for* decides whether the raw is
+            # optional. A tile or a slice is an ingredient -- the stitcher
+            # and the merge read it back -- so "JPEG only" must never apply
+            # to one. Skipping the write rather than deleting afterwards:
+            # a setting about file formats should not be able to remove a
+            # frame that already exists on disk.
+            want = self._settings.image_format
+            raw_wanted = want != "jpeg" or self.raw_required
+            written = None
+            if raw_wanted:
+                preview = dng.make_preview(
+                    out, bayer=not (mono or decoded), black=black,
+                    white=white, neutral=shot)
+                if decoded:
+                    written = dng.write_linear_streamed(
+                        path, lambda s, c: out[s:s + c],
+                        out.shape[0], out.shape[1], preview=preview,
+                        black=black, white=white,
+                        neutral=neutral or (1.0, 1.0, 1.0), meta=meta)
+                else:
+                    written = dng.write_bayer_streamed(
+                        path, lambda s, c: out[s:s + c],
+                        out.shape[0], out.shape[1],
+                        preview=preview, pattern=pattern, black=black,
+                        white=white, neutral=neutral or (1.0, 1.0, 1.0),
+                        meta=meta, bits=bits)
+
+            # The photograph, beside the negative, and written second: this
+            # is the pleasant half of the output and the raw is the
+            # irreplaceable half.
+            jpeg = None
+            if want in ("both", "jpeg"):
+                jpeg = Path(path).with_suffix(".jpg")
+                image = develop.develop(
+                    out, pattern=None if (mono or decoded) else pattern,
+                    black=black, white=white, neutral=shot)
+                if not develop.write_jpeg(jpeg, image,
+                                          self._settings.jpeg_quality):
+                    jpeg = None
+                del image
+            written = written or (str(jpeg) if jpeg else None)
+            if written is None:
+                raise RuntimeError("nothing could be written to disk")
 
             clipped = float((raw >= sensor_white).sum()) / raw.size
             self._on_state("idle")

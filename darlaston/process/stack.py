@@ -46,7 +46,7 @@ import cv2
 import numpy as np
 
 from ..capture.stack import StackSession
-from . import dng
+from . import develop, dng
 from .stitch import read_bayer_dng, read_metadata
 
 #: Per-slice alignment beyond this many half-res pixels is not focus
@@ -477,6 +477,19 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
         written = dng.write_linear_streamed(
             target, lambda s, c: result[s:s + c], h, w,
             preview=preview, neutral=neutral, white=4095 * 16, meta=meta)
+
+    # And the photograph. A merged stack is a finished thing rather than an
+    # ingredient, so it leaves something openable beside the negative --
+    # developed from the same levels and neutral the DNG declares, so the
+    # two agree rather than contradict each other.
+    try:
+        image = develop.develop(
+            result, pattern=None if result.ndim == 3 else "GBRG",
+            white=4095 * 16, neutral=neutral, rgb_input=result.ndim == 3)
+        develop.write_jpeg(target.with_suffix(".jpg"), image)
+        del image
+    except Exception:
+        pass          # the merge is the product; the rendering is a bonus
 
     # The depth map, twice. depth.png is the *data*: plain grayscale, near
     # slices dark and far slices light, the conventional encoding every

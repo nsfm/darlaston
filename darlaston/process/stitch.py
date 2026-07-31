@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 
 from ..capture.mosaic import MosaicSession, Tile
-from . import dng
+from . import develop, dng
 
 #: Refinement beyond this fraction of the overlap strip is not a refinement,
 #: it is the wraparound or a decoy. The prediction stands instead.
@@ -652,10 +652,24 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
             session.dir / session.tiles[len(session.tiles) // 2].filename)
     except Exception:
         meta = None                    # provenance is a bonus, never a gate
-    return dng.write_linear_streamed(
+    written = dng.write_linear_streamed(
         target, lambda s, c: result[s:s + c], ch, cw,
         preview=preview, neutral=neutral or (1.0, 1.0, 1.0),
         white=4095 * 16, meta=meta)
+
+    # The photograph. This is the thing the whole session was for, and until
+    # now it left the building as a 300 MB negative nobody could open
+    # without a raw developer. Developed band by band, because the canvas is
+    # already the peak of this operation's memory and promoting all of it to
+    # float would double that.
+    try:
+        image = develop.develop(result, pattern=None, white=4095 * 16,
+                                neutral=neutral or grey, rgb_input=True)
+        develop.write_jpeg(target.with_suffix(".jpg"), image)
+        del image
+    except Exception:
+        pass          # the composite is the product; the rendering is a bonus
+    return written
 
 
 def survey(directory: Path | str) -> tuple[MosaicSession, list, list]:

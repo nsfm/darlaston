@@ -81,6 +81,19 @@ class Settings:
     #: `0001_40x0.75_phase.dng` rather than carrying an empty gap.
     filename_pattern: str = "{seq}_{subject}_{objective}_{illumination}"
     raw_format: str = "dng"          # dng | tiff
+    #: What a capture leaves on disk: the raw file, a developed JPEG, or
+    #: both. Both by default, and deliberately -- no ordinary camera ships
+    #: set to raw only, and until now this program had no way at all to
+    #: produce a photograph somebody could open, which made every output a
+    #: negative.
+    #:
+    #: "jpeg" removes the raw once the JPEG is safely written, and only for
+    #: ordinary captures. Stack slices and mosaic tiles keep their raws
+    #: whatever this says, because the merge and the stitcher read them --
+    #: deleting those would mean a setting about file formats quietly
+    #: destroying the session's actual work.
+    image_format: str = "both"       # both | raw | jpeg
+    jpeg_quality: int = 95
     keep_slices: bool = False        # Z-stack slices after the EDF is built
     sequence_resets_daily: bool = True
     #: Written into every file as EXIF Artist and Copyright. Empty writes

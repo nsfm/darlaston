@@ -242,11 +242,28 @@ class SettingsDialog(QtWidgets.QDialog):
         self.keep_slices.setToolTip(
             "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames.")
 
+        # No ordinary camera ships set to raw only, and until recently this
+        # program could not write a photograph at all -- every output was a
+        # negative you needed a raw developer to open.
+        self.image_format = QtWidgets.QComboBox()
+        for value, label in (("both", "Raw and JPEG"),
+                             ("raw", "Raw only"),
+                             ("jpeg", "JPEG only")):
+            self.image_format.addItem(label, value)
+        at = self.image_format.findData(settings.image_format)
+        self.image_format.setCurrentIndex(at if at >= 0 else 0)
+        self.image_format.setToolTip(
+            "The JPEG is developed from the levels and white balance the raw "
+            "file itself declares, so opening the raw later agrees with it.\n"
+            "Mosaic tiles and stack slices always keep their raw whatever "
+            "this says: the stitcher and the merge read them back.")
+
         form = QtWidgets.QFormLayout()
         form.setSpacing(9)
         form.addRow("Capture folder", root_row)
         form.addRow("Subfolder", self.folder)
         form.addRow("File name", self.filename)
+        form.addRow("Write", self.image_format)
         form.addRow("", self.keep_slices)
 
         self.preview = QtWidgets.QLabel()
@@ -301,6 +318,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self._settings.folder_pattern = self.folder.text()
         self._settings.filename_pattern = self.filename.text()
         self._settings.keep_slices = self.keep_slices.isChecked()
+        self._settings.image_format = str(self.image_format.currentData())
         self._settings.save()
         self.accept()
 

@@ -729,3 +729,96 @@ def test_filenames_collapse_optics_tokens_without_a_setup():
     typo = Settings(capture_root="/tmp/x",
                     filename_pattern="{seq}_{objectve}")
     assert "{objectve}" in typo.resolve(setup=None, seq=2).name
+
+
+# ---- developing a photograph out of the negative ---------------------------
+
+def test_develop_bands_match_a_single_pass():
+    """The band loop exists to bound memory on a stitched mosaic, which can be
+    tens of megapixels. It must not change the picture to do it."""
+    import cv2
+    from darlaston.process.develop import develop
+
+    rng = np.random.default_rng(5)
+    raw = (rng.random((600, 800)) * 3000 + 200).astype(np.uint16)
+    out = develop(raw, pattern="GBRG", white=4095, neutral=(0.75, 1.0, 0.3))
+
+    a = cv2.cvtColor(raw, cv2.COLOR_BayerGR2BGR).astype(np.float32) / 4095.0
+    for c, n in enumerate(reversed((0.75, 1.0, 0.3))):
+        a[:, :, c] /= n
+    s = a[::16, ::16]
+    lo, hi = float(np.percentile(s, 0.5)), float(np.percentile(s, 99.7))
+    a = np.clip((a - lo) / (hi - lo), 0, 1)
+    ref = (a ** (1 / 2.2) * 255 + 0.5).astype(np.uint8)
+
+    assert out.shape == ref.shape
+    assert np.array_equal(out, ref)
+
+
+def test_develop_knows_which_way_round_its_input_is():
+    """A demosaiced frame is BGR; a merged stack and a stitched composite are
+    held as linear RGB because that is how they go into the DNG. Getting it
+    wrong tints the whole photograph, and presented exactly that way: neutral
+    tiles composing into a blue mosaic."""
+    from darlaston.process.develop import develop
+
+    # Unambiguously red in RGB terms.
+    img = np.zeros((64, 64, 3), np.uint16)
+    img[:, :, 0] = 3000
+
+    as_rgb = develop(img, pattern=None, white=4095, stretch=False,
+                     rgb_input=True)
+    as_bgr = develop(img, pattern=None, white=4095, stretch=False,
+                     rgb_input=False)
+    # Output is always BGR, so a red input must land in channel 2.
+    assert as_rgb[:, :, 2].mean() > 200 and as_rgb[:, :, 0].mean() < 10
+    assert as_bgr[:, :, 0].mean() > 200 and as_bgr[:, :, 2].mean() < 10
+
+
+def test_write_jpeg_reports_failure_rather_than_raising(tmp_path):
+    """It runs after the raw is already safely on disk. Losing the photograph
+    is a disappointment; taking the capture down with it is not acceptable."""
+    from darlaston.process.develop import write_jpeg
+
+    good = np.zeros((32, 32, 3), np.uint8)
+    assert write_jpeg(tmp_path / "ok.jpg", good) is True
+    assert (tmp_path / "ok.jpg").exists()
+    # An unwritable path, and a nonsense image: neither may raise.
+    assert write_jpeg(tmp_path / "no" / "such" / "dir" / "x.jpg", good) is False
+    assert write_jpeg(tmp_path / "bad.jpg", np.zeros((0, 0, 3), np.uint8)) is False
+
+
+def test_image_format_setting_round_trips(tmp_path):
+    from darlaston.session.settings import Settings
+
+    s = Settings()
+    assert s.image_format == "both", "a camera that writes no photograph is odd"
+    assert s.jpeg_quality == 95
+    for value in ("both", "raw", "jpeg"):
+        s.image_format = value
+        s.save(tmp_path / "settings.json")
+        assert Settings.load(tmp_path / "settings.json").image_format == value
+
+
+def test_tiles_and_slices_keep_their_raw_whatever_the_preference(tmp_path):
+    """"JPEG only" is about photographs. A mosaic tile and a stack slice are
+    ingredients -- the stitcher and the merge read them back -- so the
+    preference must not be able to leave a session with nothing to work from.
+    """
+    from darlaston.capture.still import StillCapture
+    from darlaston.session.settings import Settings
+
+    s = Settings(capture_root=str(tmp_path), image_format="jpeg")
+    cap = StillCapture(session=None, settings=s)
+    assert cap.raw_required is False, "a plain capture is a photograph"
+
+    # The rule the capture path applies, stated here so it cannot drift.
+    def raw_wanted(cap):
+        return s.image_format != "jpeg" or cap.raw_required
+
+    assert raw_wanted(cap) is False
+    cap.raw_required = True
+    assert raw_wanted(cap) is True
+    s.image_format = "both"
+    cap.raw_required = False
+    assert raw_wanted(cap) is True

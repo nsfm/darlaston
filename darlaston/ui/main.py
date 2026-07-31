@@ -753,6 +753,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_button.set_status(status, busy=self.calibration.busy)
 
     def _on_capture(self) -> None:
+        self._sync_raw_requirement()
         if not self.capture.trigger(self.setup, subject=self.subject.subject,
                                     slide=self.subject.slide_note,
                                     frames=self.shutter.frames):
@@ -954,6 +955,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_anchor = None
             self._tile_preview = None
             self.assembly.reset()
+        self._sync_raw_requirement()
         return self.capture.trigger(self.setup, subject=self.subject.subject,
                                     slide=self.subject.slide_note)
 
@@ -1315,6 +1317,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.perf_window.show()
         else:
             self.perf_window.hide()
+
+    def _sync_raw_requirement(self) -> None:
+        """Tell the capture whether this frame is a photograph or a part.
+
+        A tile or a slice gets read back by the stitcher and the merge, so
+        it must keep its raw however the format preference is set. Checked
+        at each shutter press rather than tracked, because a session can
+        open or close between any two of them.
+        """
+        self.capture.raw_required = (self.mosaic is not None
+                                     or self.stack_session is not None
+                                     or self.focus.stack.isChecked())
 
     def _open_performance(self) -> None:
         PerformanceDialog(self.settings, self._apply_performance, self).exec()
