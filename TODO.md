@@ -131,15 +131,22 @@ Ordered within each section by how much it would change what gets built.
       because it also stops three full-frame passes contending. Subsampling
       the pixels instead is unsafe and there is a test saying so: a
       one-pixel-tall clipped streak vanishes from a row-strided histogram.
-- [ ] **Preview scale is the largest stage left**, 4.7 to 7.2 ms, and it is
-      on the UI thread. It is a 1.756x reduction, so it misses the whole-
-      number fast path, but the ways out all cost picture quality and that
-      is a decision to take deliberately rather than quietly. INTER_LINEAR
-      is 0.50 ms and nearly doubles the Laplacian variance, visibly aliasing
-      the striae this program exists to photograph. Reducing by an exact
-      half and magnifying back is 0.72 ms and honest anti-aliasing, but caps
-      the preview at 912 px of real detail on a 1039 px widget, a 12% loss,
-      on the image the operator judges focus by. Currently: neither.
+- [x] ~~**Preview scale is the largest stage left**~~, 4.7 to 7.2 ms, on the
+      UI thread. It is a 1.756x reduction so it misses the whole-number fast
+      path, and both ways around that spend picture quality -- which makes
+      it a preference rather than a fix. **Instrument > Performance
+      settings** now offers all three, persisted, applying live:
+      full 4.26 ms at 1.00x edge energy, reduced 0.70 ms at 0.48x (detail
+      genuinely gone), fast 0.65 ms at 1.98x (edge energy *invented*, since
+      a cheaper filter cannot honestly find more detail than the correct
+      one -- that excess is the shimmer on striae). Switching live on the
+      camera moves the stage 4.52 to 1.06 to 0.99 ms and total CPU by about
+      28%. Default stays on full.
+- [ ] **Pick a preview-quality default** once Nate has looked through all
+      three at a real subject. The measurement cannot settle this one: it
+      is a question about what the eye can spare while racking focus, and
+      the answer may well differ between a diatom test plate and a stained
+      section.
 - [x] ~~**Turret watch**~~ was the largest stage left and turned out to be
       the same trap a third time: it built its 256 square from the full
       frame, 1824/256 is 7.125, and that one downscale was 3.88 ms of a
