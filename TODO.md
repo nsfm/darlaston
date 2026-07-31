@@ -162,6 +162,34 @@ Ordered within each section by how much it would change what gets built.
       A divisor was measured too and is *not* worth taking -- safe up to
       N=3, but only 0.35 ms once the resize is fixed, against tripled
       detection latency.
+- [x] ~~**GPU acceleration: measured, and declined for now.**~~ OpenCV 5
+      has a working OpenCL path here through `cv2.UMat`, needing no new
+      dependency, and on speed it delivers: the whole per-frame chain runs
+      14.83 ms on the processor against 3.38 ms on the graphics card, 4.4x,
+      with the upload and download included rather than wished away. Split
+      is 11x, the resizes 8-12x, histograms 3.6x. Sobel and Gaussian blur
+      are *slower* on it, 0.75x and 0.55x, so the focus metric and peaking
+      would want to stay put.
+      **The watts say the opposite of the milliseconds, and the watts are
+      what the question was about.** Paced at 40 fps, moving that chain to
+      the card frees 0.14 of a processor core and costs 10.2 W at the card.
+      It frees so little because OpenCL's synchronisation spins rather than
+      sleeps -- the core waits busily instead of being released. And the
+      10 W is almost entirely the cost of *waking* the discrete card, not
+      of the work: the same chain at 8 fps drew 11.8 W against 12.2 W at
+      40 fps. A fifth of the work for the same power, which kills the
+      obvious compromise of offloading only the preview scale.
+      The interesting configuration would be the integrated Intel graphics,
+      which are already powered for the display and so have no waking to
+      pay for -- but `intel-compute-runtime` is not installed here, the ICD
+      points at a library that does not exist, and OpenCV consequently only
+      ever sees the NVIDIA card. That is a system package, not something a
+      microscopist's machine can be assumed to have.
+      Worth revisiting only if the live view ever needs full sensor
+      resolution, where the arithmetic would grow past what the transfer
+      and the wake cost. Today the loop uses about 15 ms of a 25 ms budget
+      and drops nothing, so speed is not the constraint and a second code
+      path would be tested on far fewer machines than the first.
 - [ ] **Turret belief is the rotation sign, not the detector.** The A/B
       above reproduces it cleanly and rules out the arithmetic: driving the
       mock through a rotation with direction +1 reads back as -1, and four
