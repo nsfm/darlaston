@@ -564,3 +564,45 @@ def test_autostereogram_encodes_depth_in_its_period(tmp_path):
     far = period(img[h0:h1, 640:880])           # depth 255 -> further
     assert near < far, \
         f"near half must repeat tighter: near {near} px, far {far} px"
+
+def test_arrangement_finds_isolated_specimens_and_refuses_a_smear(tmp_path):
+    """The arranger's two honest behaviours: it finds elongated textured
+    objects on smooth mountant, and it declines when there is nothing it
+    can cleanly separate rather than cutting up a blob."""
+    from darlaston.process.arrange import arrange, find_specimens
+
+    rng = np.random.default_rng(6)
+    H, W = 900, 1400
+
+    def build(draw_specimens):
+        field = np.full((H, W), 3200.0, np.float32)
+        field += rng.normal(0, 12, (H, W))
+        if draw_specimens:
+            for cx, cy, ang in ((300, 250, 20), (800, 300, -35),
+                                (500, 650, 70), (1050, 700, 10)):
+                # A striated ellipse: textured, elongated, isolated.
+                patch = np.zeros((H, W), np.float32)
+                cv2.ellipse(patch, (cx, cy), (120, 26), ang, 0, 360, 1.0, -1)
+                stripes = (np.sin(np.arange(W) * 1.4)[None, :]
+                           * np.ones((H, 1)))
+                field -= patch * (900 + 500 * stripes)
+        raw = np.clip(field, 0, 4095).astype(np.uint16)
+        dng.write_bayer_streamed(
+            tmp_path / "stacked.dng", lambda s, c: raw[s:s + c], H, W,
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            bits=12, white=4095)
+        cv2.imwrite(str(tmp_path / "depth.png"),
+                    np.zeros((H, W), np.uint8))
+
+    build(True)
+    found = find_specimens(tmp_path)
+    assert len(found) >= 3, f"should isolate the specimens, got {len(found)}"
+    for spec in found:
+        assert spec.aspect > 2.0, "cut-outs must be elongated"
+    out = arrange(found, tmp_path / "arr.png", style="rosette", size=700)
+    assert out.exists()
+
+    build(False)                          # bare mountant, nothing to find
+    assert find_specimens(tmp_path) == []
+    with pytest.raises(ValueError):
+        arrange([], tmp_path / "none.png")

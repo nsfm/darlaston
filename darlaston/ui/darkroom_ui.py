@@ -187,3 +187,70 @@ class PlateDialog(QtWidgets.QDialog):
         self.accept()
         self._run(sources, target, self.columns.value(),
                   self.title.text().strip(), self.footer.text().strip())
+
+
+class ArrangeDialog(QtWidgets.QDialog):
+    """Find the specimens in a capture and lay them out in a pattern."""
+
+    STYLES = [
+        ("rosette", "Rosette", "radiating from a centre, sizes balanced"),
+        ("spiral", "Spiral", "winding outward"),
+        ("rows", "Rows", "a taxonomic plate, graded by size"),
+    ]
+
+    def __init__(self, directory: Path, run, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Arrange specimens")
+        self.setStyleSheet(theme.stylesheet())
+        self._run = run
+        self._directory = Path(directory)
+
+        head = QtWidgets.QLabel(
+            f"<b>{self._directory.name}</b><br>"
+            "Cuts each frustule out and lays them out — what Darlaston did "
+            "with a bristle.")
+        head.setWordWrap(True)
+
+        self.style = QtWidgets.QComboBox()
+        for key, label, hint in self.STYLES:
+            self.style.addItem(f"{label} — {hint}", key)
+        self.title = QtWidgets.QLineEdit()
+        self.title.setPlaceholderText("An arrangement")
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Pattern", self.style)
+        form.addRow("Title", self.title)
+
+        note = QtWidgets.QLabel(
+            "Only specimens it can isolate are used. A crowded field where "
+            "valves overlap may yield few or none — that is reported "
+            "rather than guessed at.")
+        note.setWordWrap(True)
+        note.setProperty("role", "key")
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        go = buttons.addButton("Arrange…",
+                               QtWidgets.QDialogButtonBox.ButtonRole
+                               .AcceptRole)
+        buttons.rejected.connect(self.reject)
+        go.clicked.connect(self._accept)
+
+        col = QtWidgets.QVBoxLayout(self)
+        col.addWidget(head)
+        col.addSpacing(6)
+        col.addLayout(form)
+        col.addWidget(note)
+        col.addStretch(1)
+        col.addWidget(buttons)
+        self.resize(440, 260)
+
+    def _accept(self) -> None:
+        target, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save arrangement",
+            str(self._directory / "arrangement.png"), "PNG (*.png)")
+        if not target:
+            return
+        self.accept()
+        self._run(self._directory, target, self.style.currentData(),
+                  self.title.text().strip())

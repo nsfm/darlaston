@@ -39,7 +39,8 @@ from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .setup_ui import SetupDialog
 from .shell import Chip, ObjectiveStepper, StatusBar, ToolBar, WaitingPage
-from .darkroom_ui import ARTIFACTS, PlateDialog, RenderDialog
+from .darkroom_ui import (ARTIFACTS, ArrangeDialog, PlateDialog,
+                          RenderDialog)
 from .stack_ui import StackAssembly
 from .stitch_ui import StitchDialog
 from .photographer_ui import PhotographerDialog
@@ -185,6 +186,7 @@ class MainWindow(QtWidgets.QMainWindow):
         darkroom.addAction("Stitch mosaic…", self._stitch_mosaic)
         darkroom.addAction("Render depth from stack…", self._wiggle_dialog)
         darkroom.addAction("Make a plate…", self._plate_dialog)
+        darkroom.addAction("Arrange specimens…", self._arrange_dialog)
         darkroom.addSeparator()
         darkroom.addAction("Install DNG thumbnailer…",
                            self._install_thumbnailer)
@@ -1091,6 +1093,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.bridge.wiggle.emit((f"plate failed — {exc}", False))
 
         threading.Thread(target=work, daemon=True, name="plate").start()
+
+    def _arrange_dialog(self) -> None:
+        start = str(self._wiggle_dir or self.settings.capture_root)
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Capture to take specimens from", start)
+        if directory:
+            ArrangeDialog(Path(directory), self._run_arrange, self).exec()
+
+    def _run_arrange(self, directory, target, style, title) -> None:
+        self.strip.set_note("finding specimens…")
+
+        def work():
+            from ..process.arrange import arrangement
+            try:
+                path, found = arrangement(directory, target, style=style,
+                                          title=title)
+                self.bridge.wiggle.emit(
+                    (f"{found} specimens arranged → {path.name}", True))
+            except Exception as exc:
+                self.bridge.wiggle.emit((f"arrangement failed — {exc}",
+                                         False))
+
+        threading.Thread(target=work, daemon=True, name="arrange").start()
 
     def _install_thumbnailer(self) -> None:
         """Teach the file manager to show our DNGs.

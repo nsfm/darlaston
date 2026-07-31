@@ -241,6 +241,23 @@ Ordered within each section by how much it would change what gets built.
       fields, a wigglegram of the whole mosaic. Test builds one ramp seen
       as two deliberately mis-levelled tiles and requires no cliff at the
       seam.
+- [x] ~~**Arranging.**~~ `process/arrange.py` — the one thing here that is
+      purely for delight. Darlaston and Möller laid diatoms out one
+      frustule at a time with a bristle; this finds the specimens in a
+      finished capture, cuts each out, turns it to a canonical
+      orientation and lays them in a rosette, spiral or taxonomic rows.
+      Two things it does honestly: relative sizes are preserved (making
+      them uniform would be prettier and would lie), and it *declines*
+      where it cannot cleanly separate — measured, a sparse mosaic gives
+      16 frustules and a crowded field gives zero, because overlapping
+      elongated valves merge into one component and distance-transform
+      watershed cannot split them (its maximum is one 348 px blob).
+      Two touches that made it read as an arrangement rather than a
+      scatter: alternating sizes from the two ends of the sorted list, so
+      one side is not all giants, and re-centring on the ink actually
+      drawn rather than the ideal circle. Per-specimen contrast is
+      stretched, which is a display decision on a display artifact — the
+      *plate* keeps capture contrast, because a plate is evidence.
 - [ ] **The slide map as a finding aid.** The other half of the plate
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that
