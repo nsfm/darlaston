@@ -811,10 +811,27 @@ Ordered within each section by how much it would change what gets built.
 
 ## Packaging
 
-- [ ] **Briefcase** builds: `.dmg` for macOS with signing and notarisation,
-      AppImage/deb for Linux, `.msi` for Windows.
-- [ ] **First-run SDK fetch.** We never redistribute the ToupTek blob, but
-      "download this other thing first" is where most users quit.
+- [x] ~~**Installable at all.**~~ `pyproject.toml` with a `darlaston`
+      entry point, verified by installing the built wheel into a clean
+      virtualenv and running it. CI runs the suite on the version floor
+      and the current release, and asserts the wheel carries no spike,
+      test or tool files.
+- [ ] **A build people can double-click.** `pip install` is a developer
+      distribution and the users are microscopists. **AppImage** rather
+      than Flatpak: the two hard requirements here are raw USB device
+      access and loading a vendor SDK from the user's home directory, and
+      a sandbox makes both awkward at once. Briefcase can produce it, and
+      a tag-triggered release job is a small addition to the existing
+      build job.
+- [x] ~~**First-run SDK fetch.**~~ `camera/sdk_install.py` plus a dialog,
+      reachable from the failure screen and Instrument > Install camera
+      SDK. Fetches from the vendor's own URL (never mirrored: the section
+      7 permission covers linking, not redistribution, and that SDK has
+      no licence to redistribute under anyway), never silently, and
+      verifies structurally rather than by pinned checksum because
+      vendors replace these archives in place. Only ToupTek has a
+      verified direct link; the rest get their download page and a button
+      that opens it. Tested against the real vendor.
 - [ ] **Windows testing.** Support that cannot be tested is a claim, not a
       feature. Linux and macOS supported, Windows best-effort until someone
       with the hardware actually runs it.
