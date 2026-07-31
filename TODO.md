@@ -56,10 +56,55 @@ Ordered within each section by how much it would change what gets built.
       selectable in the status bar (15/24/30/40/60/uncapped) because the right
       number depends on the machine, the link and the preview resolution — and
       because pinning a CPU to render frames nobody sees is not a feature.
-- [ ] **Does 40 hold?** Watch the drop percentage in the status bar. If it is
-      still climbing, the next suspect is the map canvas, which redraws every
-      banked thumbnail on every position change — cheap at 20 fields, unknown
-      at 200.
+- [x] ~~**Does 40 hold?**~~ On this machine yes, on a smaller one no, and
+      the suspect named here was innocent: the map canvas measures 0.30 ms,
+      about 1% of the frame. Answered properly by `Instrument >
+      Performance`, which reports per-feature milliseconds against the frame
+      budget, always on because a profiler you have to enable is one that is
+      off when the interesting stall happens. First real-camera reading was
+      24.0 ms against a 25 ms budget with every optional feature off, so
+      there was no headroom at all; peaking and a sweep took it to 31.3 ms
+      and it dropped frames.
+- [x] ~~**Live loop profiled again, on the real camera this time.**~~ Three
+      measured changes, worth 24.0 to 12.8 ms on a quiet machine, drops to
+      zero. Nearly all of it was allocation and scale factors rather than
+      arithmetic: splitting the preview into planes allocated three fresh
+      2.2 MP buffers per frame, 3217 minor page faults of kernel mapping and
+      zeroing 6.6 MB thirty times a second, which was almost the whole of
+      that stage against about 0.8 ms of actual deinterleave. The tracker
+      downscaled to a square 512, a scale factor of 3.5625, which misses
+      OpenCV's fast box-average path; an exact quarter hits it, 2.0 ms to
+      0.73 ms, and is aspect-correct as well. Shrinking further is a trap
+      and was measured as one -- a 256 square is 7.125x and comes out
+      *slower* than what it replaced. Windowing before correlating removes
+      the phaseCorrelate in-place mutation hazard rather than defending
+      against it with a copy of both inputs every call.
+- [x] ~~**The preview rate follows the machine.**~~ It defaulted to 40
+      everywhere. Pinned to fewer cores on the same camera and scene:
+      sixteen cores 12.7 ms and no drops, four cores 29.0 ms, two cores
+      37.5 ms and a sixth of frames dropped. The stages are only about
+      3.5 ms of real work at two cores, so the rest is the analysis thread
+      being descheduled while the SDK demosaics and Qt paints on the same
+      two cores -- which means less work arriving, not cheaper work, is the
+      cure. Capping 40 to 15 took a two-core machine from 185% of a core to
+      80%, more than any feature in the table can give. Defaults are now 40
+      at eight cores or more, 30 at four, 15 below that.
+- [ ] **Turret watch is the largest stage left**, 4.3 to 7.0 ms depending on
+      load, for a feature that detects a human turning a turret. Its comment
+      claims it is "cheap per frame -- a 256-square resize and a mean", which
+      the measurement does not support, so either the comment is wrong or an
+      expensive path runs every frame. It is also the obvious candidate for
+      running at a divisor, unlike the tracker: an objective change takes
+      about a second of hand movement, where the tracker genuinely needs
+      every frame (see below).
+- [ ] **The tracker must not run at a divisor**, recorded so it is not
+      re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
+      0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
+      2 halves that to 3.5, and routine hand motion at 40x is well past it.
+      A rejected frame does not merely skip -- `advance()` returns without
+      integrating, so the displacement is silently and permanently lost from
+      the accumulated position. It would also double the settle latency
+      before a capture is allowed, 0.27 s to 0.53 s.
 - [x] ~~**Calibration engine.**~~ Store keyed by product lifetime, dark
       averaging with a defect map, flat medianing with per-Bayer-phase
       normalisation, measured white balance, opportunistic blank banking, and
