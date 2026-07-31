@@ -258,6 +258,44 @@ Ordered within each section by how much it would change what gets built.
       drawn rather than the ideal circle. Per-specimen contrast is
       stretched, which is a display decision on a display artifact — the
       *plate* keeps capture contrast, because a plate is evidence.
+- [x] ~~**The DNG assumed one sensor.**~~ Found by a camera-support audit
+      that enumerated ToupTek's whole SDK model table: **1007 models, one
+      identical API, 711 distinct capability words.** Of 244 microscopy
+      models, 68 are 8-bit, 139 are 12-bit, 26 are 14/16-bit and 55 (23%)
+      are mono — and every capture we wrote hardcoded `WHITE_LEVEL=4095`
+      plus a CFA pattern. That mislabels an 8-bit sensor as four stops
+      under, clips a 16-bit one to a sixteenth of its range, and puts a
+      Bayer pattern on greyscale so every developer demosaics noise into
+      colour. `CameraInfo.max_bit_depth` was already populated and simply
+      never read. Now: white level and packing come from the sensor's own
+      depth, and a mono camera gets BlackIsZero with no CFA tags at all.
+      Tested end to end on 8/12/16-bit and mono through the real capture
+      path. (Our E3ISPM is 12-bit colour, so this was invisible here and
+      would have been someone else's silent corruption.)
+- [ ] **Rebadge multiplexing.** Binary-verified: eleven brands ship the
+      same SDK with renamed symbols — headers diff to 2 cosmetic lines,
+      272 exported symbols byte-identical, and `ToupcamModelV2` fields
+      match across libraries for the same PID. Better, **RisingCam,
+      AmScope, Omegon, TS-Optics, Bresser, Orion and SVBony's SC715C are
+      already 100% inside `libtoupcam`'s own PID table** — those work
+      today with no code at all. Altair, MallinCam, Meade and OGMA need
+      their own library (137/84/19/32 exclusive PIDs). A prefix-proxy
+      around the CDLL is ~40 lines. **Two traps:** `libmeadecam.so`
+      exports `Toupcam_*` (not `Meadecam_*`), so with `RTLD_GLOBAL` the
+      first library loaded wins and the wrong one answers — our loader
+      currently preloads `RTLD_GLOBAL`; and `usb.py` should match
+      `("0547", "04b4", "16d0", "9745", "0549")`, not `0547` alone.
+- [ ] **Guard the SDK version.** Two `libtoupcam.so` are installed on
+      Nate's machine with the *same* SONAME; the 2021 one lacks
+      `PullImageV4`, `TriggerSync` and `get_Model` — everything we
+      depend on. The absolute-path preload is what saves us and that is
+      undocumented. Feature-check the loaded CDLL and fail with a name.
+- [ ] **Spike `Toupcam_CtiEnable`.** `libtoupcam` is a GenTL *consumer*
+      (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings);
+      the call succeeds and is non-destructive. If a third-party GenTL
+      producer makes Basler/IDS/Daheng cameras enumerate through
+      `EnumV2`, that is an industrial-camera backend for one line.
+      Entirely unproven — needs a borrowed camera and an hour.
 - [ ] **The slide map as a finding aid.** The other half of the plate
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that

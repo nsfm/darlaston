@@ -216,26 +216,37 @@ def _version() -> str:
 
 def write_bayer_streamed(path: Path, rows, height: int, width: int, *,
                          preview: np.ndarray,
-                         pattern: str = "GBRG", black: int = 0,
+                         pattern: str | None = "GBRG", black: int = 0,
                          white: int = WHITE_LEVEL,
                          neutral: tuple[float, float, float] = (1.0, 1.0, 1.0),
                          meta: CaptureMetadata | None = None,
                          bits: int = 16, compress: bool = False,
                          progress=None) -> Path:
-    """A Bayer DNG written strip by strip, with an embedded preview."""
+    """A single-plane DNG written strip by strip, with a preview.
+
+    `pattern` of None means the sensor is monochrome: no CFA tags are
+    written and the photometric becomes plain black-is-zero. Roughly a
+    quarter of ToupTek's microscopy range is mono, and a greyscale frame
+    labelled with a Bayer pattern is not merely wrong -- every developer
+    that opens it will demosaic noise into colour and no part of the
+    result means anything.
+    """
     path = Path(path).with_suffix(".dng")
     path.parent.mkdir(parents=True, exist_ok=True)
+    mono = pattern is None
     w = DngWriter(path, width, height, samples=1, bits=bits,
-                  photometric=T.PHOTO_CFA,
+                  photometric=(T.PHOTO_BLACK_IS_ZERO if mono
+                               else T.PHOTO_CFA),
                   compression=(T.COMPRESSION_DEFLATE if compress
                                else T.COMPRESSION_NONE))
     w.set_preview(preview)
-    _our_tags(w, black, white, neutral, meta)
-    w.add(T.CFA_REPEAT_DIM, T.SHORT, [2, 2], where="raw")
-    w.add(T.CFA_PATTERN, T.BYTE, _CFA_BYTES.get(pattern, (1, 2, 0, 1)),
-          where="raw")
-    w.add(T.CFA_PLANE_COLOR, T.BYTE, [0, 1, 2], where="raw")
-    w.add(T.CFA_LAYOUT, T.SHORT, 1, where="raw")
+    _our_tags(w, black, white, (1.0, 1.0, 1.0) if mono else neutral, meta)
+    if not mono:
+        w.add(T.CFA_REPEAT_DIM, T.SHORT, [2, 2], where="raw")
+        w.add(T.CFA_PATTERN, T.BYTE, _CFA_BYTES.get(pattern, (1, 2, 0, 1)),
+              where="raw")
+        w.add(T.CFA_PLANE_COLOR, T.BYTE, [0, 1, 2], where="raw")
+        w.add(T.CFA_LAYOUT, T.SHORT, 1, where="raw")
     return w.write(rows, progress=progress)
 
 

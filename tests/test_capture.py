@@ -671,3 +671,46 @@ def test_mosaic_depth_levels_its_tiles(tmp_path):
     assert float(steps.max()) < 8.0, \
         f"seam step of {steps.max():.0f} levels — tiles were not levelled"
     assert float(row[-1] - row[0]) > 100, "the ramp itself must survive"
+
+
+@pytest.mark.parametrize("depth,mono", [(8, False), (12, False),
+                                        (16, False), (12, True)])
+def test_capture_writes_the_sensor_it_actually_has(tmp_path, depth, mono):
+    """ToupTek runs 8, 10, 12, 14 and 16 bit sensors -- and 23% mono --
+    across one identical API. The white level and the CFA tags must come
+    from the camera, not from constants: a hardcoded 4095 reports an
+    8-bit sensor as four stops under, clips a 16-bit one to a sixteenth
+    of its range, and puts a Bayer pattern on greyscale."""
+    import struct
+    from darlaston.camera.base import CameraInfo, Resolution
+    from darlaston.process.stitch import _read_ifd, _values
+
+    class Shaped(MockCamera):
+        """A mock that reports a different sensor than it renders."""
+
+        def open(self):
+            real = super().open()
+            self._info = CameraInfo(
+                model=real.model, serial=real.serial,
+                resolutions=real.resolutions, max_bit_depth=depth,
+                bayer_pattern="" if mono else real.bayer_pattern,
+                exposure_range_us=real.exposure_range_us,
+                gain_range_pct=real.gain_range_pct)
+            return self._info
+
+    result = _shoot(tmp_path, cam=Shaped())
+    assert result.ok, result.summary
+    data = result.path.read_bytes()
+    (first,) = struct.unpack_from("<I", data, 4)
+    ifd = _read_ifd(data, first)
+    raw_ifd = _read_ifd(data, _values(data, ifd[330])[0])
+
+    assert _values(data, raw_ifd[50717])[0] == (1 << depth) - 1, \
+        "WhiteLevel must be the sensor's, not a constant"
+    photometric = _values(data, raw_ifd[262])[0]
+    if mono:
+        assert photometric == 1, "mono must be BlackIsZero"
+        assert 33422 not in raw_ifd, "mono must carry no CFA pattern"
+    else:
+        assert photometric == 32803, "colour must be CFA"
+        assert 33422 in raw_ifd, "colour must carry a CFA pattern"

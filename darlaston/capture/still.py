@@ -175,7 +175,22 @@ class StillCapture:
             self._on_state("writing")
             path, sequence, when = self._destination(setup, subject)
             info = backend.info
-            pattern = info.bayer_pattern if info else "GBRG"
+            # A monochrome sensor gets no CFA pattern at all. Roughly a
+            # quarter of ToupTek's microscopy range is mono, and labelling
+            # greyscale data with a Bayer pattern makes every developer
+            # demosaic noise into colour.
+            mono = info is not None and not info.is_colour
+            pattern = None if mono else (info.bayer_pattern if info
+                                         else "GBRG")
+            # The sensor's own depth, not a constant. ToupTek's range runs
+            # 8, 10, 12, 14 and 16 bits across one identical API -- of 244
+            # microscopy models, 68 are 8-bit and 26 are 14/16-bit -- so a
+            # hardcoded 4095 mislabels an 8-bit sensor as under-exposed by
+            # four stops and clips a 16-bit one to a sixteenth of its
+            # range. The camera has always reported this; nothing read it.
+            depth = (info.max_bit_depth if info and info.max_bit_depth
+                     else 12)
+            sensor_white = (1 << depth) - 1
 
             meta = None
             if not self.white_balance:
@@ -215,18 +230,23 @@ class StillCapture:
                 # Scaled into 16 bits, the file keeps the SNR the burst just
                 # paid for; rounded back to 12, it would be quantised away --
                 # so an averaged frame is never packed.
-                white = dng.WHITE_LEVEL * 16
-                out = np.clip(corrected * 16.0 + 0.5, 0, white) \
+                # Scale into the 16-bit container by whatever headroom the
+                # sensor's depth leaves, so the averaged file uses the range
+                # it declares rather than a fixed x16.
+                gain = (1 << (16 - depth)) if depth < 16 else 1
+                white = sensor_white * gain
+                out = np.clip(corrected * float(gain) + 0.5, 0, white) \
                         .astype(np.uint16)
                 bits = 16
             else:
-                white = dng.WHITE_LEVEL
+                white = sensor_white
                 out = corrected
-                # A single frame is 12-bit data and nothing about writing it
-                # into 16 bits adds information: packing is lossless here and
+                # A single frame is the sensor's own data and nothing about
+                # widening it adds information: packing is lossless here and
                 # saves a quarter of every file. Verified readable by
-                # darktable 5.4.1.
-                bits = 12 if self.pack_12bit else 16
+                # darktable 5.4.1. Only 12-bit data has a packed form we
+                # write, so anything else goes out at 16.
+                bits = 12 if (self.pack_12bit and depth == 12) else 16
 
             # The thumbnail gets a balance even when the file does not: with
             # white balance turned off, or before a flat exists, the measured
@@ -234,14 +254,15 @@ class StillCapture:
             # is a green rectangle. The estimate is for the preview only and
             # changes nothing about the data or the tags.
             preview = dng.make_preview(
-                out, bayer=True, black=black, white=white,
-                neutral=neutral or dng.grey_world_neutral(out))
+                out, bayer=not mono, black=black, white=white,
+                neutral=None if mono
+                else (neutral or dng.grey_world_neutral(out)))
             written = dng.write_bayer_streamed(
                 path, lambda s, c: out[s:s + c], out.shape[0], out.shape[1],
                 preview=preview, pattern=pattern, black=black, white=white,
                 neutral=neutral or (1.0, 1.0, 1.0), meta=meta, bits=bits)
 
-            clipped = float((raw >= dng.WHITE_LEVEL).sum()) / raw.size
+            clipped = float((raw >= sensor_white).sum()) / raw.size
             self._on_state("idle")
             self._on_result(CaptureResult(
                 ok=True, path=written, elapsed=time.perf_counter() - started,
