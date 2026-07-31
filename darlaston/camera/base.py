@@ -52,6 +52,16 @@ class CameraInfo:
     bayer_pattern: str
     exposure_range_us: tuple[int, int]
     gain_range_pct: tuple[int, int]
+    #: Which vendor library answered. One family ships under a dozen
+    #: brand names, so this is what to print rather than guessing.
+    brand: str = ""
+    #: What this particular model can do, as the vendor reports it.
+    #: One SDK covers a thousand cameras whose capabilities differ
+    #: wildly; asking beats assuming.
+    raw_capable: bool = True
+    cooled: bool = False
+    has_fan: bool = False
+    software_trigger: bool = True
 
     @property
     def is_colour(self) -> bool:

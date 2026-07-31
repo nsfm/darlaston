@@ -253,14 +253,28 @@ class StillCapture:
             # neutral is absent -- and a raw microscope field rendered flat
             # is a green rectangle. The estimate is for the preview only and
             # changes nothing about the data or the tags.
+            # A camera that already demosaiced -- any ordinary UVC
+            # device -- gives three channels and has no CFA to declare.
+            # It gets a linear DNG, which says exactly that, rather than
+            # a file claiming a Bayer pattern it does not have.
+            decoded = out.ndim == 3
             preview = dng.make_preview(
-                out, bayer=not mono, black=black, white=white,
-                neutral=None if mono
+                out, bayer=not (mono or decoded), black=black, white=white,
+                neutral=None if (mono or decoded)
                 else (neutral or dng.grey_world_neutral(out)))
-            written = dng.write_bayer_streamed(
-                path, lambda s, c: out[s:s + c], out.shape[0], out.shape[1],
-                preview=preview, pattern=pattern, black=black, white=white,
-                neutral=neutral or (1.0, 1.0, 1.0), meta=meta, bits=bits)
+            if decoded:
+                written = dng.write_linear_streamed(
+                    path, lambda s, c: out[s:s + c],
+                    out.shape[0], out.shape[1], preview=preview,
+                    black=black, white=white,
+                    neutral=neutral or (1.0, 1.0, 1.0), meta=meta)
+            else:
+                written = dng.write_bayer_streamed(
+                    path, lambda s, c: out[s:s + c],
+                    out.shape[0], out.shape[1],
+                    preview=preview, pattern=pattern, black=black,
+                    white=white, neutral=neutral or (1.0, 1.0, 1.0),
+                    meta=meta, bits=bits)
 
             clipped = float((raw >= sensor_white).sum()) / raw.size
             self._on_state("idle")

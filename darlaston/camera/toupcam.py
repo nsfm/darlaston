@@ -42,31 +42,119 @@ from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
 from .errors import is_retryable
 
-_toupcam = None
+#: The rebadge family. ToupTek manufactures for a dozen brands and ships
+#: each one the same SDK with its symbols renamed -- verified binary to
+#: binary: 272 exported symbols matching byte for byte, headers differing
+#: by two cosmetic lines, and identical `ModelV2` fields for the same USB
+#: PID across libraries. So one backend drives all of them; only the names
+#: change. (brand module, library soname, class name, constant prefix).
+#:
+#: Meade is the trap: `libmeadecam.so` exports `Toupcam_*`, not
+#: `Meadecam_*`. That is exactly why the preload below is RTLD_LOCAL --
+#: with RTLD_GLOBAL the first library loaded would answer for every brand
+#: afterwards, silently.
+BRANDS = [
+    ("toupcam", "libtoupcam.so", "Toupcam", "TOUPCAM"),
+    ("altaircam", "libaltaircam.so", "Altaircam", "ALTAIRCAM"),
+    ("mallincam", "libmallincam.so", "Mallincam", "MALLINCAM"),
+    ("meadecam", "libmeadecam.so", "Toupcam", "TOUPCAM"),
+    ("ogmacam", "libogmacam.so", "Ogmacam", "OGMACAM"),
+    ("nncam", "libnncam.so", "Nncam", "NNCAM"),
+    ("bressercam", "libbressercam.so", "Bressercam", "BRESSERCAM"),
+    ("starshootg", "libstarshootg.so", "Starshootg", "STARSHOOTG"),
+    ("omegonprocam", "libomegonprocam.so", "Omegonprocam", "OMEGONPROCAM"),
+    ("svbonycam", "libsvbonycam.so", "Svbonycam", "SVBONYCAM"),
+    ("tscam", "libtscam.so", "Tscam", "TSCAM"),
+    ("amcam", "libamcam.so", "Amcam", "AMCAM"),
+]
+
+#: Entry points this backend cannot work without. Two libraries with the
+#: same SONAME are installed on at least one real machine -- a 2021 one
+#: from a ToupLite bundle and a current SDK -- and the old one lacks every
+#: function here. Without the check the failure is a confusing
+#: AttributeError deep inside a capture.
+REQUIRED = ("PullImageV4", "TriggerSync", "get_Model")
+
+_vendor = None
+
+
+class _Vendor:
+    """One brand's binding, under the names the rest of this file uses.
+
+    Call sites say `Toupcam` and `TOUPCAM_OPTION_*`; a rebadged SDK spells
+    those `Altaircam` and `ALTAIRCAM_OPTION_*`. Translating here keeps the
+    backend written once.
+    """
+
+    def __init__(self, module, brand: str, cls: str, prefix: str) -> None:
+        self._module = module
+        self.brand = brand
+        self._cls = cls
+        self._prefix = prefix
+
+    def __getattr__(self, name: str):
+        if name == "Toupcam":
+            return getattr(self._module, self._cls)
+        if name.startswith("TOUPCAM_"):
+            return getattr(self._module,
+                           self._prefix + name[len("TOUPCAM"):])
+        return getattr(self._module, name)
+
+
+def _load_brand(root: Path, module: str, soname: str, cls: str,
+                prefix: str):
+    """Try one brand inside one SDK root. Returns a _Vendor or None."""
+    lib = root / "linux/x64" / soname
+    binding = root / "python"
+    if not lib.exists() or not (binding / f"{module}.py").exists():
+        return None
+    # RTLD_LOCAL, deliberately: the absolute-path preload exists so the
+    # binding's bare-name LoadLibrary finds *this* copy rather than
+    # whatever else is on the search path, and dlopen matches by SONAME
+    # regardless of symbol visibility -- measured, same handle either way.
+    # Keeping symbols local is what lets two brands coexist.
+    handle = ctypes.CDLL(str(lib), mode=ctypes.RTLD_LOCAL)
+    missing = [fn for fn in REQUIRED
+               if not hasattr(handle, f"{cls}_{fn}")]
+    if missing:
+        raise RuntimeError(
+            f"{lib} is too old for darlaston: it has no "
+            f"{', '.join(cls + '_' + m for m in missing)}. A ToupLite "
+            "bundle from 2021 ships a library with this same name; point "
+            "TOUPCAM_SDK at a current SDK instead.")
+    sys.path.insert(0, str(binding))
+    return _Vendor(__import__(module), module, cls, prefix)
 
 
 def load_sdk():
-    """Import the vendor bindings from a user-installed SDK. Idempotent."""
-    global _toupcam
-    if _toupcam is not None:
-        return _toupcam
+    """Import a user-installed SDK, from ToupTek or any of its rebadges.
+
+    Idempotent. Searches SDK roots newest-first, and within each root
+    tries every brand -- so an Altair or Meade user needs no configuration
+    beyond unpacking their own vendor's SDK where ours would go.
+    """
+    global _vendor
+    if _vendor is not None:
+        return _vendor
     roots = ([Path(os.environ["TOUPCAM_SDK"])] if os.environ.get("TOUPCAM_SDK")
-             else list(reversed(sorted(Path.home().glob("toup/sdk-*")))))
+             else [p for pattern in ("toup/sdk-*", "toup")
+                   for p in sorted(Path.home().glob(pattern), reverse=True)])
     for root in roots:
-        lib, binding = root / "linux/x64/libtoupcam.so", root / "python"
-        if lib.exists() and (binding / "toupcam.py").exists():
-            ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
-            sys.path.insert(0, str(binding))
-            _toupcam = __import__("toupcam")
-            return _toupcam
-    try:
-        _toupcam = __import__("toupcam")
-        return _toupcam
-    except ImportError as exc:
-        raise RuntimeError(
-            "ToupTek SDK not found. Unpack it under ~/toup/sdk-*/ or set "
-            "TOUPCAM_SDK to its root."
-        ) from exc
+        for module, soname, cls, prefix in BRANDS:
+            found = _load_brand(root, module, soname, cls, prefix)
+            if found is not None:
+                _vendor = found
+                return _vendor
+    for module, _soname, cls, prefix in BRANDS:
+        try:
+            _vendor = _Vendor(__import__(module), module, cls, prefix)
+            return _vendor
+        except ImportError:
+            continue
+    raise RuntimeError(
+        "No ToupTek-family SDK found. Unpack one under ~/toup/sdk-*/ or "
+        "set TOUPCAM_SDK to its root. Supported brands: "
+        + ", ".join(b[0] for b in BRANDS) + ".")
 
 
 class ToupcamBackend(CameraBackend):
@@ -104,8 +192,18 @@ class ToupcamBackend(CameraBackend):
                 px = 0.0
             resolutions.append(Resolution(i, w, h, float(px)))
 
+        # Capabilities, from the vendor's own model table rather than
+        # inferred. One identical API covers ~1000 cameras with 711
+        # distinct capability words -- 8-bit to 16-bit, colour and mono,
+        # cooled and not -- so anything assumed here is wrong for
+        # somebody. MONO is authoritative; get_RawFormat returns 'YYYY'
+        # on a mono sensor, which is not a CFA pattern and must not be
+        # written as one.
+        flag = getattr(devices[self._index].model, "flag", 0) or 0
+        mono = bool(flag & self._t.TOUPCAM_FLAG_MONO)
         fourcc, _bits = cam.get_RawFormat()
-        pattern = "".join(chr((fourcc >> (8 * k)) & 0xFF) for k in range(4))
+        pattern = "" if mono else "".join(
+            chr((fourcc >> (8 * k)) & 0xFF) for k in range(4))
         lo, hi, _default = cam.get_ExpTimeRange()
         glo, ghi, _gdef = cam.get_ExpoAGainRange()
 
@@ -117,6 +215,19 @@ class ToupcamBackend(CameraBackend):
             bayer_pattern=pattern,
             exposure_range_us=(int(lo), int(hi)),
             gain_range_pct=(int(glo), int(ghi)),
+            brand=self._t.brand,
+            raw_capable=bool(flag & (self._t.TOUPCAM_FLAG_RAW8
+                                     | self._t.TOUPCAM_FLAG_RAW10
+                                     | self._t.TOUPCAM_FLAG_RAW12
+                                     | self._t.TOUPCAM_FLAG_RAW14
+                                     | self._t.TOUPCAM_FLAG_RAW16)),
+            cooled=bool(flag & self._t.TOUPCAM_FLAG_TEC),
+            has_fan=bool(flag & self._t.TOUPCAM_FLAG_FAN),
+            # Advisory only, and measured to be so: our own E3ISPM does
+            # not set this flag yet accepts a software trigger and has
+            # been capturing through one all along. Never gate on it.
+            software_trigger=bool(flag
+                                  & self._t.TOUPCAM_FLAG_TRIGGER_SOFTWARE),
         )
         return self._info
 

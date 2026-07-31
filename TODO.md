@@ -272,24 +272,39 @@ Ordered within each section by how much it would change what gets built.
       Tested end to end on 8/12/16-bit and mono through the real capture
       path. (Our E3ISPM is 12-bit colour, so this was invisible here and
       would have been someone else's silent corruption.)
-- [ ] **Rebadge multiplexing.** Binary-verified: eleven brands ship the
-      same SDK with renamed symbols — headers diff to 2 cosmetic lines,
-      272 exported symbols byte-identical, and `ToupcamModelV2` fields
-      match across libraries for the same PID. Better, **RisingCam,
-      AmScope, Omegon, TS-Optics, Bresser, Orion and SVBony's SC715C are
-      already 100% inside `libtoupcam`'s own PID table** — those work
-      today with no code at all. Altair, MallinCam, Meade and OGMA need
-      their own library (137/84/19/32 exclusive PIDs). A prefix-proxy
-      around the CDLL is ~40 lines. **Two traps:** `libmeadecam.so`
-      exports `Toupcam_*` (not `Meadecam_*`), so with `RTLD_GLOBAL` the
-      first library loaded wins and the wrong one answers — our loader
-      currently preloads `RTLD_GLOBAL`; and `usb.py` should match
-      `("0547", "04b4", "16d0", "9745", "0549")`, not `0547` alone.
-- [ ] **Guard the SDK version.** Two `libtoupcam.so` are installed on
-      Nate's machine with the *same* SONAME; the 2021 one lacks
-      `PullImageV4`, `TriggerSync` and `get_Model` — everything we
-      depend on. The absolute-path preload is what saves us and that is
-      undocumented. Feature-check the loaded CDLL and fail with a name.
+- [x] ~~**Rebadge multiplexing.**~~ One backend now drives the whole
+      ToupTek family: a translating proxy maps this file's `Toupcam` and
+      `TOUPCAM_*` names onto whichever brand's binding is installed, so
+      Altair, MallinCam, Meade, OGMA, RisingCam, AmScope, Omegon,
+      TS-Optics, Bresser, Orion and SVBony all work. The preload dropped
+      to `RTLD_LOCAL` — measured to keep the bare-name identity trick
+      (same handle either way) while removing the hazard that
+      `libmeadecam.so` exports `Toupcam_*` and would otherwise answer for
+      every brand loaded after it. `usb.py` matches all five family VIDs.
+      Loader feature-checks `PullImageV4`/`TriggerSync`/`get_Model` and
+      names the problem, because two same-SONAME libraries are installed
+      on this very machine and the 2021 one has none of them.
+- [x] ~~**Capabilities come from the model table.**~~ `CameraInfo` now
+      carries brand, raw-capable, cooled, fan and software-trigger, read
+      from the vendor's own flags. Measured on real hardware and worth
+      recording: our E3ISPM does **not** set `TRIGGER_SOFTWARE` yet has
+      been capturing through a software trigger all along — the flag is a
+      hint, never a gate. `FLAG_MONO` *is* authoritative, and is what
+      decides whether a CFA pattern is written.
+- [x] ~~**Basic USB cameras.**~~ `camera/v4l2.py`, run with `--usb`. The
+      class microscopists buy first, supported honestly: no raw exists on
+      consumer UVC (the ISP is on the bridge chip and the USB side has no
+      bypass), so captures are written as *linear* DNGs rather than files
+      claiming a CFA they do not have. Everything that does not need
+      sensor data still works — tracking, mosaics, stacking, every depth
+      render. `--list-cameras` reports the whole picture including
+      whether a device offers raw at all.
+- [x] ~~**Filenames printed their own placeholders.**~~ Found while
+      shooting the webcam: a capture with no configured stand wrote
+      `0001_webcam_{objective}_{illumination}.dng`, because unknown
+      tokens are deliberately left visible so a *typo* shows — and the
+      optics tokens were absent rather than empty. They are always
+      defined now; a typo still shows.
 - [ ] **Spike `Toupcam_CtiEnable`.** `libtoupcam` is a GenTL *consumer*
       (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings);
       the call succeeds and is non-destructive. If a third-party GenTL

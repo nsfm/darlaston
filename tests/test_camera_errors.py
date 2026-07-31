@@ -4,6 +4,8 @@ The bug these cover was found on real hardware — the tenth tile of a mosaic
 failed, the operator saw "-2147417825" and nothing else, and the camera was
 left stopped in raw trigger mode so every later capture failed too.
 """
+import time
+
 import pytest
 
 from darlaston.camera.errors import explain, hresult_of, is_retryable
@@ -128,3 +130,62 @@ def test_a_still_camera_is_not_restarted():
     b._on_frame = None
     assert b.grab_raw() == "frame"
     assert "start_stream" not in b.log
+
+
+def test_v4l2_backend_reports_no_raw_and_streams_colour(tmp_path):
+    """The USB-camera backend's contract, without needing a USB camera:
+    it must describe itself honestly (8-bit, no CFA, no raw) so the
+    capture path writes a linear DNG instead of claiming a Bayer
+    pattern that does not exist."""
+    import numpy as np
+    from darlaston.camera import v4l2
+
+    fake = {"node": "/dev/videoX", "card": "Test Scope Cam",
+            "driver": "uvcvideo", "formats": ["MJPG", "YUYV"],
+            "sizes": [(1280, 720), (640, 480)], "raw": []}
+
+    class FakeCapture:
+        def __init__(self, *a, **kw):
+            self._open = True
+
+        def isOpened(self):
+            return self._open
+
+        def set(self, prop, value):
+            return True
+
+        def get(self, prop):
+            return 0.0
+
+        def read(self):
+            return True, np.full((720, 1280, 3), 40, np.uint8)
+
+        def release(self):
+            self._open = False
+
+    monkey = v4l2.cv2.VideoCapture
+    v4l2.cv2.VideoCapture = FakeCapture
+    try:
+        cam = v4l2.V4L2Backend(node="/dev/videoX")
+        v4l2.describe = lambda node: fake
+        info = cam.open()
+        assert info.max_bit_depth == 8
+        assert not info.is_colour, "a decoded camera declares no CFA pattern"
+        assert not info.raw_capable
+        assert info.resolutions[0].pixel_um == 0.0, \
+            "unknown pitch must stay unknown, so no scale bar is invented"
+
+        seen = []
+        cam.start_stream(lambda f: (seen.append(f.data.shape), f.release()))
+        for _ in range(50):
+            if seen:
+                break
+            time.sleep(0.02)
+        cam.stop_stream()
+        assert seen and seen[0] == (720, 1280, 3)
+
+        frame = cam.grab_raw()
+        assert frame.data.ndim == 3, "no raw available; colour is the truth"
+        cam.close()
+    finally:
+        v4l2.cv2.VideoCapture = monkey

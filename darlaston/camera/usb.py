@@ -11,7 +11,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-TOUPTEK_VENDOR = "0547"
+#: USB vendor IDs the ToupTek family appears under. ToupTek has no VID
+#: of its own -- everything rides Cypress/Anchor Chips IDs -- and the
+#: rebadges add their own. Verified against each brand's shipped udev
+#: rules: every library answers on exactly the VIDs its rules list.
+#: 04b4 is the un-programmed EZ-USB bootloader state, which is worth
+#: recognising because a camera stuck there looks absent otherwise.
+TOUPTEK_VENDORS = ("0547", "04b4", "16d0", "9745", "0549")
+#: Kept for callers that want the common case.
+TOUPTEK_VENDOR = TOUPTEK_VENDORS[0]
 
 #: Speeds as reported by sysfs, in Mbps.
 SUPERSPEED_PLUS = 10000
@@ -63,35 +71,38 @@ def _read(p: Path) -> str | None:
         return None
 
 
-def probe(vendor: str = TOUPTEK_VENDOR) -> LinkInfo:
+def probe(vendor: str | tuple[str, ...] = TOUPTEK_VENDORS) -> LinkInfo:
     """Find the camera on the bus and report how fast the link came up.
 
     Linux only for now; other platforms report unknown rather than guessing,
     because a wrong number here would send someone chasing the wrong fault.
     """
+    wanted = (vendor,) if isinstance(vendor, str) else tuple(vendor)
     if not sys.platform.startswith("linux"):
         return LinkInfo(speed_mbps=None, port=None)
 
     for dev in sorted(Path("/sys/bus/usb/devices").glob("*")):
-        if _read(dev / "idVendor") != vendor:
+        found = _read(dev / "idVendor")
+        if found not in wanted:
             continue
         speed = _read(dev / "speed")
         return LinkInfo(
             speed_mbps=int(float(speed)) if speed else None,
             port=dev.name,
-            vendor=vendor,
+            vendor=found,
             product=_read(dev / "product"),
         )
-    return LinkInfo(speed_mbps=None, port=None, vendor=vendor)
+    return LinkInfo(speed_mbps=None, port=None, vendor=wanted[0])
 
 
-def present(vendor: str = TOUPTEK_VENDOR) -> bool:
+def present(vendor: str | tuple[str, ...] = TOUPTEK_VENDORS) -> bool:
     """Is anything from this vendor on the bus at all?
 
     Cheap enough to poll, and it distinguishes "unplugged" from "plugged in but
     held by another program" -- which is the failure people actually hit.
     """
+    wanted = (vendor,) if isinstance(vendor, str) else tuple(vendor)
     if not sys.platform.startswith("linux"):
         return False
-    return any(_read(d / "idVendor") == vendor
+    return any(_read(d / "idVendor") in wanted
                for d in Path("/sys/bus/usb/devices").glob("*"))

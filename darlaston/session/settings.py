@@ -123,6 +123,13 @@ class Settings:
             "seq": f"{seq:04d}",
             "subject": _slug(subject) if subject else "",
         }
+        # Every optics token is always defined, empty when there is no
+        # setup to fill it. Leaving them absent made an unrecognised-token
+        # rule -- meant to keep a *typo* visible -- print a literal
+        # "{objective}_{illumination}" into filenames whenever the camera
+        # was driven without a configured stand.
+        t.update({"camera": "", "scope": "", "objective": "",
+                  "illumination": "", "magnification": ""})
         if setup is not None:
             obj = setup.scope.turret.objective
             total = setup.total_magnification

@@ -714,3 +714,18 @@ def test_capture_writes_the_sensor_it_actually_has(tmp_path, depth, mono):
     else:
         assert photometric == 32803, "colour must be CFA"
         assert 33422 in raw_ifd, "colour must carry a CFA pattern"
+
+
+def test_filenames_collapse_optics_tokens_without_a_setup():
+    """A capture taken before any stand is configured -- or from a camera
+    that has none -- must not write "{objective}_{illumination}" into its
+    own filename. Unknown tokens still survive, so a typo in a pattern
+    stays visible."""
+    s = Settings(capture_root="/tmp/x",
+                 filename_pattern="{seq}_{subject}_{objective}_{illumination}")
+    path = s.resolve(setup=None, seq=1, subject="webcam")
+    assert path.name == "0001_webcam.dng", path.name
+
+    typo = Settings(capture_root="/tmp/x",
+                    filename_pattern="{seq}_{objectve}")
+    assert "{objectve}" in typo.resolve(setup=None, seq=2).name

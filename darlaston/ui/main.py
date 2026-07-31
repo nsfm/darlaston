@@ -1492,17 +1492,72 @@ def _readout(key: str, value_widget: QtWidgets.QLabel) -> QtWidgets.QHBoxLayout:
     return row
 
 
+def _list_cameras() -> int:
+    """Everything on this machine darlaston could drive, and how well."""
+    from ..camera import usb
+    from ..camera.v4l2 import enumerate_cameras
+
+    link = usb.probe()
+    if link.port:
+        print(f"ToupTek family: {link.product or 'camera'} on {link.port} "
+              f"(vendor {link.vendor}, link {link.speed_mbps or '?'} Mbps)")
+        try:
+            from ..camera.toupcam import ToupcamBackend
+            cam = ToupcamBackend()
+            info = cam.open()
+            print(f"    {info.model}  [{info.brand}]  {info.max_bit_depth}-bit"
+                  f"  {'colour ' + info.bayer_pattern if info.is_colour else 'mono'}"
+                  f"{'  cooled' if info.cooled else ''}")
+            print(f"    {len(info.resolutions)} resolutions, largest "
+                  f"{info.resolutions[0]}")
+            cam.close()
+        except Exception as exc:
+            print(f"    could not open it: {exc}")
+    else:
+        print("ToupTek family: none on the bus")
+
+    found = enumerate_cameras()
+    print(f"\nV4L2 / UVC: {len(found)} capture device"
+          f"{'' if len(found) == 1 else 's'}")
+    for cam in found:
+        w, h = cam["sizes"][0]
+        raw = (", raw: " + ", ".join(cam["raw"])) if cam["raw"] else \
+            ", no raw (linear DNG only)"
+        print(f"    {cam['node']}  {cam['card']}  [{cam['driver']}]  "
+              f"{w}x{h}  {'/'.join(cam['formats'])}{raw}")
+    if found:
+        print("\n    run with --usb to use one")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mock", action="store_true",
                     help="use the synthetic camera and do not look for hardware")
+    ap.add_argument("--usb", action="store_true",
+                    help="use an ordinary V4L2/UVC camera (/dev/video*) "
+                         "instead of a ToupTek-family one. No raw: these "
+                         "cameras demosaic on the bridge chip and captures "
+                         "are written as linear DNGs")
+    ap.add_argument("--list-cameras", action="store_true",
+                    help="show every camera darlaston can see, and exit")
     args = ap.parse_args()
+
+    if args.list_cameras:
+        return _list_cameras()
 
     if args.mock:
         from ..camera.mock import MockCamera
         make: callable = lambda: MockCamera(fps=30.0)
         allow_synthetic = False
         presence = None                      # synthetic is always there
+    elif args.usb:
+        def make() -> CameraBackend:
+            from ..camera.v4l2 import V4L2Backend
+            return V4L2Backend()
+        allow_synthetic = True
+        from ..camera.v4l2 import enumerate_cameras
+        presence = lambda: bool(enumerate_cameras())
     else:
         def make() -> CameraBackend:
             from ..camera.toupcam import ToupcamBackend
