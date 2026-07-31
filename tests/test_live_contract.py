@@ -200,3 +200,45 @@ def test_focus_metrics_are_exposure_invariant():
         ratio = bright / max(dim, 1e-12)
         assert 0.8 < ratio < 1.25, (
             f"{metric.value} moved {ratio:.2f}x for a brightness change alone")
+
+
+def test_framerate_default_follows_the_core_count():
+    """A laptop should not open at a workstation's settings.
+
+    Measured on one camera and scene with the process pinned: sixteen cores
+    analyse a frame in 12.7 ms of a 25 ms budget and drop nothing, four take
+    29.0 ms, and two take 37.5 ms and drop a sixth of the frames.
+    """
+    from darlaston.camera.session import default_framerate_cap, usable_cores
+
+    from darlaston.camera.session import FRAMERATES
+
+    assert default_framerate_cap(16) == 40
+    assert default_framerate_cap(8) == 40
+    assert default_framerate_cap(4) == 30
+    assert default_framerate_cap(2) == 15
+    assert default_framerate_cap(1) == 15
+    # Monotonic: more cores must never ask for a lower rate.
+    caps = [default_framerate_cap(n) for n in range(1, 65)]
+    assert caps == sorted(caps)
+    assert usable_cores() >= 1
+    # The one that actually bites: a default the status bar has no entry for
+    # leaves the combo showing one number while the camera runs at another,
+    # because findData returns -1 and the selection silently stays put.
+    for n in range(1, 65):
+        assert default_framerate_cap(n) in FRAMERATES
+    assert default_framerate_cap() in FRAMERATES
+
+
+def test_the_status_bar_offers_every_rate_a_default_can_pick(qapp):
+    """The combo is built from the same tuple the default is chosen from,
+    so the two cannot drift apart. This pins that they stay wired together."""
+    from darlaston.camera.session import FRAMERATES
+    from darlaston.ui.shell import StatusBar
+
+    strip = StatusBar()
+    offered = [strip.rate.itemData(i) for i in range(strip.rate.count())]
+    assert offered == list(FRAMERATES)
+    for fps in FRAMERATES:
+        strip.select_rate(fps)
+        assert strip.rate.currentData() == fps

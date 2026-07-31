@@ -9,6 +9,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera.base import CameraState
+from ..camera.session import FRAMERATES
 from . import theme
 
 
@@ -166,7 +167,7 @@ class StatusBar(QtWidgets.QFrame):
             "the driver holding the interpreter, so asking for fewer beats\n"
             "discarding more. Watch the drop percentage to the right.")
         self.rate.setStyleSheet(self.preview.styleSheet())
-        for fps in (15, 24, 30, 40, 60, 0):
+        for fps in FRAMERATES:
             self.rate.addItem("uncapped" if fps == 0 else f"{fps} fps", fps)
 
         self.numbers = QtWidgets.QLabel("")

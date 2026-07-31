@@ -15,6 +15,7 @@ No Qt here. Callbacks only -- see ARCHITECTURE.md 4 and 5.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -24,6 +25,42 @@ from .base import CameraBackend, CameraInfo, CameraState
 from .buffers import Frame
 from . import usb
 from .errors import CameraProblem
+
+
+#: The preview rates the status bar offers, and therefore the only rates a
+#: default may pick. Kept here rather than in the widget so the two cannot
+#: drift apart: a default the combo has no entry for would leave the box
+#: showing one number while the camera ran at another.
+FRAMERATES = (15, 24, 30, 40, 60, 0)      # 0 is uncapped
+
+
+def usable_cores() -> int:
+    """How many cores this process may actually run on.
+
+    `cpu_count` reports the machine; affinity reports our share of it, which
+    is what a container or a `taskset` leaves us and what the live loop has
+    to live within. Linux only, so fall back to the machine count.
+    """
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:
+        return max(1, os.cpu_count() or 1)
+
+
+def default_framerate_cap(cores: int | None = None) -> int:
+    """Opening preview rate for this machine.
+
+    Deliberately coarse. The thresholds come from measured budget headroom,
+    not from taste, and the operator can move the rate afterwards -- the
+    point is only that a laptop should not open at a workstation's settings
+    and start dropping frames before anyone has touched anything.
+    """
+    cores = usable_cores() if cores is None else cores
+    if cores >= 8:
+        return 40
+    if cores >= 4:
+        return 30
+    return 15
 
 
 @dataclass(frozen=True)
@@ -100,7 +137,21 @@ class CameraSession:
         #: depends on the machine, the link and the preview resolution. It is
         #: also a courtesy: pinning a CPU to render frames the eye cannot use
         #: is not a feature. 0 disables the cap.
-        self.framerate_cap = 40
+        #:
+        #: 40 is right for the machine this was written on and wrong for a
+        #: small one, so the default now follows the core count. Measured on
+        #: the same camera and scene, with the process pinned: sixteen cores
+        #: analyse a frame in 12.7 ms of a 25 ms budget and drop nothing,
+        #: four take 29.0 ms, and two take 37.5 ms and drop a sixth of the
+        #: frames. Most of that is not arithmetic -- the stages themselves
+        #: measure about 3.5 ms of real work -- it is the analysis thread
+        #: being descheduled while the SDK demosaics and Qt paints on the
+        #: same few cores. So the cure is less work arriving, not cheaper
+        #: work, and the rate is the only control that reaches all three:
+        #: capping 40 to 15 took a two-core machine from 185% of a core to
+        #: 80%. Still adjustable in the status bar; this only picks the
+        #: opening guess.
+        self.framerate_cap = default_framerate_cap()
 
         self._status = SessionStatus(CameraState.DISCONNECTED,
                                      message="Waiting for a camera")

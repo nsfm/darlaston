@@ -92,10 +92,19 @@ class PerfPanel(QtWidgets.QWidget):
 
         if total > self._budget_ms:
             worst = rows[0][0] if rows else "something"
+            # The frame rate is named first because it measured as the
+            # larger lever by far: on a two-core machine, capping 40 to 15
+            # took the app from 185% of a core to 80%, which no single
+            # feature here can match. It also reaches the work this table
+            # cannot see, since a frame the camera never sends costs nothing
+            # to pull over USB and nothing to demosaic either.
             self.hint.setText(
-                f"Over budget. Frames are being dropped to keep up, and "
-                f"<b>{worst}</b> is the largest single cost. Turning it "
-                f"off is the cheapest test of whether it is the problem.")
+                f"Over budget, so frames are being dropped to keep up. "
+                f"Lowering the frame rate in the status bar is the biggest "
+                f"single thing you can do, and it saves work this table "
+                f"does not even show. After that, <b>{worst}</b> is the "
+                f"largest cost here and turning it off is the cheapest "
+                f"test of whether it is the problem.")
         elif total > 0.7 * self._budget_ms:
             self.hint.setText(
                 "Close to the budget. This will not hold on a slower "
