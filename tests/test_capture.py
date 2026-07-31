@@ -631,3 +631,43 @@ def test_capture_records_how_much_slide_a_pixel_covers():
     # No pitch, no claim: silence beats an invented scale.
     bare = from_setup(setup, exposure_us=8000, gain_pct=100, pixel_um=None)
     assert "um_per_px" not in bare.comment
+
+
+def test_mosaic_depth_levels_its_tiles(tmp_path):
+    """Each tile's depth is normalised to its own slice count, so 'far'
+    means something different per tile and blending them raw steps at
+    every seam. The overlaps are the constraint that fixes it. Two tiles
+    of one smooth ramp, deliberately offset against each other, must
+    composite back to something without a step."""
+    import cv2
+    from darlaston.capture.mosaic import MosaicSession
+    from darlaston.capture.stack import StackSession
+    from darlaston.process.stitch import composite_depth
+
+    H, W = 400, 600
+    session = MosaicSession(tmp_path, "depthy")
+    # One continuous ramp across the pair, seen with a 200 px overlap.
+    ramp = np.linspace(0, 1, W + 400, dtype=np.float32)
+    offsets = (0.30, -0.25)                # what each tile got wrong
+    for i, (x0, off) in enumerate(zip((0, 400), offsets)):
+        stack = session.begin_stack_tile()
+        f = tmp_path / f"s{i}.dng"
+        f.write_bytes(b"x")
+        stack.adopt(f, metric=0.0)
+        piece = np.tile(ramp[x0:x0 + W], (H, 1)) + off
+        cv2.imwrite(str(stack.dir / "depth.png"),
+                    np.clip(piece * 255, 0, 255).astype(np.uint8))
+        session.adopt_stack(stack, (x0 + W / 2, H / 2), (W, H))
+
+    positions = [(W / 2, H / 2), (400 + W / 2, H / 2)]
+    out = composite_depth(session, positions, [(H, W)] * 2, scale=0.5)
+    assert out is not None and out.exists()
+
+    depth = cv2.imread(str(out), cv2.IMREAD_GRAYSCALE).astype(np.float32)
+    row = depth[depth.shape[0] // 2]
+    # A ramp, so neighbouring differences are small and uniform. A failed
+    # levelling puts a cliff where the tiles meet.
+    steps = np.abs(np.diff(row))
+    assert float(steps.max()) < 8.0, \
+        f"seam step of {steps.max():.0f} levels — tiles were not levelled"
+    assert float(row[-1] - row[0]) > 100, "the ramp itself must survive"

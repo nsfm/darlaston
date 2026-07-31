@@ -106,12 +106,17 @@ def load_pair(directory: Path | str, width: int = WIGGLE_W,
     habit, and lives in settings because habits persist.
     """
     directory = Path(directory)
+    # A stack leaves stacked.dng; a stitched mosaic of stacks leaves
+    # composite.dng and a depth map blended from its tiles. Both are the
+    # same pair of things, so every render here works on either.
     dng = directory / "stacked.dng"
+    if not dng.exists():
+        dng = directory / "composite.dng"
     dmap = directory / "depth.png"
     if not dng.exists() or not dmap.exists():
         raise FileNotFoundError(
-            f"{directory} has no stacked.dng + depth.png pair — "
-            "finish the stack's merge first")
+            f"{directory} has no image + depth.png pair — finish the "
+            "stack's merge, or stitch the mosaic, first")
     rgb, white = _read_composite(dng)
     img = _develop(rgb, white)
     depth = cv2.imread(str(dmap), cv2.IMREAD_GRAYSCALE)

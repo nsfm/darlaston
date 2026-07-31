@@ -690,6 +690,14 @@ def stitch(directory: Path | str, scale: float = 0.25,
     geom = plan(positions, shapes, scale)
     path = composite(session, positions, scale=scale, flat=flat,
                      shapes=shapes, progress=progress)
+    # A stacked mosaic knows its own shape: blend the tiles' depth maps
+    # the same way, and every depth render works on the whole
+    # arrangement rather than one field.
+    depth_path = None
+    try:
+        depth_path = composite_depth(session, positions, shapes, scale)
+    except Exception:
+        pass                 # a mosaic of plain tiles simply has no depth
     report = {
         "width": geom["w"], "height": geom["h"],
         "megapixels": round(geom["megapixels"], 1),
@@ -697,6 +705,7 @@ def stitch(directory: Path | str, scale: float = 0.25,
         "edges": len(edges),
         "refined": sum(1 for e in edges if e.refined),
         "flattened": flat is not None,
+        "depth_map": depth_path is not None,
         "falloff": (round(float(1.0 - flat.min() / flat.max()) * 100, 1)
                     if flat is not None else None),
         "positions": [tuple(round(v, 1) for v in p) for p in positions],
@@ -710,3 +719,116 @@ if __name__ == "__main__":
     path, report = stitch(where, scale=how)
     print(f"{path}  ({report['refined']}/{report['edges']} edges refined, "
           f"{report['tiles']} tiles)")
+
+
+def composite_depth(session: MosaicSession,
+                    positions: list[tuple[float, float]],
+                    shapes: list[tuple[int, int]],
+                    scale: float = 0.25) -> Path | None:
+    """Blend the tiles' own depth maps into one map for the whole mosaic.
+
+    Every stacked tile leaves a `depth.png` beside its `stacked.dng`, and
+    the stitcher has already solved where each tile sits, so the depth
+    can be composited exactly as the pixels were -- same positions, same
+    raised-cosine window. What comes out lets every depth render in the
+    program work on an entire mosaic instead of one field: a wigglegram
+    of seven stitched fields, a DIC relief across the whole arrangement.
+
+    The one thing that does not carry over for free is *what depth means*.
+    Each tile's map is normalised to its own slice count and its own
+    starting plane, so tile 3's "far" is not tile 5's "far", and blending
+    them raw steps at every seam. The overlaps fix it: where two tiles see
+    the same slide they must agree, so the median difference across each
+    overlap is a constraint, and one least squares over those constraints
+    gives a per-tile offset -- the same shape of solve, on the same
+    graph, that already recovers the positions.
+
+    Returns the written path, or None when fewer than two tiles have a
+    depth map to contribute.
+    """
+    maps, boxes = [], []
+    for tile, pos, (th, tw) in zip(session.tiles, positions, shapes):
+        path = (session.dir / tile.stack / "depth.png") if tile.stack \
+            else None
+        if path is None or not path.exists():
+            maps.append(None)
+        else:
+            d = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            maps.append(None if d is None else d.astype(np.float32) / 255.0)
+        boxes.append((pos[0] - tw / 2, pos[1] - th / 2, tw, th))
+    have = [i for i, m in enumerate(maps) if m is not None]
+    if len(have) < 2:
+        return None
+
+    # Pairwise agreement in the overlaps, in raw-pixel coordinates.
+    rows, rhs, wts = [], [], []
+    n = len(maps)
+    for ai in range(n):
+        for bi in range(ai + 1, n):
+            if maps[ai] is None or maps[bi] is None:
+                continue
+            ax, ay, aw, ah = boxes[ai]
+            bx, by, bw, bh = boxes[bi]
+            x0, y0 = max(ax, bx), max(ay, by)
+            x1, y1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+            if x1 - x0 < 64 or y1 - y0 < 64:
+                continue
+            # Sample the shared region on a coarse grid in both tiles.
+            gx = np.linspace(x0, x1 - 1, 48)
+            gy = np.linspace(y0, y1 - 1, 48)
+            mx, my = np.meshgrid(gx, gy)
+
+            def sample(idx, ox, oy, ow, oh):
+                m = maps[idx]
+                u = (mx - ox) / ow * (m.shape[1] - 1)
+                v = (my - oy) / oh * (m.shape[0] - 1)
+                return cv2.remap(m, u.astype(np.float32),
+                                 v.astype(np.float32), cv2.INTER_LINEAR)
+
+            da = sample(ai, ax, ay, aw, ah)
+            db = sample(bi, bx, by, bw, bh)
+            row = [0.0] * n
+            row[ai], row[bi] = -1.0, 1.0
+            rows.append(row)
+            rhs.append(float(np.median(da - db)))
+            wts.append(1.0)
+    offsets = np.zeros(n, np.float32)
+    if rows:
+        rows.append([1.0 if k == have[0] else 0.0 for k in range(n)])
+        rhs.append(0.0)                       # anchor the first real tile
+        wts.append(10.0)
+        A = np.asarray(rows) * np.asarray(wts)[:, None]
+        b = np.asarray(rhs) * np.asarray(wts)
+        solved, *_ = np.linalg.lstsq(A, b, rcond=None)
+        offsets = np.nan_to_num(solved).astype(np.float32)
+
+    xs = [b[0] for b in boxes]
+    ys = [b[1] for b in boxes]
+    w0, h0 = min(xs), min(ys)
+    cw = int(round((max(b[0] + b[2] for b in boxes) - w0) * scale))
+    ch = int(round((max(b[1] + b[3] for b in boxes) - h0) * scale))
+    acc = np.zeros((ch, cw), np.float32)
+    wacc = np.zeros((ch, cw), np.float32)
+    for i, (m, (bx, by, bw, bh)) in enumerate(zip(maps, boxes)):
+        if m is None:
+            continue
+        sw, sh = max(2, int(bw * scale)), max(2, int(bh * scale))
+        x = max(0, int(round((bx - w0) * scale)))
+        y = max(0, int(round((by - h0) * scale)))
+        small = cv2.resize(m + offsets[i], (sw, sh),
+                           interpolation=cv2.INTER_LINEAR)
+        win = _window(sh, sw)
+        x1, y1 = min(x + sw, cw), min(y + sh, ch)
+        acc[y:y1, x:x1] += small[:y1 - y, :x1 - x] * win[:y1 - y, :x1 - x]
+        wacc[y:y1, x:x1] += win[:y1 - y, :x1 - x]
+
+    covered = wacc > 1e-6
+    out = np.zeros_like(acc)
+    out[covered] = acc[covered] / wacc[covered]
+    if covered.any():
+        lo = float(np.percentile(out[covered], 0.5))
+        hi = float(np.percentile(out[covered], 99.5))
+        out = (out - lo) / max(hi - lo, 1e-6)
+    target = session.dir / "depth.png"
+    cv2.imwrite(str(target), np.clip(out * 255, 0, 255).astype(np.uint8))
+    return target

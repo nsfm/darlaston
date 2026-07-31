@@ -226,6 +226,21 @@ Ordered within each section by how much it would change what gets built.
       pitch over total magnification, which is the number a bar actually
       needs. A file without it gets no bar, because a wrong scale bar is
       worse than none.
+- [x] ~~**Depth across a whole mosaic.**~~ A stacked mosaic's tiles each
+      leave a `depth.png`, and the stitcher has already solved where
+      every tile sits — so the depth composites exactly as the pixels do,
+      same positions, same raised-cosine window. What does *not* carry
+      over for free is what depth means: each tile's map is normalised to
+      its own slice count and starting plane, so tile 3's "far" is not
+      tile 5's, and blending raw steps at every seam. The overlaps are the
+      constraint — where two tiles see the same slide they must agree —
+      so the median difference across each overlap feeds one least
+      squares for a per-tile offset, the same shape of solve on the same
+      graph that already recovers the positions. Every depth render now
+      works on an entire arrangement: a DIC relief of seven stitched
+      fields, a wigglegram of the whole mosaic. Test builds one ramp seen
+      as two deliberately mis-levelled tiles and requires no cliff at the
+      seam.
 - [ ] **The slide map as a finding aid.** The other half of the plate
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that
