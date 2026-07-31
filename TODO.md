@@ -99,13 +99,47 @@ Ordered within each section by how much it would change what gets built.
       two cores 24.8 ms and 92% -- a two-core laptop now runs the whole
       application inside a single core, where before it needed most of two
       and still dropped a sixth of the frames.
-- [ ] **Faster analysis does not quiet the fans by itself**, and the panel
-      cannot show why. Halving the frame cost took the loop from 30 fps to
-      about 40 at essentially unchanged CPU: the work per frame fell and the
-      number of frames rose to match, because the camera was always
-      delivering more than the loop could take. Only the rate cap converts
-      that saving into silence, which is the argument for it being the first
-      thing the over-budget hint names.
+- [x] ~~**Faster analysis does not quiet the fans by itself**~~, and the
+      panel cannot show why. Halving the frame cost took the loop from 30 fps
+      to about 40 at essentially unchanged CPU: the work per frame fell and
+      the number of frames rose to match, because the camera was always
+      delivering more than the loop could take. What did quiet it was giving
+      OpenCV fewer threads, below.
+- [x] ~~**OpenCV was taking the whole machine for small work.**~~ This was
+      where the fan noise lived, and the frame table could never show it:
+      that table measures wall-clock per stage, and the waste was in how the
+      wall-clock was bought. Sixteen worker threads burned 293% of a core to
+      do about 61% of a core of real work, because once the stages were made
+      cheap they became too small to be worth spreading. Capped to four:
+      299% and 14.9 ms a frame becomes 191% and 16.4 ms, over five
+      back-to-back pairs. The knee is sharp on the other side, three costs
+      19.7 ms and two costs 24.0 ms of a 25 ms budget.
+      **Refuted along the way:** this was first written as a live-loop cap
+      that batch jobs opted out of, since stitching and merging are
+      throughput work. Measuring it took the idea apart -- both are bound by
+      reading a few hundred megabytes of DNG and by the parts that were
+      never parallel. A fifteen-slice merge is 14.1-14.3 s at sixteen
+      threads against 14.5-14.7 s at four, but spends 22.5 s of CPU rather
+      than 17.2 s to get there; a fifteen-tile stitch is 6.7 s against
+      7.0 s. So the context manager and its eight call sites came back out.
+- [x] ~~**The exposure levels are computed at the rate they are looked
+      at.**~~ The histogram repaints at a third of frame rate and nothing
+      accumulates between repaints, so two of every three were computed and
+      thrown away -- and they are the most thread-hungry work in the loop,
+      which is the worst thing to do at full rate once the process has four
+      threads. 7.19 ms to 2.5 ms, more than the arithmetic alone predicts
+      because it also stops three full-frame passes contending. Subsampling
+      the pixels instead is unsafe and there is a test saying so: a
+      one-pixel-tall clipped streak vanishes from a row-strided histogram.
+- [ ] **Preview scale is the largest stage left**, 4.7 to 7.2 ms, and it is
+      on the UI thread. It is a 1.756x reduction, so it misses the whole-
+      number fast path, but the ways out all cost picture quality and that
+      is a decision to take deliberately rather than quietly. INTER_LINEAR
+      is 0.50 ms and nearly doubles the Laplacian variance, visibly aliasing
+      the striae this program exists to photograph. Reducing by an exact
+      half and magnifying back is 0.72 ms and honest anti-aliasing, but caps
+      the preview at 912 px of real detail on a 1039 px widget, a 12% loss,
+      on the image the operator judges focus by. Currently: neither.
 - [x] ~~**Turret watch**~~ was the largest stage left and turned out to be
       the same trap a third time: it built its 256 square from the full
       frame, 1824/256 is 7.125, and that one downscale was 3.88 ms of a
