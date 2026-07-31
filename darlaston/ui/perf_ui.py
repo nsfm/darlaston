@@ -122,15 +122,24 @@ class PerfPanel(QtWidgets.QWidget):
 PREVIEW_CHOICES = (
     ("full", "Full detail",
      "The frame reduced directly, correctly anti-aliased. The sharpest "
-     "preview and the most work: about 4.7 to 7.2 ms of a 25 ms frame."),
-    ("reduced", "Slightly softer",
+     "preview and by far the most work: about 4 to 9 ms of a 25 ms frame, "
+     "on the same thread that has to stay responsive to you. Choose it "
+     "when you want to look at the actual pixels rather than the field."),
+    ("fast", "Fast (default)",
+     "Fitted in a single step, several milliseconds less. It samples the "
+     "frame rather than averaging it, which can alias detail near the "
+     "limit of what the preview resolves -- but on a real diatom at 16x it "
+     "came within 0.8 of 255 levels of Full detail, and moving the stage "
+     "made it churn only 6% more. Free on most subjects, which is why it "
+     "is the default. Worth checking against Full detail at high "
+     "magnification, where fine detail sits closer to that limit."),
+    ("reduced", "Softer",
      "Reduced by exactly half first, which is the only cheap reduction "
-     "available, then fitted to the window. Renders just as smoothly for "
-     "about 0.7 ms, at roughly 12% less fine detail."),
-    ("fast", "Fastest",
-     "Fitted in a single step, about 0.5 ms. Keeps the full grid, but "
-     "samples it rather than averaging it, so fine repeating structure -- "
-     "diatom striae especially -- can shimmer as you rack through focus."),
+     "available, then fitted to the window. The cheapest, and the calmest "
+     "of the three under motion, but visibly the softest: a third of the "
+     "fine detail is gone before the window is fitted at all, and more "
+     "than that on a large window, which shows plainly on areolae and "
+     "striae. For when Fast is still costing more than you can spare."),
 )
 
 

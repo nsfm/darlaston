@@ -142,11 +142,17 @@ Ordered within each section by how much it would change what gets built.
       one -- that excess is the shimmer on striae). Switching live on the
       camera moves the stage 4.52 to 1.06 to 0.99 ms and total CPU by about
       28%. Default stays on full.
-- [ ] **Pick a preview-quality default** once Nate has looked through all
-      three at a real subject. The measurement cannot settle this one: it
-      is a question about what the eye can spare while racking focus, and
-      the answer may well differ between a diatom test plate and a stained
-      section.
+- [x] ~~**Pick a preview-quality default.**~~ `fast`, on the measurement
+      and on Nate's eye, which agreed. My own warning against it was wrong
+      and worth recording why: the near-Nyquist sine grating I tested it on
+      was built to alias, and areolae on a binned preview are nowhere near
+      the sampling limit. On a real tile from a 16x mosaic it came within
+      0.8 of 255 levels of the honest reduction, and under sub-pixel stage
+      motion -- which is what shimmer actually is, and what a still frame
+      cannot show -- it churned 6% more rather than the visible beating the
+      synthetic test predicted. `reduced` was the one that read as soft,
+      losing a third of the edge energy. Full detail is a click away for
+      anyone who wants to count pixels.
 - [x] ~~**Turret watch**~~ was the largest stage left and turned out to be
       the same trap a third time: it built its 256 square from the full
       frame, 1824/256 is 7.125, and that one downscale was 3.88 ms of a

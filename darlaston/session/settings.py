@@ -109,15 +109,23 @@ class Settings:
     #: why it is here rather than decided once in the code.
     #:
     #:   full     the frame reduced directly, correctly anti-aliased.
-    #:            Sharpest, and 4.7-7.2 ms of a 25 ms frame.
+    #:            Sharpest, and 4-9 ms of a 25 ms frame.
+    #:   fast     fitted in one bilinear step, several milliseconds less.
+    #:            Samples rather than averages, so it can alias detail near
+    #:            the preview's resolving limit.
     #:   reduced  reduced by exactly half first, which is the only cheap
-    #:            reduction OpenCV has, then fitted to the window. Same
-    #:            smooth rendering for 0.72 ms, at about 12% less real
-    #:            detail on a 1039 px view.
-    #:   fast     fitted in one bilinear step, 0.50 ms. Keeps the full grid
-    #:            but point-samples it, so fine repeating structure -- which
-    #:            on these subjects means diatom striae -- can shimmer.
-    preview_quality: str = "full"    # full | reduced | fast
+    #:            reduction OpenCV has, then fitted. Cheapest and calmest
+    #:            under motion, and visibly the softest.
+    #:
+    #: `fast` is the default on the evidence and on Nate's eye, which agreed.
+    #: The theoretical objection to it is real but does not bite here: on a
+    #: real diatom at 16x it came within 0.8 of 255 levels of `full`, and
+    #: under sub-pixel stage motion it churned 6% more, not the shimmer a
+    #: near-Nyquist test pattern had predicted. That pattern was the wrong
+    #: test -- it was built to alias, and areolae on a binned preview are
+    #: nowhere near the sampling limit. `full` is a click away for anyone
+    #: who wants to count pixels.
+    preview_quality: str = "fast"    # full | fast | reduced
     #: Threads OpenCV may use. 0 follows the measured default in cpu.py,
     #: which is four; more is available for anyone who would rather spend
     #: the machine than the milliseconds.

@@ -347,7 +347,7 @@ def test_performance_preferences_persist_and_apply(tmp_path, qapp):
 
     path = tmp_path / "settings.json"
     s = Settings()
-    assert s.preview_quality == "full" and s.cpu_threads == 0
+    assert s.preview_quality == "fast" and s.cpu_threads == 0
 
     applied = []
     dialog = PerformanceDialog(s, lambda: applied.append(True))
@@ -358,11 +358,11 @@ def test_performance_preferences_persist_and_apply(tmp_path, qapp):
     s.save = lambda: real_save(s, path)
 
     for button in dialog._quality.buttons():
-        if button.property("value") == "fast":
+        if button.property("value") == "full":
             button.setChecked(True)
-    assert s.preview_quality == "fast"
+    assert s.preview_quality == "full"
     assert applied, "a change must reach the live view immediately"
-    assert Settings.load(path).preview_quality == "fast", \
+    assert Settings.load(path).preview_quality == "full", \
         "a comparison you must remember to confirm is one you will lose"
 
     # An explicit thread count overrides the measured default; 0 restores it.
@@ -384,5 +384,5 @@ def test_old_settings_files_still_load():
            "artist": "Nate", "stack_smoothing": "normal"}
     s = Settings(**old)
     assert s.artist == "Nate" and s.stack_smoothing == "normal"
-    assert s.preview_quality == "full" and s.cpu_threads == 0
+    assert s.preview_quality == "fast" and s.cpu_threads == 0
     assert json.loads(json.dumps({k: v for k, v in old.items()}))
