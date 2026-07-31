@@ -27,6 +27,7 @@ from ..capture import CaptureResult, StillCapture
 from ..capture.mosaic import MosaicSession
 from ..capture.stack import StackSession, StackTrigger
 from ..capture.timelapse import Timelapse, TimelapseStatus
+from ..cpu import apply_thread_budget
 from ..live.focus import Illumination, Region
 from ..live.pipeline import LivePipeline, LiveSignals
 from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
@@ -1607,6 +1608,10 @@ def main() -> int:
         allow_synthetic = True
         from ..camera import usb
         presence = usb.present               # real hardware lives on the bus
+
+    # Before anything opens a camera. Measured to be the right setting for
+    # the batch jobs too, not just the preview -- see cpu.py.
+    apply_thread_budget()
 
     app = QtWidgets.QApplication(sys.argv)
     theme.load_fonts()

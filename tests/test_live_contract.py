@@ -242,3 +242,17 @@ def test_the_status_bar_offers_every_rate_a_default_can_pick(qapp):
     for fps in FRAMERATES:
         strip.select_rate(fps)
         assert strip.rate.currentData() == fps
+
+
+def test_the_thread_budget_is_applied_and_bounded():
+    """Four threads measured no worse than sixteen for both the live loop and
+    the batch jobs, at a third less CPU. The budget only bites on machines
+    with cores to spare: on a small one it is what OpenCV would pick anyway.
+    """
+    import cv2
+    from darlaston.cpu import THREAD_BUDGET, apply_thread_budget, usable_cores
+
+    assert THREAD_BUDGET == min(4, usable_cores())
+    assert 1 <= THREAD_BUDGET <= usable_cores()
+    apply_thread_budget()
+    assert cv2.getNumThreads() == THREAD_BUDGET

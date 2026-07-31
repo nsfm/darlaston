@@ -15,7 +15,6 @@ No Qt here. Callbacks only -- see ARCHITECTURE.md 4 and 5.
 """
 from __future__ import annotations
 
-import os
 import threading
 import time
 from dataclasses import dataclass
@@ -25,6 +24,7 @@ from .base import CameraBackend, CameraInfo, CameraState
 from .buffers import Frame
 from . import usb
 from .errors import CameraProblem
+from ..cpu import usable_cores
 
 
 #: The preview rates the status bar offers, and therefore the only rates a
@@ -32,19 +32,6 @@ from .errors import CameraProblem
 #: drift apart: a default the combo has no entry for would leave the box
 #: showing one number while the camera ran at another.
 FRAMERATES = (15, 24, 30, 40, 60, 0)      # 0 is uncapped
-
-
-def usable_cores() -> int:
-    """How many cores this process may actually run on.
-
-    `cpu_count` reports the machine; affinity reports our share of it, which
-    is what a container or a `taskset` leaves us and what the live loop has
-    to live within. Linux only, so fall back to the machine count.
-    """
-    try:
-        return max(1, len(os.sched_getaffinity(0)))
-    except AttributeError:
-        return max(1, os.cpu_count() or 1)
 
 
 def default_framerate_cap(cores: int | None = None) -> int:
