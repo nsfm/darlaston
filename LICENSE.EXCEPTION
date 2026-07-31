@@ -1,0 +1,74 @@
+# Additional permission under GNU GPL version 3, section 7
+
+Copyright (C) 2026 Nate Dube <nate@ndube.com>
+
+darlaston is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. The full text is in the file `LICENSE`.
+
+The following additional permission is granted under section 7 of that
+licence.
+
+## The permission
+
+> If you modify this Program, or any covered work, by linking or
+> combining it with a **Camera Support Library** (or a modified version
+> of such a library), the licensors of this Program grant you additional
+> permission to convey the resulting work. Corresponding Source for a
+> non-source form of such a combination shall include the source code
+> for the parts of this Program used in that combination, but need not
+> include the source of the Camera Support Library itself.
+
+A **Camera Support Library** means any library, driver, runtime or
+software development kit whose purpose is to operate imaging hardware or
+the equipment it is attached to, including but not limited to camera
+manufacturers' SDKs, machine-vision and photographic-tethering
+libraries, and motorised stage, filter-wheel and illumination control
+libraries — together with any bindings distributed with them for the
+purpose of using them.
+
+This permission applies whether the library is linked, loaded at run
+time, or invoked through a binding, and whether or not its own licence
+is compatible with the GNU General Public License.
+
+## Why it exists
+
+A microscope camera is reachable only through its manufacturer's own
+software, and that software is proprietary. Sometimes worse than
+proprietary: the SDK darlaston was first written against ships with no
+licence, no EULA and no copyright notice of any kind, so nobody can say
+what it permits — downstream packagers have each invented a different
+answer, and two of them contradict each other inside the same
+repository.
+
+Without this permission, the GPL's terms would make it doubtful whether
+anyone could distribute a working build of darlaston at all, since every
+useful build must reach a camera. That would not protect a single user's
+freedom. It would only make the program undistributable while leaving
+the proprietary SDK exactly as proprietary as it was.
+
+So the permission is deliberately about a *class* of library rather than
+one file. darlaston already reaches a dozen vendor libraries, and the
+list is expected to grow to tethering and industrial-camera libraries.
+Naming them one at a time would mean amending this document — and
+therefore needing the agreement of every contributor — each time someone
+adds support for a camera they own.
+
+## What it does not do
+
+It grants nothing about the hardware libraries themselves. Their own
+licences, where they have any, are unaffected, and this document gives
+you no right to redistribute them. darlaston does not bundle any of
+them; you install your own. See `SUPPORT.md`.
+
+It is also not a general exception. It covers libraries that exist to
+operate imaging hardware. It does not cover linking darlaston with
+proprietary software for any other purpose.
+
+## Removing it
+
+If you modify this Program, you may extend this permission to your
+modified version, but you are not obliged to. If you do not wish to do
+so, delete this file and the corresponding notice from the files you
+modify.

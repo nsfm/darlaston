@@ -747,8 +747,16 @@ Ordered within each section by how much it would change what gets built.
 
 ## Legal and release
 
-- [ ] **Write the GPL linking exception now**, while sole copyright holder.
-      After the first outside contribution it needs their agreement too.
+- [x] ~~**Write the GPL linking exception**~~ — done while sole copyright
+      holder, which was the whole point: after the first outside
+      contribution it would have needed their agreement too, and a
+      contributor who drifts away blocks it permanently. `LICENSE.EXCEPTION`
+      grants a GPL §7 permission for linking against a *class* of library
+      ("Camera Support Library" — vendor SDKs, tethering, machine vision,
+      stage and illumination control) rather than naming `libtoupcam`,
+      because we already reach a dozen and the list is meant to grow.
+      Covers linking, runtime loading and bindings. **Nate should read it
+      and own it**: it is their copyright and my draft.
 - [ ] Verify `focus-stack`'s licence before vendoring (MIT as of Jan 2026).
 
 ## Packaging
