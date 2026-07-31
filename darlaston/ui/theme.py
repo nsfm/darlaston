@@ -144,6 +144,17 @@ def stylesheet() -> str:
         margin: 1px;
     }}
     QCheckBox::indicator:checked {{ background: {BRASS}; border-color: {BRASS}; }}
+    /* Radios were unstyled, which on this background left the unchosen ones
+       all but invisible -- a set of options you cannot see is not a choice. */
+    QRadioButton {{ font-family: "{fam['mono']}"; spacing: 7px;
+                    background: transparent; }}
+    QRadioButton::indicator {{
+        width: 12px; height: 12px; border: 1px solid {LINE}; border-radius: 7px;
+        margin: 1px;
+    }}
+    QRadioButton::indicator:checked {{ background: {BRASS};
+                                       border-color: {BRASS}; }}
+    QRadioButton::indicator:hover {{ border-color: {BRASS}; }}
 
     QSlider::groove:horizontal {{ height: 3px; background: {SUNK};
                                   border-radius: 2px; }}

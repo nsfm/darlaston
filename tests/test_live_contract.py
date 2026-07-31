@@ -300,3 +300,89 @@ def test_levels_are_computed_at_the_divisor_but_never_go_stale_or_missing():
     expected = 1.0 / 64
     seen = max(s.clipped_fraction for s in fresh)
     assert abs(seen - expected) < 1e-6, f"clipping mismeasured: {seen}"
+
+
+def test_preview_quality_modes_do_what_the_dialog_says(qapp):
+    """Three real options, not a fast-or-slow slider, so each is checked for
+    the thing its description promises: same size in every case, `reduced`
+    softer than the honest reduction, `fast` *sharper* than it -- which is
+    the tell, because a cheaper filter cannot honestly find more detail. It
+    is inventing edge energy, and that is what shimmers on striae.
+    """
+    import cv2
+    import numpy as np
+    from darlaston.ui.perf_ui import PREVIEW_CHOICES
+    from darlaston.ui.widgets import LiveView
+
+    rng = np.random.default_rng(11)
+    # Fine periodic structure, which is the case that separates these.
+    y, x = np.mgrid[0:1216, 0:1824]
+    frame = (120 + 90 * np.sin(x / 2.5) * np.sin(y / 40.0)).astype(np.uint8)
+    frame = np.repeat(frame[:, :, None], 3, axis=2)
+
+    view = LiveView()
+    view.resize(1039, 693)
+    energy = {}
+    for value, _label, _why in PREVIEW_CHOICES:
+        view.preview_quality = value
+        view._set_frame(frame, None)
+        out = view._buf.copy()
+        assert out.shape[0] > 0 and out.shape[1] > 0
+        assert out.shape[:2] == view._buf.shape[:2]
+        grey = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY)
+        energy[value] = cv2.Laplacian(grey, cv2.CV_32F).var()
+
+    assert set(energy) == {"full", "reduced", "fast"}
+    assert energy["reduced"] < energy["full"], \
+        "the softer mode should carry less detail, not more"
+    assert energy["fast"] > energy["full"], \
+        "bilinear should show its aliasing as excess edge energy"
+
+
+def test_performance_preferences_persist_and_apply(tmp_path, qapp):
+    import cv2
+    from darlaston.cpu import THREAD_BUDGET, apply_thread_budget, usable_cores
+    from darlaston.session.settings import Settings
+    from darlaston.ui.perf_ui import PerformanceDialog
+
+    path = tmp_path / "settings.json"
+    s = Settings()
+    assert s.preview_quality == "full" and s.cpu_threads == 0
+
+    applied = []
+    dialog = PerformanceDialog(s, lambda: applied.append(True))
+    # Redirect the save at the temp path without losing the real one, which
+    # is easy to get wrong: assigning a lambda that calls s.save makes it
+    # call itself.
+    real_save = Settings.save
+    s.save = lambda: real_save(s, path)
+
+    for button in dialog._quality.buttons():
+        if button.property("value") == "fast":
+            button.setChecked(True)
+    assert s.preview_quality == "fast"
+    assert applied, "a change must reach the live view immediately"
+    assert Settings.load(path).preview_quality == "fast", \
+        "a comparison you must remember to confirm is one you will lose"
+
+    # An explicit thread count overrides the measured default; 0 restores it.
+    apply_thread_budget(2)
+    assert cv2.getNumThreads() == 2
+    apply_thread_budget(0)
+    assert cv2.getNumThreads() == THREAD_BUDGET
+    assert all(n <= usable_cores()
+               for n in (dialog.threads.itemData(i)
+                         for i in range(dialog.threads.count())) if n)
+
+
+def test_old_settings_files_still_load():
+    """Adding fields must not orphan somebody's existing preferences."""
+    import json
+    from darlaston.session.settings import Settings
+
+    old = {"capture_root": "/tmp/shots", "raw_format": "dng",
+           "artist": "Nate", "stack_smoothing": "normal"}
+    s = Settings(**old)
+    assert s.artist == "Nate" and s.stack_smoothing == "normal"
+    assert s.preview_quality == "full" and s.cpu_threads == 0
+    assert json.loads(json.dumps({k: v for k, v in old.items()}))

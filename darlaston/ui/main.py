@@ -39,7 +39,7 @@ from .about import AboutDialog
 from .calib_ui import CalibrationButton, CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
-from .perf_ui import PerfPanel
+from .perf_ui import PerfPanel, PerformanceDialog
 from .setup_ui import SetupDialog
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
@@ -148,6 +148,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                        self.bridge.banked.emit,
                                        self.bridge.banking.emit)
         self._build()
+        # After the widgets exist and before the first frame arrives, so the
+        # preview is never briefly drawn at a quality nobody chose.
+        self._apply_performance()
         self.pipeline.start()
         self.session.start()
 
@@ -160,12 +163,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # every name having to change when the third tool appears.
         instrument = self.toolbar.add_menu("Instrument")
         instrument.addAction("Microscope setup…", self._open_setup)
-        self.perf_action = instrument.addAction("Performance")
+        self.perf_action = instrument.addAction("Performance panel")
         self.perf_action.setCheckable(True)
         self.perf_action.setToolTip(
             "Show what each feature costs per frame, so the expensive ones "
             "can be found rather than guessed at.")
         self.perf_action.toggled.connect(self._toggle_perf)
+        instrument.addAction("Performance settings\u2026", self._open_performance)
         # Its own menu rather than a corner of Capture: attribution is the
         # one part of a file's provenance the instrument cannot supply, and
         # burying it is how photographs get published uncredited.
@@ -1311,6 +1315,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.perf_window.show()
         else:
             self.perf_window.hide()
+
+    def _open_performance(self) -> None:
+        PerformanceDialog(self.settings, self._apply_performance, self).exec()
+
+    def _apply_performance(self) -> None:
+        """Push the performance preferences at the things that obey them.
+
+        Called at startup and again on every change in the dialog, so a
+        setting can be judged against the slide on the stage rather than
+        against a memory of the last one.
+        """
+        self.view.preview_quality = self.settings.preview_quality
+        apply_thread_budget(self.settings.cpu_threads)
 
     def settings_rate(self) -> int:
         """The frame cap the loop is currently trying to hit."""

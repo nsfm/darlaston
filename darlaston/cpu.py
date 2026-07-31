@@ -70,6 +70,11 @@ def usable_cores() -> int:
 THREAD_BUDGET = min(4, usable_cores())
 
 
-def apply_thread_budget() -> None:
-    """Set the budget. Call once, at startup, before anything opens a camera."""
-    cv2.setNumThreads(THREAD_BUDGET)
+def apply_thread_budget(threads: int = 0) -> None:
+    """Set the budget, at startup and whenever the preference changes.
+
+    0 means the measured default above. Anything else is the operator
+    choosing to spend the machine differently, which is theirs to do --
+    the numbers are in the dialog next to the setting.
+    """
+    cv2.setNumThreads(threads if threads > 0 else THREAD_BUDGET)

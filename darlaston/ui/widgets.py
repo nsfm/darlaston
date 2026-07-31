@@ -35,6 +35,8 @@ class LiveView(QtWidgets.QWidget):
         self._remaining: QtGui.QImage | None = None
         self._drag_from: QtCore.QPointF | None = None
         self._drag_to: QtCore.QPointF | None = None
+        #: full | reduced | fast. See `_scaled`, and the dialog that sets it.
+        self.preview_quality = "full"
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
         self.setMinimumSize(480, 320)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
@@ -63,12 +65,7 @@ class LiveView(QtWidgets.QWidget):
         target = self._fit(QtCore.QSize(w, h))
         tw, th = max(1, target.width()), max(1, target.height())
         if (tw, th) != (w, h):
-            # INTER_AREA is the right *reduction* filter and is what Qt's
-            # smooth transform was approximating; it is a poor magnifier, so
-            # a window larger than the frame gets linear instead.
-            rgb = cv2.resize(rgb, (tw, th),
-                             interpolation=cv2.INTER_AREA if tw < w
-                             else cv2.INTER_LINEAR)
+            rgb = self._scaled(rgb, w, h, tw, th)
         # QImage does not copy, so keep the buffer alive on the instance.
         self._buf = np.ascontiguousarray(rgb)
         self._image = QtGui.QImage(self._buf.data, tw, th,
@@ -78,6 +75,42 @@ class LiveView(QtWidgets.QWidget):
         if peaking is not None:
             self._peaking = self._peaking_overlay(peaking, (tw, th))
         self.update()
+
+    def _scaled(self, rgb: np.ndarray, w: int, h: int,
+                tw: int, th: int) -> np.ndarray:
+        """Fit the frame to the window, at the chosen cost.
+
+        INTER_AREA is the right *reduction* filter and is what Qt's smooth
+        transform was approximating; it is a poor magnifier, so a window
+        larger than the frame gets linear whatever the setting says.
+
+        The reason there is a setting at all: the window is rarely an exact
+        fraction of the sensor, and OpenCV only has a cheap box-average path
+        when the scale factor is a whole number. Reducing 1824 to 1039 is
+        1.756x, so it takes the general path and costs about ten times what
+        an exact half does. Every way around that spends picture quality,
+        and which sort of quality you can spare depends on the subject.
+        """
+        if tw >= w:
+            return cv2.resize(rgb, (tw, th), interpolation=cv2.INTER_LINEAR)
+        if self.preview_quality == "fast":
+            # One bilinear step. Keeps the full grid but point-samples a
+            # 2x2 neighbourhood across a reduction much larger than that,
+            # so it invents edge energy: measured at nearly twice the
+            # Laplacian variance of the honest reduction, which on fine
+            # periodic structure reads as shimmer.
+            return cv2.resize(rgb, (tw, th), interpolation=cv2.INTER_LINEAR)
+        if self.preview_quality == "reduced":
+            # An exact half is the one cheap reduction available, so take
+            # it and fit from there. The anti-aliasing is honest; what is
+            # lost is resolution, since the detail beyond half the sensor
+            # grid is gone before the window is fitted.
+            half = cv2.resize(rgb, (w // 2, h // 2),
+                              interpolation=cv2.INTER_AREA)
+            return cv2.resize(half, (tw, th),
+                              interpolation=cv2.INTER_AREA if tw < w // 2
+                              else cv2.INTER_LINEAR)
+        return cv2.resize(rgb, (tw, th), interpolation=cv2.INTER_AREA)
 
     def _peaking_overlay(self, field: np.ndarray,
                          size: tuple[int, int] | None = None) -> QtGui.QImage:

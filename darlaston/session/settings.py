@@ -104,6 +104,24 @@ class Settings:
     #: debris it also diffuses away real background specks.
     stack_smoothing: str = "light"
     stack_feather: float = 2.0       # blend feather at depth seams, px
+    #: How the live preview is scaled to the window. This is a real trade
+    #: and the right answer depends on the subject and the machine, which is
+    #: why it is here rather than decided once in the code.
+    #:
+    #:   full     the frame reduced directly, correctly anti-aliased.
+    #:            Sharpest, and 4.7-7.2 ms of a 25 ms frame.
+    #:   reduced  reduced by exactly half first, which is the only cheap
+    #:            reduction OpenCV has, then fitted to the window. Same
+    #:            smooth rendering for 0.72 ms, at about 12% less real
+    #:            detail on a 1039 px view.
+    #:   fast     fitted in one bilinear step, 0.50 ms. Keeps the full grid
+    #:            but point-samples it, so fine repeating structure -- which
+    #:            on these subjects means diatom striae -- can shimmer.
+    preview_quality: str = "full"    # full | reduced | fast
+    #: Threads OpenCV may use. 0 follows the measured default in cpu.py,
+    #: which is four; more is available for anyone who would rather spend
+    #: the machine than the milliseconds.
+    cpu_threads: int = 0
 
     def __post_init__(self) -> None:
         if not self.capture_root:
