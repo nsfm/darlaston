@@ -14,6 +14,10 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The suite builds and grabs real widgets and pushes real frames through
+    # the pipeline, so it is minutes rather than seconds. This is a guard
+    # against a hang burning the default six hours, not a target.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -33,11 +37,15 @@ jobs:
       # of system libraries that a CI image does not carry. Without these
       # the offscreen platform plugin fails to load and every widget test
       # dies with a message that does not mention any of them.
+      #
+      # glib is deliberately not named here even though Qt uses it: Ubuntu
+      # 24.04 renamed the package to libglib2.0-0t64, so naming it pins the
+      # workflow to a runner image, and it is in the base image regardless.
       - name: System libraries Qt needs
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libglib2.0-0
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3
 
       - name: Install
         run: |
@@ -76,7 +84,40 @@ jobs:
                    if n.startswith(("spike/", "tests/", "tools/"))]
           assert not stray, f"wheel carries files it should not: {stray}"
           assert any("LICENSE" in n for n in names), "no licence in the wheel"
+          # The interface is not all Python, and a wheel missing these
+          # installs a program that cannot build its own stylesheet. It
+          # shipped that way once, because everybody testing it had a
+          # clone, where the files are present whether packaged or not.
+          fonts = [n for n in names if "/fonts/" in n]
+          icons = [n for n in names if "/icons/" in n]
+          assert len(fonts) >= 6, f"wheel is missing typefaces: {fonts}"
+          assert len(icons) >= 6, f"wheel is missing icons: {icons}"
           print(f"{w}: {len(names)} entries, clean")
+          PY
+
+      # Installed, not cloned. Every check above reads the archive; this one
+      # asks the program whether it can actually dress itself, from the same
+      # position a stranger running `pip install darlaston` is in.
+      - name: The installed wheel can build its own interface
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install --quiet dist/*.whl
+          QT_QPA_PLATFORM=offscreen /tmp/fresh/bin/python - <<'PY'
+          from PySide6 import QtWidgets
+          from darlaston.ui import icons, theme
+          app = QtWidgets.QApplication([])
+          theme.install(app)
+          fams = theme.load_fonts()
+          assert fams["display"] != fams["sans"], f"wordmark missing: {fams}"
+          assert fams["mono"] != "monospace", f"body faces missing: {fams}"
+          assert len(theme.stylesheet()) > 1000, "the stylesheet came out empty"
+          assert len(icons.available()) >= 6, icons.available()
+          theme.identify(app)
+          assert not app.windowIcon().isNull(), "no application icon"
+          print("installed interface builds:", fams)
           PY
       - uses: actions/upload-artifact@v4
         with:

@@ -64,6 +64,16 @@ packages = [
     "darlaston.ui",
 ]
 
+# The interface is not all Python. Without this the wheel installs a
+# program that cannot build its own stylesheet: `stylesheet()` asks
+# `icons.path_for` for the combo-box chevron, and that raises
+# FileNotFoundError on a tree with no icons in it. Verified by unzipping
+# the wheel in CI rather than trusted, because the failure only appears
+# for someone who installed rather than cloned -- which is everyone
+# except us.
+[tool.setuptools.package-data]
+"darlaston.ui" = ["fonts/*.ttf", "fonts/LICENSE.txt", "icons/*.svg"]
+
 [tool.setuptools.dynamic]
 version = { attr = "darlaston.__version__" }
 

@@ -6,11 +6,17 @@ Phase-correlate every consecutive pair of captures. The response value is a
 deliberately non-overlapping controls -- tells us whether registration on this
 subject is viable before we wire up anyone's stitching library.
 """
-import cv2
-import numpy as np
+import os
+import sys
 from pathlib import Path
 
-D = Path("/home/nate/Pictures/ovshoot/250819_dopamine")
+import cv2
+import numpy as np
+
+# A folder of consecutive captures. Point it at your own with the first
+# argument or $SHOTS.
+D = Path(sys.argv[1] if len(sys.argv) > 1
+         else os.environ.get("SHOTS", "captures"))
 SCALE = 0.25  # downsample; registration runs on small images anyway
 
 

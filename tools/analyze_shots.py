@@ -4,11 +4,16 @@
 Looks for clipping, posterisation, chroma damage and illumination falloff in
 existing JPEG captures.
 """
-import numpy as np
-from PIL import Image
+import os
 import sys
 
-D = "/home/nate/Pictures/ovshoot/250819_dopamine/"
+import numpy as np
+from PIL import Image
+
+# A folder of captures to look at. These were run against one session's
+# shots; point it at your own with the first argument or $SHOTS.
+D = (sys.argv[1] if len(sys.argv) > 1
+     else os.environ.get("SHOTS", "captures/")).rstrip("/") + "/"
 FILES = [("ov0027.jpg", "darkfield"), ("ov0016.jpg", "phase")]
 
 
