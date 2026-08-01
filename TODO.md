@@ -282,6 +282,19 @@ worth protecting when deciding what to build next.
       opposite fixes -- ours means less work per frame, theirs means a
       lower rate or another USB port, and no amount of optimising the loop
       touches it.
+- [ ] **Flyby: the orchestrated version.** Design notes in `FLYBY.md`,
+      deliberately not started. A stacked mosaic is a four-dimensional
+      recording -- x, y, zoom and focal plane -- and every move through it
+      can be perfectly smooth because it is synthesised rather than
+      performed, which is virtual camera work on a slide and is offered
+      because we keep both the mosaic and the depth. The thing that makes
+      it a big feature rather than a small one is circular: a flyby can
+      only be planned over a mosaic that already exists, and the mosaic
+      that should exist depends on the flyby. Nate's answer is to plan
+      over the live slide map first -- sketch the path, get the minimum
+      coverage and an honest size estimate, then shoot it -- which turns a
+      rendering feature into a capture feature. Order and reasoning in the
+      doc.
 - [x] ~~**A film of a mosaic.**~~ Darkroom > Fly through a mosaic. Opens
       close enough that the areolae are visible and the subject is not,
       moves between specimens it picks itself by looking for structure, and
