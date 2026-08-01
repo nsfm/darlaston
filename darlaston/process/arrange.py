@@ -120,7 +120,7 @@ def find_specimens(directory: Path | str,
         # Stretch each specimen's own levels inside its own mask. A
         # brightfield frustule is a faint thing on a bright ground, and
         # lifted onto paper at capture contrast it reads as a ghost. This
-        # is a display decision on a display artifact -- the plate keeps
+        # is a display decision on a display render -- the plate keeps
         # capture contrast, because a plate is evidence and this is not.
         inside = alpha > 0.5
         if inside.sum() > 50:

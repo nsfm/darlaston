@@ -186,9 +186,21 @@ class StatusBar(QtWidgets.QFrame):
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(10, 0, 12, 0)
         row.setSpacing(10)
+        # Shown only when white balance is *off*. A checkable menu entry
+        # is fine when you can see its effect -- the framing guides are
+        # visible on the picture -- but this one changes every file
+        # written and is discoverable nowhere else. Off is the unusual
+        # state, so the chip appears only then.
+        self.wb_off = Chip("no white balance", active=True)
+        self.wb_off.setToolTip(
+            "Files are being written with the sensor's own channels, "
+            "untouched.\nTurn it back on in Capture > Write white balance.")
+        self.wb_off.hide()
+
         row.addWidget(self.dot)
         row.addWidget(self.state)
         row.addWidget(self.context)
+        row.addWidget(self.wb_off)
         row.addStretch(1)
         row.addWidget(self.preview)
         row.addWidget(self.rate)
@@ -225,6 +237,10 @@ class StatusBar(QtWidgets.QFrame):
             f"Room left on the volume holding {root or 'your captures'}.\n"
             "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
             if root else "Room left where captures are written.")
+
+    def set_white_balance(self, on: bool) -> None:
+        """Say so when files are going out unbalanced."""
+        self.wb_off.setVisible(not on)
 
     def select_rate(self, fps: int) -> None:
         at = self.rate.findData(int(fps))

@@ -6,7 +6,7 @@ written, the timelapse -- and the darkroom holds the things you do to
 finished work afterwards. They were sharing a menu and it read as a
 junk drawer.
 
-The render dialog exists because the full set of depth artifacts takes
+The render dialog exists because the full set of depth renders takes
 minutes and produces eight files. Offering them as checkboxes lets the
 operator ask for the wobble alone, which takes seconds.
 """
@@ -20,7 +20,7 @@ from . import theme
 
 #: (key, label, hint, default on). Order is roughly cheapest first, which
 #: is also the order the worker runs them in.
-ARTIFACTS = [
+RENDERS = [
     ("wiggle", "Wigglegram", "a looping wobble -- wiggle.webm and .webp",
      True),
     ("stereo", "Stereo pair and anaglyph",
@@ -38,7 +38,7 @@ ARTIFACTS = [
 
 
 class RenderDialog(QtWidgets.QDialog):
-    """Pick which depth artifacts to make from one finished stack."""
+    """Pick which depth renders to make from one finished stack."""
 
     def __init__(self, directory: Path, run, parent=None) -> None:
         super().__init__(parent)
@@ -54,7 +54,7 @@ class RenderDialog(QtWidgets.QDialog):
 
         self.boxes = {}
         form = QtWidgets.QVBoxLayout()
-        for key, label, hint, on in ARTIFACTS:
+        for key, label, hint, on in RENDERS:
             box = QtWidgets.QCheckBox(label)
             box.setChecked(on)
             box.setToolTip(hint)

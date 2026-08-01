@@ -45,7 +45,7 @@ from .setup_ui import SetupDialog
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
                     WaitingPage)
-from .darkroom_ui import (ARTIFACTS, ArrangeDialog, PlateDialog,
+from .darkroom_ui import (RENDERS, ArrangeDialog, PlateDialog,
                           RenderDialog)
 from .stack_ui import StackAssembly
 from .stitch_ui import StitchDialog
@@ -166,26 +166,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toolbar.about.connect(lambda: AboutDialog(self).exec())
         # Menus rather than buttons, so these nest as more arrives instead of
         # every name having to change when the third tool appears.
-        instrument = self.toolbar.add_menu("Instrument")
-        instrument.addAction("Microscope setup…", self._open_setup)
-        self.perf_action = instrument.addAction("Performance panel")
-        self.perf_action.setCheckable(True)
-        self.perf_action.setToolTip(
-            "Show what each feature costs per frame, so the expensive ones "
-            "can be found rather than guessed at.")
-        self.perf_action.toggled.connect(self._toggle_perf)
-        instrument.addAction("Performance settings\u2026", self._open_performance)
-        # Its own menu rather than a corner of Capture: attribution is the
-        # one part of a file's provenance the instrument cannot supply, and
-        # burying it is how photographs get published uncredited.
-        session = self.toolbar.add_menu("Session")
-        session.addAction("Photographer…", self._open_photographer)
+        # Three menus, on the one axis that decides every entry: before a
+        # session, during it, or after it. Every menu is built in one
+        # place, because the last entry to be added was appended to a menu
+        # three screens above and that is how the next one lands in the
+        # wrong group.
+        #
+        # An ellipsis means a further choice is needed before anything
+        # happens -- a dialog or a file chooser. No ellipsis means it
+        # happens on release, and that includes every toggle.
+
+        # Setup: what belongs to the machine rather than to the run. The
+        # test is whether it survives a restart unchanged and whether you
+        # can set it before ever seeing a slide.
+        setup = self.toolbar.add_menu("Setup")
+        setup.addAction("Microscope…", self._open_setup)
+        # Attribution is the one part of a file's provenance the instrument
+        # cannot supply. It used to have a menu to itself to keep it
+        # visible, which does not work -- an entry is invisible until the
+        # menu is opened, so a menu of one advertises nothing.
+        setup.addAction("Photographer…", self._open_photographer)
+        setup.addAction("Files…", self._open_settings)
+        setup.addAction("Performance…", self._open_performance)
+        setup.addSeparator()
+        # Once per computer, not once per session.
+        setup.addAction("Install camera SDK…", self._install_sdk)
+        setup.addAction("Install DNG thumbnailer…", self._install_thumbnailer)
+
+        # Capture: things that belong to the run in progress. Everything
+        # here is meaningless with the camera still in its box.
         capture_menu = self.toolbar.add_menu("Capture")
-        capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
+        capture_menu.addSeparator()
         # Framing guides, as a viewfinder offers them: set while shooting,
-        # so here rather than in the instrument menu, and out of the rail
-        # because the rail is already too full to spend space on a habit.
+        # and out of the rail because the rail is already too full to spend
+        # space on a habit.
         guides = capture_menu.addMenu("Framing guides")
         self._guide_actions = {}
         group = QtGui.QActionGroup(self)
@@ -208,10 +223,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "frame are different jobs.")
         self.cross_action.toggled.connect(
             lambda on: self._set_framing(cross=on))
-        capture_menu.addSeparator()
         # In the menu rather than the rail: it is set once per illumination
-        # style and then left alone, and the rail is already too full to
-        # spend space on a control nobody touches twice in a session.
+        # style and then left alone. Its *off* state shows in the status
+        # bar, because unlike the guides you cannot see this one by looking
+        # at the picture, and off is the unusual state.
         self.wb_action = capture_menu.addAction("Write white balance")
         self.wb_action.setCheckable(True)
         self.wb_action.setChecked(True)
@@ -219,24 +234,36 @@ class MainWindow(QtWidgets.QMainWindow):
             "Off writes a neutral file: the sensor's own channels, untouched.\n"
             "Use for polarised interference colour, fluorescence or stained\n"
             "sections, where no part of the field is neutral by nature.")
-        self.wb_action.toggled.connect(
-            lambda on: setattr(self.capture, "white_balance", on))
+        self.wb_action.toggled.connect(self._set_white_balance)
 
-        # The darkroom is what happens to captures once the microscope is
-        # done with them. Kept out of Capture, which holds the things you
-        # set before and during a session; together they read as a junk
-        # drawer, and every one of these was reachable only from a Python
-        # prompt until now.
+        # One route for every panel that is a *view*. There were four of
+        # these summoned four different ways, and the slide map had no
+        # route at all -- closing it lost it until the next launch.
+        # A plain rule rather than addSection: Qt draws a section header as
+        # a second separator under this stylesheet, so the label never
+        # appeared and the group gained a doubled line instead.
+        capture_menu.addSeparator()
+        self.calib_action = capture_menu.addAction("Calibration")
+        self.map_action = capture_menu.addAction("Slide map")
+        self.perf_action = capture_menu.addAction("Performance monitor")
+        self.perf_action.setToolTip(
+            "What each feature costs per frame, so the expensive ones can "
+            "be found rather than guessed at.")
+
+        # After: acts on files already on disk, and never touches the
+        # camera. Grouped by what each entry consumes -- a mosaic folder, a
+        # depth map, finished pictures -- so a new one has a home rather
+        # than a position to argue about.
         darkroom = self.toolbar.add_menu("Darkroom")
         darkroom.addAction("Stitch mosaic…", self._stitch_mosaic)
         darkroom.addAction("Fly through a mosaic…", self._flythrough)
-        darkroom.addAction("Render depth from stack…", self._wiggle_dialog)
+        darkroom.addSeparator()
+        # Depth is the input, not the output, and since the stitcher levels
+        # depth across a whole mosaic it is no longer only stacks.
+        darkroom.addAction("Render from depth…", self._wiggle_dialog)
+        darkroom.addSeparator()
         darkroom.addAction("Make a plate…", self._plate_dialog)
         darkroom.addAction("Arrange specimens…", self._arrange_dialog)
-        darkroom.addSeparator()
-        darkroom.addAction("Install DNG thumbnailer…",
-                           self._install_thumbnailer)
-        instrument.addAction("Install camera SDK…", self._install_sdk)
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -308,6 +335,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.installEventFilter(self)
         self.slidemap.show()
         self.map_window.show()
+
+        # Now that the panels exist, give each its one route.
+        self._bind_panel(self.calib_action, self.calib_window, (330, 190))
+        self._bind_panel(self.map_action, self.map_window,
+                         self.slidemap.preferred_size(self.view))
+        self._bind_panel(
+            self.perf_action, self.perf_window, (330, 320),
+            before_show=lambda: self.perf.set_budget(self.settings_rate()))
 
         self.stack = QtWidgets.QStackedWidget()
         self.stack.addWidget(self.waiting)
@@ -1085,7 +1120,7 @@ class MainWindow(QtWidgets.QMainWindow):
     _wiggle_dir = None
 
     def _wiggle_dialog(self) -> None:
-        """Depth artifacts from any finished stack on disk."""
+        """Depth renders from any finished stack on disk."""
         start = str(self._wiggle_dir or self.settings.capture_root)
         directory = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Stack folder (with stacked.dng + depth.png)", start)
@@ -1099,7 +1134,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.assembly.wiggle_btn.setEnabled(True)
 
     def _run_wiggle(self, directory: Path, wanted=None) -> None:
-        wanted = set(wanted or [k for k, _l, _h, on in ARTIFACTS if on])
+        wanted = set(wanted or [k for k, _l, _h, on in RENDERS if on])
         invert = self.settings.wiggle_invert
         self.strip.set_note("synthesising from the depth map…")
 
@@ -1367,13 +1402,49 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         return False
 
-    def _toggle_perf(self, on: bool) -> None:
-        if on:
-            self.perf.set_budget(self.settings_rate())
-            self.perf_window.place((330, 320))
-            self.perf_window.show()
-        else:
-            self.perf_window.hide()
+    def _set_white_balance(self, on: bool) -> None:
+        """Both the capture and the status bar, from one switch."""
+        self.capture.white_balance = on
+        self.strip.set_white_balance(on)
+
+    def _bind_panel(self, action, window, size, before_show=None) -> None:
+        """Wire a menu entry and a floating panel to one truth.
+
+        The check mark has to follow the panel rather than remember what
+        was last asked of it: these can be dragged closed by their own
+        corner, and a menu insisting a panel is open when it is not is
+        worse than no check mark at all.
+        """
+        action.setCheckable(True)
+        # isHidden, not isVisible: a child of a window that has not been
+        # shown yet reports invisible however it was set up, which had the
+        # slide map -- shown at startup -- opening with its entry unticked,
+        # and therefore un-closable, because unticking an unticked box
+        # emits nothing.
+        action.setChecked(not window.isHidden())
+
+        def toggled(on: bool) -> None:
+            if on:
+                if before_show is not None:
+                    before_show()
+                window.place(size)
+                window.show()
+                window.raise_()
+            else:
+                window.hide()
+
+        action.toggled.connect(toggled)
+        # Closing by the panel's own corner must not leave the entry ticked.
+        window.closed.connect(lambda: action.setChecked(False))
+
+    def _toggle_calibration(self) -> None:
+        """The rail button, which is a second view of the same truth.
+
+        isHidden rather than isVisible, for the same reason the binding
+        uses it: a child of an unshown window always reports invisible, so
+        isVisible made this button open-only.
+        """
+        self.calib_action.setChecked(self.calib_window.isHidden())
 
     def _refresh_disk(self) -> None:
         """Room left where captures land.
@@ -1482,13 +1553,6 @@ class MainWindow(QtWidgets.QMainWindow):
             # pixels no longer measure anything on the new one.
             self.slidemap.clear()
 
-    def _toggle_calibration(self) -> None:
-        if self.calib_window.isVisible():
-            self.calib_window.hide()
-            return
-        self.calib_window.place((330, 190))
-        self.calib_window.show()
-        self.calib_window.raise_()
 
     def _open_photographer(self) -> None:
         PhotographerDialog(self.settings, self).exec()

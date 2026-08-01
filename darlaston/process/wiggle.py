@@ -1,4 +1,4 @@
-"""Parallax artifacts from a merged stack: the depth map earns its keep.
+"""Parallax renders from a merged stack: the depth map earns its keep.
 
 Every finished stack leaves two files side by side -- `stacked.dng`, the
 all-in-focus composite, and `depth.png`, the per-pixel depth that chose it.
@@ -30,7 +30,7 @@ AMPLITUDE = 0.012
 #: Frames along one wobble cycle, and their display rate.
 FRAMES = 24
 FRAME_MS = 55
-#: Output width of animated artifacts. Full-resolution wobbles are huge
+#: Output width of animated renders. Full-resolution wobbles are huge
 #: and add nothing at the size these are viewed.
 WIGGLE_W = 1400
 #: Depth is smoothed before it drives the warp: depth *edges* are exactly

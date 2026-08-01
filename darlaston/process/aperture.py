@@ -8,7 +8,7 @@ re-focused; widen the blur per unit of depth and the aperture opens. This
 is what a light-field camera sells, and what a microscope operator has
 never been offered, because no microscopy tool keeps the depth map.
 
-The two artifacts are a still at any chosen plane, and a **focus pull** --
+The two renders are a still at any chosen plane, and a **focus pull** --
 the plane drifting slowly through the subject on video, which is a
 cinematographer's shot rather than a scientist's, and the most direct way
 to show a stranger that the depth is real.
