@@ -210,6 +210,49 @@ Ordered within each section by how much it would change what gets built.
       and the wake cost. Today the loop uses about 15 ms of a 25 ms budget
       and drops nothing, so speed is not the constraint and a second code
       path would be tested on far fewer machines than the first.
+- [x] ~~**Read ToupLite's feature surface, and the SDK's.**~~ Its string
+      table is 1767 entries and the largest family by far is *measurement*
+      -- about 200 strings for calibration, scale bars, line/circle/angle/
+      polygon/arrow/text annotation, a measurement sheet, statistics, and
+      Word/Excel report templates. That is what people buy this class of
+      software for, and it is deliberately not what this is. The SDK is 146
+      documented options and darlaston uses ten of them.
+      **Asked the camera rather than the header, which killed the exciting
+      ideas.** On the E3ISPM20000KPA: conversion gain (LCG/HCG), low-noise
+      mode, the hardware sequencer, hardware HDR synthesis, precise frame
+      rate, bandwidth throttling, TEC/fan/heater and autofocus are all
+      *unsupported*. Available and unused: binning, black level, fixed
+      pattern noise correction, defect pixel correction, auto-exposure
+      policy and percentage, rotate, and the count of frames the driver
+      dropped.
+- [x] ~~**Does the SDK's defect correction touch the raw path?**~~ No, and
+      it matters because darlaston measures its own defect map: if the
+      driver were patching the raw we would be describing an
+      already-repaired sensor and correcting twice. Measured by toggling it
+      between full-resolution grabs -- the difference between on and off
+      (mean 0.062, max 10) came out *smaller* than between two consecutive
+      frames at the same setting (mean 0.072, max 13), so it is noise. The
+      option only reaches the ISP path. FFC and DFC are separate options and
+      remain untested; they need a captured reference before they do
+      anything.
+- [ ] **A scale bar on the photograph.** Drawn on the printed plate already,
+      and nowhere else. It is the one piece of measurement worth having --
+      not a measurement tool, provenance: a micrograph published without one
+      is unreadable, and we already compute the number from pixel pitch and
+      total magnification. Wanted on captures, merged stacks and composites,
+      probably as a choice between burnt-in and left off.
+- [ ] **Report frames the driver dropped**, from
+      `TOUPCAM_OPTION_NUMBER_DROP_FRAME`, beside our own count in the
+      performance panel. Ours says the loop could not keep up; this one says
+      the link or the hub could not, and today those two failures look
+      identical from the outside.
+- [ ] **Auto-exposure.** The SDK has policy (exposure or gain preferred),
+      a target percentile and damping coefficients, and darlaston is
+      manual-only, which is fine for a practised operator and a black screen
+      for anyone else. Note what ToupLite learned: it disables auto-exposure
+      during stacking and stitching, because a moving exposure ruins both.
+      Being manual is why that has never bitten us, and it would have to be
+      reproduced along with the feature.
 - [ ] **Turret belief is the rotation sign, not the detector.** The A/B
       above reproduces it cleanly and rules out the arithmetic: driving the
       mock through a rotation with direction +1 reads back as -1, and four
