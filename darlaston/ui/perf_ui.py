@@ -131,42 +131,32 @@ class PerfPanel(QtWidgets.QWidget):
                 "switch a feature on and watch its row settle.")
 
 
-#: The preview scaling choices, in the order they are offered: value, label,
-#: and the honest sentence about what it costs and what it takes away. The
-#: milliseconds are measured on a 1824x1216 preview fitted to a 1039 px view.
+#: The preview scaling choices: value, label, and one line saying what it
+#: does for you. The reasoning behind each -- what was measured, what was
+#: rejected and why -- belongs in the source and in TODO.md, not in front
+#: of somebody who only wants a smoother preview.
 PREVIEW_CHOICES = (
-    ("full", "Full detail",
-     "The frame reduced directly, correctly anti-aliased. The sharpest "
-     "preview and by far the most work: about 4 to 9 ms of a 25 ms frame, "
-     "on the same thread that has to stay responsive to you. Choose it "
-     "when you want to look at the actual pixels rather than the field."),
-    ("fast", "Fast (default)",
-     "Fitted in a single step, several milliseconds less. It samples the "
-     "frame rather than averaging it, which can alias detail near the "
-     "limit of what the preview resolves -- but on a real diatom at 16x it "
-     "came within 0.8 of 255 levels of Full detail, and moving the stage "
-     "made it churn only 6% more. Free on most subjects, which is why it "
-     "is the default. Worth checking against Full detail at high "
-     "magnification, where fine detail sits closer to that limit."),
-    ("reduced", "Softer",
-     "Reduced by exactly half first, which is the only cheap reduction "
-     "available, then fitted to the window. The cheapest, and the calmest "
-     "of the three under motion, but visibly the softest: a third of the "
-     "fine detail is gone before the window is fitted at all, and more "
-     "than that on a large window, which shows plainly on areolae and "
-     "striae. For when Fast is still costing more than you can spare."),
+    ("full", "Full",
+     "Highest preview quality; may affect framerate."),
+    ("fast", "Fast",
+     "Improves preview performance; slight loss of quality."),
+    ("reduced", "Soft",
+     "Improves preview performance; smoother than 'Fast' for certain "
+     "scenes."),
 )
 
 
 class PerformanceDialog(QtWidgets.QDialog):
-    """Where the CPU goes, and how much of it you would rather spend.
+    """How much of the machine the live view is allowed to use.
 
-    Both settings here are real trades rather than a fast-or-slow slider,
-    so each one says what it costs and what it takes away, and both apply
-    to the live view the moment they change. That is the point: the only
-    way to judge a preview is to look at one, with the slide you actually
-    photograph, and it should be possible to look at all three inside a
-    minute without restarting anything.
+    Both settings apply the moment they change, because the only way to
+    judge a preview is to look at one with the slide you actually
+    photograph. Neither touches a captured file.
+
+    Each option gets one plain line about what it does for you. What was
+    measured to arrive at these, and what was rejected on the way, lives
+    in the source and in TODO.md -- it is our working, and it is not the
+    business of somebody who wants a smoother preview.
     """
 
     def __init__(self, settings, on_change, parent=None) -> None:
@@ -180,6 +170,9 @@ class PerformanceDialog(QtWidgets.QDialog):
         col.setSpacing(10)
 
         col.addWidget(_heading("Preview quality"))
+        # The one thing worth saying up front: nothing here reaches the
+        # files. Without it, "quality" beside a camera reads as a threat.
+        col.addWidget(_note("Does not affect captured images."))
         self._quality = QtWidgets.QButtonGroup(self)
         for value, label, why in PREVIEW_CHOICES:
             button = QtWidgets.QRadioButton(label)
@@ -191,7 +184,7 @@ class PerformanceDialog(QtWidgets.QDialog):
         self._quality.buttonToggled.connect(self._quality_changed)
 
         col.addSpacing(4)
-        col.addWidget(_heading("Processor threads"))
+        col.addWidget(_heading("Process threads"))
         row = QtWidgets.QHBoxLayout()
         self.threads = QtWidgets.QComboBox()
         cores = usable_cores()
@@ -207,12 +200,7 @@ class PerformanceDialog(QtWidgets.QDialog):
         row.addWidget(self.threads)
         row.addStretch(1)
         col.addLayout(row)
-        col.addWidget(_note(
-            "More threads is not faster here. The live loop's work is small "
-            "and memory-bound, so spreading it wider costs more in handing "
-            "it out than it saves: measured on this machine, sixteen threads "
-            "burned a third more of the processor than four and analysed a "
-            "frame no quicker. Fewer than four does start costing real time."))
+        col.addWidget(_note("More threads is not always faster."))
 
         col.addStretch(1)
         buttons = QtWidgets.QDialogButtonBox(

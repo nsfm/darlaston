@@ -4,8 +4,8 @@ The only module that knows about both the session and Qt. Everything below it
 emits plain dataclasses; a QObject signal marshals them to the main thread, and
 nothing in camera/ or live/ has ever heard of Qt.
 
-    python -m darlaston.ui.main          # real hardware, synthetic offered
-    python -m darlaston.ui.main --mock   # synthetic only
+    python -m darlaston.ui.main          # real hardware
+    python -m darlaston.ui.main --mock   # synthetic, for development
 """
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ class Bridge(QtCore.QObject):
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, make_backend, allow_synthetic: bool = True,
+    def __init__(self, make_backend, allow_synthetic: bool = False,
                  presence=None) -> None:
         super().__init__()
         self.setWindowTitle("darlaston")
@@ -1741,8 +1741,11 @@ def _list_cameras() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mock", action="store_true",
-                    help="use the synthetic camera and do not look for hardware")
+    # Kept, and kept out of --help. The synthetic camera is how this gets
+    # developed and tested without a microscope on the desk, and it is of
+    # no use to somebody who owns one: it renders invented diatoms. An
+    # option that cannot help you is noise in the manual.
+    ap.add_argument("--mock", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--usb", action="store_true",
                     help="use an ordinary V4L2/UVC camera (/dev/video*) "
                          "instead of a ToupTek-family one. No raw: these "
@@ -1773,14 +1776,14 @@ def main() -> int:
         def make() -> CameraBackend:
             from ..camera.v4l2 import V4L2Backend
             return V4L2Backend()
-        allow_synthetic = True
+        allow_synthetic = False
         from ..camera.v4l2 import enumerate_cameras
         presence = lambda: bool(enumerate_cameras())
     else:
         def make() -> CameraBackend:
             from ..camera.toupcam import ToupcamBackend
             return ToupcamBackend()
-        allow_synthetic = True
+        allow_synthetic = False
         from ..camera import usb
         presence = usb.present               # real hardware lives on the bus
 

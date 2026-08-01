@@ -91,3 +91,17 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+
+======================================================================
+Wordmark.ttf is Petit Formal Script, used for the application name
+and nowhere else. Swapping that one file changes the wordmark; the
+theme asks for the family by role rather than by name.
+======================================================================
+
+Copyright (c) 2011, Pablo Impallari (www.impallari.com|impallari@gmail.com), Copyright (c) 2011, Brenda Gallo. (gbrenda1987@gmail.com), Copyright (c) 2011, Rodrigo Fuenzalida (www.rfuenzalida.com|hello@rfuenzalida.com), with Reserved Font Name Petit Formal Script.
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+
+SIL Open Font License, Version 1.1 -- the same licence as the
+Plex faces above, reproduced there in full.

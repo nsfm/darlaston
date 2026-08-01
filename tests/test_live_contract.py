@@ -544,3 +544,51 @@ def test_disabled_controls_actually_look_disabled():
     assert "QSlider::handle:horizontal:disabled" in css
     assert "QSlider:disabled::handle" not in css, "matches nothing in Qt"
     assert "QPushButton:disabled" in css
+
+
+def test_the_synthetic_camera_is_not_offered_to_users(qapp):
+    """It renders invented diatoms. It is how this gets developed without a
+    microscope on the desk, and it is of no use to somebody who owns one --
+    an option that cannot help you is noise in the manual."""
+    import argparse
+    import inspect
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui import main as M
+
+    # Off unless something asks for it, rather than on unless suppressed.
+    sig = inspect.signature(M.MainWindow.__init__)
+    assert sig.parameters["allow_synthetic"].default is False
+
+    win = M.MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        assert not win.waiting.synthetic.isVisible()
+    finally:
+        win.shutdown()
+
+    # --mock still works, and stays out of --help.
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mock", action="store_true", help=argparse.SUPPRESS)
+    assert ap.parse_args(["--mock"]).mock is True
+    assert "--mock" not in ap.format_help()
+
+
+def test_the_wordmark_has_its_own_face_and_a_licence():
+    """One face, used once, so it can afford to be a period display letter
+    where nothing else could. Swapping the file swaps the wordmark."""
+    from pathlib import Path
+    from darlaston.ui import theme
+
+    fonts = Path(theme.__file__).parent / "fonts"
+    assert (fonts / "Wordmark.ttf").exists()
+    licence = (fonts / "LICENSE.txt").read_text()
+    assert "Petit Formal Script" in licence, "OFL requires the notice ship too"
+    assert "Open Font License" in licence
+
+    css = theme.stylesheet()
+    # Brass, and white under the pointer: the inverse of every other
+    # control, because it is the one place the application is allowed to
+    # be a little proud of itself.
+    mark = css[css.index('QPushButton[role="wordmark"]'):]
+    assert theme.BRASS in mark[:mark.index("}")]
+    hover = mark[mark.index(':hover'):]
+    assert theme.INK in hover[:hover.index("}")]

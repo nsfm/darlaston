@@ -50,6 +50,9 @@ def load_fonts() -> dict[str, str]:
     wanted = {
         "mono": ["IBMPlexMono-Regular.ttf", "IBMPlexMono-Medium.ttf"],
         "sans": ["IBMPlexSans-Regular.ttf", "IBMPlexSans-SemiBold.ttf"],
+        # The wordmark only. One face, used once, so it can afford to be
+        # a period display letter where nothing else could.
+        "display": ["Wordmark.ttf"],
     }
     found: dict[str, str] = {}
     for role, files in wanted.items():
@@ -66,6 +69,10 @@ def load_fonts() -> dict[str, str]:
     _families = {
         "mono": found.get("mono", "monospace"),
         "sans": found.get("sans", "sans-serif"),
+        # Falls back to the body face rather than to a system serif: an
+        # unpredictable substitute in the one place the name appears is
+        # worse than the name simply set in the face we already ship.
+        "display": found.get("display", found.get("sans", "sans-serif")),
     }
     return _families
 
@@ -202,10 +209,14 @@ def stylesheet() -> str:
     }}
     QPushButton[role="menu"]:hover {{ color: {INK}; }}
 
+    /* The name sits in brass and goes white under the pointer, rather
+       than the other way about: it is the one place the application is
+       allowed to be a little proud of itself, and brass is the accent
+       chosen precisely because it never appears in a micrograph. */
     QPushButton[role="wordmark"] {{
-        border: 0; margin: 0; padding: 4px 10px; color: {DIM};
-        font-family: "{fam['sans']}"; font-size: 14px; font-style: italic;
-        font-weight: 700; letter-spacing: 0.3px;
+        border: 0; margin: 0; padding: 4px 10px; color: {BRASS};
+        font-family: "{fam['display']}"; font-size: 17px;
+        letter-spacing: 0.3px;
     }}
-    QPushButton[role="wordmark"]:hover {{ color: {BRASS}; }}
+    QPushButton[role="wordmark"]:hover {{ color: {INK}; }}
     """
