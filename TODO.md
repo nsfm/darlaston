@@ -8,6 +8,24 @@ Ordered within each section by how much it would change what gets built.
 
 ---
 
+## What this is for
+
+Nate's framing, 2026-07-31, and it settles a lot of priority arguments:
+**darlaston is the fun choice for photomicrography.** It makes the
+pop-culture image -- the thing you show a room of people who know nothing
+about diatoms -- rather than the figure in a paper. Wigglegrams, DIC
+relief, turntables, arrangements and plates are the point, not novelties
+bolted on the side. Measurement suites, particle counting and report
+templates are somebody else's product.
+
+A scale bar still earns its place: it costs almost nothing and a
+micrograph carrying one is better than one that does not. It is just not
+the headline.
+
+And per Nate, no free tool does capture, stacking and stitching together
+-- ToupLite does neither of the last two. That combination is the thing
+worth protecting when deciding what to build next.
+
 ## Next up
 
 - [x] ~~**Single capture.**~~ Shutter → DNG with metadata, subject and slide
