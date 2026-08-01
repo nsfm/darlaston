@@ -533,7 +533,7 @@ class _Toggle(QtWidgets.QPushButton):
             " border-color: #2a2e29; background: transparent; }"
             "QPushButton:checked:disabled { color: #101210;"
             " background: #2a2e29; border-color: #2a2e29; }"
-            "QPushButton:checked { color: #101210; background: #c89b4a;"
+            "QPushButton:checked { color: #e4e7e0; background: #c89b4a;"
             " border-color: #c89b4a; }")
 
 

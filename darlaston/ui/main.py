@@ -215,7 +215,7 @@ class MainWindow(QtWidgets.QMainWindow):
             group.addAction(act)
             self._guide_actions[value] = act
         guides.addSeparator()
-        self.cross_action = guides.addAction("Centre cross")
+        self.cross_action = guides.addAction("Center cross")
         self.cross_action.setCheckable(True)
         self.cross_action.setChecked(self.settings.framing_cross)
         self.cross_action.setToolTip(
@@ -373,8 +373,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _rail(self) -> QtWidgets.QWidget:
         rail = QtWidgets.QFrame()
         rail.setFixedWidth(286)
+        # Named, and the rule qualified to that name. An unqualified
+        # `background:` on a container is applied to every child as well,
+        # which is why a checked button inside the rail could never be
+        # filled: the rail was repainting it panel-coloured underneath.
+        rail.setObjectName("rail")
         rail.setStyleSheet(
-            f"background:{theme.PANEL}; border-left:1px solid {theme.LINE};")
+            f"QFrame#rail {{ background:{theme.PANEL};"
+            f" border-left:1px solid {theme.LINE}; }}")
 
         col = QtWidgets.QVBoxLayout(rail)
         col.setContentsMargins(14, 14, 14, 14)
@@ -418,7 +424,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.regions.setExclusive(False)
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(4)
-        for region, label in ((Region.SPOT, "spot"), (Region.CENTRE, "centre"),
+        for region, label in ((Region.SPOT, "spot"), (Region.CENTRE, "center"),
                               (Region.FULL, "full")):
             b = QtWidgets.QPushButton(label)
             b.setCheckable(True)
@@ -768,6 +774,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session.set_framerate_cap(int(fps))
 
     def _on_region(self, region: Region) -> None:
+        """Choose where the metric looks, or stop restricting it.
+
+        These are a restriction, and `full` is the absence of one -- so
+        clicking the active button again releases the restriction rather
+        than doing nothing, and the frame is measured whole. Clicking
+        `full` while it is active is the one case with nowhere to go: it
+        is already the unrestricted state, so it stays.
+        """
+        current = next((r for r, b in self._region_buttons.items()
+                        if b.isChecked()), None)
+        if region is current:
+            region = Region.FULL
         self.pipeline.set_focus_region(region)
         for r, b in self._region_buttons.items():
             b.setChecked(r is region)
@@ -1858,6 +1876,7 @@ def main() -> int:
     apply_thread_budget()
 
     app = QtWidgets.QApplication(sys.argv)
+    theme.install(app)
     theme.load_fonts()
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
     win.show()

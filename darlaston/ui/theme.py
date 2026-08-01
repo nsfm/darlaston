@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6 import QtGui
+from PySide6 import QtGui, QtWidgets
 
 # ---- palette --------------------------------------------------------------
 BG = "#101210"        # ground, green-grey biased: the inside of an instrument
@@ -24,6 +24,8 @@ LINE = "#2a2e29"
 INK = "#e4e7e0"
 DIM = "#757a72"
 BRASS = "#c89b4a"     # accent, and active state
+BRASS_LIT = "#d7ad60"  # the same, under the pointer
+BRASS_DEEP = "#ab8339"  # and pressed
 GOOD = "#6fa96f"      # in focus, healthy link
 BAD = "#d0605e"       # clipping and faults, nothing else
 
@@ -75,6 +77,30 @@ def load_fonts() -> dict[str, str]:
         "display": found.get("display", found.get("sans", "sans-serif")),
     }
     return _families
+
+
+class _OurIconsOnly(QtWidgets.QProxyStyle):
+    """Refuses the platform's icons on standard dialog buttons.
+
+    Whether a QDialogButtonBox decorates its buttons is a style *hint*,
+    answered by the platform: off under the offscreen platform, on under
+    GNOME and KDE, where it contributes icons drawn for a light desktop.
+    A black cross on a dark button.
+
+    The stylesheet has a property for this, but it only reaches dialogs
+    that apply our stylesheet. Answering the hint reaches every one of
+    them, including any written later by somebody who forgets to.
+    """
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QtWidgets.QStyle.StyleHint.SH_DialogButtonBox_ButtonsHaveIcons:
+            return 0
+        return super().styleHint(hint, option, widget, returnData)
+
+
+def install(app) -> None:
+    """Apply what has to be set on the application rather than a widget."""
+    app.setStyle(_OurIconsOnly(app.style()))
 
 
 def stylesheet() -> str:
@@ -132,8 +158,9 @@ def stylesheet() -> str:
         padding: 3px 0; font-size: 11px; color: {DIM};
     }}
     QPushButton[role="seg"]:checked {{
-        border-color: {BRASS}; color: {BRASS};
+        border-color: {BRASS}; color: {INK}; background: {BRASS};
     }}
+    QPushButton[role="seg"]:checked:hover {{ background: {BRASS_LIT}; }}
     QPushButton[role="step"] {{
         padding: 2px 9px; font-size: 13px; min-width: 0;
     }}

@@ -152,3 +152,72 @@ def test_dialog_buttons_carry_no_system_icons(qapp, settings):
                     f"{name}: {button.text()!r} still carries a system icon"
                 assert button.text(), "a button with neither icon nor words"
         d.deleteLater()
+
+
+def test_a_panel_can_be_resized_by_its_corner(qapp):
+    """QSizeGrip resizes *top-level windows* only, and these are children
+    of the live view -- so the stock grip was inert, invisible under the
+    body widget, and impossible to find because there was nothing there."""
+    from darlaston.ui.floating import FloatingPanel, _Grip
+
+    host = QtWidgets.QWidget()
+    host.resize(900, 700)
+    panel = FloatingPanel("slide map", host)
+    panel.place((300, 240))
+    host.show()
+    qapp.processEvents()
+
+    grip = panel._grip
+    assert isinstance(grip, _Grip)
+    assert not isinstance(grip, QtWidgets.QSizeGrip), \
+        "QSizeGrip does nothing on a child widget"
+    # In the corner, inside the panel, and above the body.
+    assert grip.x() + grip.width() <= panel.width()
+    assert grip.y() + grip.height() <= panel.height()
+    assert panel.children()[-1] is grip, "the body would take the press"
+    assert grip.cursor().shape() == QtCore.Qt.CursorShape.SizeFDiagCursor
+
+    def at(x, y, kind, buttons):
+        return QtGui.QMouseEvent(
+            kind, QtCore.QPointF(5, 5), QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.LeftButton, buttons,
+            QtCore.Qt.KeyboardModifier.NoModifier)
+
+    grip.mousePressEvent(at(500, 500, QtCore.QEvent.Type.MouseButtonPress,
+                            QtCore.Qt.MouseButton.LeftButton))
+    grip.mouseMoveEvent(at(590, 570, QtCore.QEvent.Type.MouseMove,
+                           QtCore.Qt.MouseButton.LeftButton))
+    assert (panel.width(), panel.height()) == (390, 310)
+
+    # It cannot be dragged smaller than its own title bar.
+    grip.mouseMoveEvent(at(0, 0, QtCore.QEvent.Type.MouseMove,
+                           QtCore.Qt.MouseButton.LeftButton))
+    assert panel.width() >= panel.minimumWidth()
+    assert panel.height() >= panel.minimumHeight()
+    grip.mouseReleaseEvent(at(0, 0, QtCore.QEvent.Type.MouseButtonRelease,
+                              QtCore.Qt.MouseButton.NoButton))
+    assert grip._from is None
+    host.deleteLater()
+
+
+def test_the_grip_is_actually_drawn(qapp):
+    """It paints only its strokes: the theme gives every QWidget the window
+    background, which drew a darker square in the corner with the hairlines
+    lost on top of it."""
+    from darlaston.ui.floating import FloatingPanel
+
+    host = QtWidgets.QWidget()
+    host.resize(900, 700)
+    panel = FloatingPanel("slide map", host)
+    panel.place((300, 240))
+    host.show()
+    qapp.processEvents()
+
+    img = panel.grab().toImage()
+    grip = panel._grip
+    lit = [QtGui.QColor(img.pixel(x, y)).lightness()
+           for x in range(grip.x(), grip.x() + grip.width())
+           for y in range(grip.y(), grip.y() + grip.height())]
+    assert max(lit) > 90, "the grip left no visible mark"
+    assert min(lit) < 40, "the grip painted a plate over the corner"
+    host.deleteLater()

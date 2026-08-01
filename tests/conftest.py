@@ -26,5 +26,10 @@ def qapp():
     and hands back whatever already exists.
     """
     from PySide6 import QtWidgets
+
+    from darlaston.ui import theme
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    # Whatever main() sets on the application, tests get too -- otherwise
+    # they pass on things the real program would fail.
+    theme.install(app)
     yield app

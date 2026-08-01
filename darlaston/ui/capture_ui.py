@@ -63,17 +63,25 @@ class ShutterButton(QtWidgets.QPushButton):
 
     def _restyle(self) -> None:
         busy = self._state != "idle"
-        colour = theme.DIM if (busy or not self.isEnabled()) else theme.BRASS
+        live = not busy and self.isEnabled()
+        # Filled rather than outlined. This is the one thing in the window a
+        # person is reaching for, and an outline is the same weight as every
+        # border around it; the fill is what makes it findable without
+        # reading. Unavailable stays an outline, so the difference between
+        # "ready" and "not yet" is a shape and not only a shade.
+        fill = theme.BRASS if live else "transparent"
+        edge = theme.BRASS if live else theme.LINE
+        text = theme.INK if live else theme.DIM
         # Right side square: the averaging arrow butts against it to make one
         # pill, so the seam between them must not be rounded.
         self.setStyleSheet(
-            f"QPushButton {{ border: 1px solid {colour};"
+            f"QPushButton {{ border: 1px solid {edge};"
             f" border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
             f" margin: 1px 0 1px 1px;"
-            f" color: {colour}; font-size: 14px; letter-spacing: 1px;"
-            f" background: transparent; }}"
-            f"QPushButton:hover:enabled {{ background: rgba(200,155,74,0.10); }}"
-            f"QPushButton:pressed:enabled {{ background: rgba(200,155,74,0.20); }}")
+            f" color: {text}; font-size: 14px; letter-spacing: 1px;"
+            f" background: {fill}; }}"
+            f"QPushButton:hover:enabled {{ background: {theme.BRASS_LIT}; }}"
+            f"QPushButton:pressed:enabled {{ background: {theme.BRASS_DEEP}; }}")
 
 
 class ShutterBar(QtWidgets.QWidget):

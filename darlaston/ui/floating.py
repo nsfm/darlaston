@@ -23,6 +23,57 @@ from . import icons, theme
 TITLE_H = 22
 
 
+class _Grip(QtWidgets.QWidget):
+    """A corner to drag a panel bigger by.
+
+    Its own widget rather than a rect tested inside the panel, because the
+    panel's body fills everything but a nine-pixel margin and would
+    otherwise take the press first. Raised above the body on every resize.
+    """
+
+    SIZE = 14
+
+    def __init__(self, panel: QtWidgets.QWidget) -> None:
+        super().__init__(panel)
+        self._panel = panel
+        self._from: QtCore.QPoint | None = None
+        self._start: QtCore.QSize | None = None
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
+        self.setToolTip("Drag to resize")
+        # Only the strokes, no plate under them: the theme gives every
+        # QWidget the window background, which drew a slightly darker
+        # square in the corner of the panel and left the hairlines
+        # invisible on top of it.
+        self.setStyleSheet("background: transparent;")
+
+    def paintEvent(self, _event) -> None:
+        """Three hairlines, at the weight everything else is drawn at."""
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        p.setPen(QtGui.QPen(QtGui.QColor(theme.INK), 1))
+        for offset in (1, 5, 9):
+            p.drawLine(self.SIZE - 2 - offset, self.SIZE - 2,
+                       self.SIZE - 2, self.SIZE - 2 - offset)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() is QtCore.Qt.MouseButton.LeftButton:
+            self._from = event.globalPosition().toPoint()
+            self._start = self._panel.size()
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._from is None or self._start is None:
+            return
+        delta = event.globalPosition().toPoint() - self._from
+        self._panel.resize(
+            max(self._panel.minimumWidth(), self._start.width() + delta.x()),
+            max(self._panel.minimumHeight(), self._start.height() + delta.y()))
+
+    def mouseReleaseEvent(self, _event: QtGui.QMouseEvent) -> None:
+        self._from = None
+        self._start = None
+
+
 class FloatingPanel(QtWidgets.QWidget):
     """A rounded, mostly-opaque panel that lives over the live view.
 
@@ -65,9 +116,12 @@ class FloatingPanel(QtWidgets.QWidget):
         self._close.clicked.connect(self._on_close)
         self._close.setVisible(closable)
 
-        # Bottom-right, like every other resizeable thing on the desktop.
-        self._grip = QtWidgets.QSizeGrip(self)
-        self._grip.setFixedSize(14, 14)
+        # Bottom-right, like every other resizeable thing on the desktop --
+        # but drawn and handled here rather than with QSizeGrip, which only
+        # resizes *top-level windows*. These are children of the live view,
+        # so the stock grip was inert, invisible under the body widget, and
+        # impossible to find because there was nothing to find.
+        self._grip = _Grip(self)
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(9, TITLE_H + 2, 9, 9)
@@ -145,7 +199,9 @@ class FloatingPanel(QtWidgets.QWidget):
 
     def resizeEvent(self, event) -> None:
         self._close.move(self.width() - 22, 4)
-        self._grip.move(self.width() - 16, self.height() - 16)
+        self._grip.move(self.width() - _Grip.SIZE - 2,
+                        self.height() - _Grip.SIZE - 2)
+        self._grip.raise_()
         super().resizeEvent(event)
 
     def paintEvent(self, _event) -> None:
