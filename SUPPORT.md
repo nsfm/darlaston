@@ -1,19 +1,11 @@
 # Camera support
 
-What darlaston drives today, what it will drive, and what it deliberately
-will not. Every claim about a camera family here was measured — against
-the hardware on the bench, against the vendor SDK's own model table, or
-against the shipping binaries — and anything inferred rather than
-measured says so.
-
-Run `python -m darlaston.ui.main --list-cameras` to see what *your*
+Run `python -m darlaston.ui.main --list-cameras` to see what your
 machine offers.
-
----
 
 ## Supported now
 
-### ToupTek and its rebadges — full support
+### ToupTek and related cameras - full support
 
 The reference camera. Raw Bayer at the sensor's own bit depth, hardware
 trigger, full control of exposure and gain, and everything downstream:
@@ -32,20 +24,20 @@ to binary: 272 exported symbols matching byte for byte, headers differing
 by two cosmetic lines, identical model structs for the same USB ID. One
 backend drives all of them.
 
-| Brand | Works with | Notes |
-|---|---|---|
-| ToupTek | `libtoupcam.so` | the reference |
-| RisingCam | `libtoupcam.so` | PID table is 100% identical |
-| AmScope | `libtoupcam.so` or `libamcam.so` | MU series |
-| Omegon | `libtoupcam.so` or `libomegonprocam.so` | |
-| TS-Optics | `libtoupcam.so` or `libtscam.so` | |
-| Bresser | `libtoupcam.so` or `libbressercam.so` | MikroCam |
-| Orion | `libtoupcam.so` or `libstarshootg.so` | StarShoot G |
-| SVBony SC715C | `libtoupcam.so` or `libsvbonycam.so` | that model only |
-| Altair | **`libaltaircam.so`** | 137 of 199 IDs are exclusive |
-| MallinCam | **`libmallincam.so`** | SkyRaider line is exclusive |
-| Meade | **`libmeadecam.so`** | LPI-G line is exclusive |
-| OGMA | **`libogmacam.so`** | AP/GP line is exclusive |
+| Brand         | Works with                              | Notes                        |
+| ------------- | --------------------------------------- | ---------------------------- |
+| ToupTek       | `libtoupcam.so`                         | the reference                |
+| RisingCam     | `libtoupcam.so`                         | PID table is 100% identical  |
+| AmScope       | `libtoupcam.so` or `libamcam.so`        | MU series                    |
+| Omegon        | `libtoupcam.so` or `libomegonprocam.so` |                              |
+| TS-Optics     | `libtoupcam.so` or `libtscam.so`        |                              |
+| Bresser       | `libtoupcam.so` or `libbressercam.so`   | MikroCam                     |
+| Orion         | `libtoupcam.so` or `libstarshootg.so`   | StarShoot G                  |
+| SVBony SC715C | `libtoupcam.so` or `libsvbonycam.so`    | that model only              |
+| Altair        | **`libaltaircam.so`**                   | 137 of 199 IDs are exclusive |
+| MallinCam     | **`libmallincam.so`**                   | SkyRaider line is exclusive  |
+| Meade         | **`libmeadecam.so`**                    | LPI-G line is exclusive      |
+| OGMA          | **`libogmacam.so`**                     | AP/GP line is exclusive      |
 
 The first eight are already inside ToupTek's own device table, so they
 work with the stock SDK. The last four need their own vendor library —
@@ -60,7 +52,7 @@ Two traps worth knowing, both handled:
 - `libmeadecam.so` exports `Toupcam_*`, not `Meadecam_*`. Libraries are
   therefore loaded `RTLD_LOCAL`, or the first one loaded would answer for
   every brand afterwards, silently.
-- ToupLite bundles ship a `libtoupcam.so` from 2021 with the *same*
+- ToupLite bundles ship a `libtoupcam.so` from 2021 with the _same_
   SONAME as a current SDK, missing several functions darlaston needs.
   The loader feature-checks and says so by name rather than failing
   somewhere deep in a capture.
@@ -74,7 +66,7 @@ eyepiece or screws into a C-mount and appears as `/dev/video0`.
 limitation we could code around.** UVC standardises exactly two
 uncompressed payloads, YUY2 and NV12. Raw Bayer over UVC exists only as a
 vendor-specific GUID, and a survey of a corpus of several hundred
-thousand real USB descriptor dumps found *not one* consumer microscope
+thousand real USB descriptor dumps found _not one_ consumer microscope
 emitting it — every one was YUY2 and/or MJPEG. The ISP sits on the bridge
 chip, debayers, white-balances and gamma-corrects, and the USB side has
 no bypass. One vendor's support desk states it plainly: "there is no
@@ -82,13 +74,13 @@ firmware or hardware path to bypass this limitation."
 
 So darlaston does not pretend. With a UVC camera you get:
 
-| Works | Does not |
-|---|---|
-| Live preview, focus peaking | Raw capture — files are **linear DNGs**, 8-bit, demosaiced |
-| Stage tracking and the slide map | Measured white balance (the camera already applied one) |
-| Mosaic capture and stitching | Flat fields with per-Bayer-phase normalisation |
-| Focus stacking, rack-then-pause trigger | Scale bars (UVC reports no pixel pitch) |
-| Every depth render — wigglegram, DIC, mesh | Bit depths above 8 |
+| Works                                      | Does not                                                   |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| Live preview, focus peaking                | Raw capture — files are **linear DNGs**, 8-bit, demosaiced |
+| Stage tracking and the slide map           | Measured white balance (the camera already applied one)    |
+| Mosaic capture and stitching               | Flat fields with per-Bayer-phase normalisation             |
+| Focus stacking, rack-then-pause trigger    | Scale bars (UVC reports no pixel pitch)                    |
+| Every depth render — wigglegram, DIC, mesh | Bit depths above 8                                         |
 
 A capture from one of these is written as a linear DNG, which says
 "demosaiced" honestly, rather than a file claiming a CFA pattern it does
@@ -96,14 +88,8 @@ not have.
 
 **The Imaging Source is the exception worth naming.** Their industrial
 DFK/DMK cameras ship raw Bayer over plain UVC, because a TIS engineer
-upstreamed the necessary format GUIDs into the Linux kernel in 2014 and
-2016. If `--list-cameras` reports a raw format, that is what you have. We
+upstreamed the necessary format GUIDs into the Linux kernel in 2014 and 2016. If `--list-cameras` reports a raw format, that is what you have. We
 recognise and report it; consuming it is not built yet.
-
-### The synthetic camera
-
-`--mock`. A full simulated stage, focal plane, turret and slide, used by
-most of the test suite. Develops the whole application without hardware.
 
 ---
 
@@ -170,7 +156,7 @@ entirely, and a camera with hardware ROI or binning should offer them.
 
 ### GenTL bridge — one line, entirely unproven
 
-`libtoupcam` is itself a GenTL *consumer*: `Toupcam_CtiEnable` is
+`libtoupcam` is itself a GenTL _consumer_: `Toupcam_CtiEnable` is
 exported, and the library's strings carry `TLOpen`, `IFOpenDevice` and
 `GENICAM_GENTL64_PATH`. The call succeeds and is non-destructive. If a
 third-party GenTL producer makes a Basler, IDS or Daheng camera enumerate
@@ -212,19 +198,3 @@ only, and pymmcore ships no device adapters.
 **tiscamera.** In maintenance mode with a stated end of life of
 2029-04-01. Not a foundation to start on. Its cameras remain supported
 through plain UVC.
-
----
-
-## Licensing
-
-darlaston is GPLv3. Vendor SDKs are **never** bundled: the user installs
-their own and we load it at runtime. That is the right posture and, for
-the ToupTek family, the only defensible one — the SDK ships with no
-licence, EULA or copyright notice of any kind, and downstream packagers
-have each invented a different answer about what it permits.
-`Aravis` (LGPL-2.1+) and `libgphoto2` (LGPL-2.1) are clean by
-construction and would need no exception.
-
-Writing the GPL linking exception is on [TODO.md](TODO.md), and should
-name a *class* of libraries rather than one file, because the supported
-list keeps growing.
