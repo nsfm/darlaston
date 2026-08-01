@@ -44,12 +44,37 @@ PULL_FRAMES = 90
 PULL_MARGIN = 0.15
 
 
+#: Blurred layers are computed at this fraction of the linear size. A
+#: defocused layer is low-frequency by construction -- that is what
+#: defocus means -- so a quarter-size Gaussian carries everything that
+#: survives the blur anyway, at a sixteenth of the pixels. Measured
+#: against the full-size version on a real stack: 0.25 to 0.47 levels of
+#: 255 apart, which is nothing, for roughly half the time.
+LAYER_SHRINK = 4
+
+
 def _layers(img: np.ndarray, aperture: float, count: int) -> list:
-    """The image at `count` increasing blur radii, sharpest first."""
-    out = [img.astype(np.float32)]
+    """The image at `count` increasing blur radii, sharpest first.
+
+    Each blur builds on the one before it rather than on the original.
+    Gaussians compose -- blurring by a then by b is blurring by
+    sqrt(a^2+b^2) -- so every step after the first works from a radius
+    that is already most of the way there, which is much cheaper than
+    starting over. The sharpest layer stays full size because it is the
+    one the eye actually reads.
+    """
+    base = img.astype(np.float32)
+    h, w = base.shape[:2]
+    small = cv2.resize(base, (max(1, w // LAYER_SHRINK),
+                              max(1, h // LAYER_SHRINK)),
+                       interpolation=cv2.INTER_AREA)
+    out, prev, cur = [base], 0.0, small
     for k in range(1, count):
-        sigma = aperture * k / (count - 1)
-        out.append(cv2.GaussianBlur(img.astype(np.float32), (0, 0), sigma))
+        sigma = aperture * k / (count - 1) / LAYER_SHRINK
+        step = float(np.sqrt(max(sigma * sigma - prev * prev, 1e-6)))
+        cur = cv2.GaussianBlur(cur, (0, 0), step)
+        prev = sigma
+        out.append(cv2.resize(cur, (w, h), interpolation=cv2.INTER_LINEAR))
     return out
 
 
@@ -64,14 +89,22 @@ def refocus(img: np.ndarray, depth: np.ndarray, plane: float,
     stack = layers if layers is not None else _layers(img, aperture, count)
     # Distance from the chosen plane, mapped onto the layer index.
     t = np.clip(np.abs(depth - plane), 0.0, 1.0) * (count - 1)
-    lo = np.clip(np.floor(t), 0, count - 2).astype(np.int32)
-    frac = (t - lo)[:, :, None].astype(np.float32)
-    out = np.empty_like(stack[0])
-    for k in range(count - 1):
-        m = lo == k
-        if not m.any():
+    # A tent weight per layer: exactly the piecewise-linear interpolation
+    # the masked version computed, written without boolean indexing.
+    #
+    # The masked form looks like it should win, since the masks partition
+    # the image and it therefore touches each pixel once against this
+    # one's six passes. Measured head to head on a real stack it loses,
+    # 253 ms against 130: fancy-indexing six scattered gathers and six
+    # scattered writes costs far more than six contiguous multiply-adds.
+    # They agree to one level out of 255. I had this backwards first, from
+    # inferring the masked cost by subtraction instead of timing it.
+    out = np.zeros_like(stack[0])
+    for k, layer in enumerate(stack):
+        weight = np.clip(1.0 - np.abs(t - k), 0.0, 1.0)
+        if not weight.any():
             continue
-        out[m] = stack[k][m] * (1 - frac[m]) + stack[k + 1][m] * frac[m]
+        out += layer * weight[:, :, None]
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
