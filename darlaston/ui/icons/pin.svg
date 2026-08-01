@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- A map pin for the slide map: a ring on a stem, drawn at the same
+       weight as everything else rather than as a filled teardrop. -->
+  <g fill="none" stroke="currentColor" stroke-width="1.2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="8" cy="6.25" r="2.75"/>
+    <path d="M8 9.5 L8 13.5"/>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Open chevron rather than a filled triangle. The rail and the status
+       bar are built from hairlines; a solid arrowhead is the heaviest
+       thing on the screen and it is attached to the least important. -->
+  <path d="M4.5 6.5 L8 10 L11.5 6.5" fill="none" stroke="currentColor"
+        stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

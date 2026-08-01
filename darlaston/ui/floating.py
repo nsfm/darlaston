@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import theme
+from . import icons, theme
 
 #: Grab height at the top of a panel. Deliberately generous: this is a
 #: precision instrument being operated by someone whose other hand is on a
@@ -47,13 +47,16 @@ class FloatingPanel(QtWidgets.QWidget):
 
         self.body = QtWidgets.QWidget(self)
 
-        self._close = QtWidgets.QPushButton("✕", self)
+        # A drawn mark rather than the multiplication sign: that glyph
+        # arrives at a different weight and height from every fallback
+        # font, and this one has to sit level with a hairline title rule.
+        self._close = QtWidgets.QPushButton(self)
+        self._close.setIcon(icons.hover_icon("close", theme.DIM, theme.INK, 12))
+        self._close.setIconSize(QtCore.QSize(12, 12))
         self._close.setFixedSize(16, 16)
         self._close.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
         self._close.setStyleSheet(
-            f"QPushButton {{ border: 0; color: {theme.DIM};"
-            f" background: transparent; font-size: 11px; }}"
-            f"QPushButton:hover {{ color: {theme.INK}; }}")
+            "QPushButton { border: 0; background: transparent; }")
         self._close.clicked.connect(self._on_close)
         self._close.setVisible(closable)
 

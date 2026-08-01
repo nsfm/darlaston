@@ -265,9 +265,11 @@ class CameraSession:
     def _try_connect(self) -> None:
         link = usb.probe()
         if not self._is_present():
+            # No detail line: it pointed at a synthetic camera that is no
+            # longer offered, and anything else here only restates the
+            # heading in more words.
             self._publish(CameraState.DISCONNECTED, link=link,
-                          message="Waiting for a camera",
-                          detail="Connect a camera, or start the synthetic one.")
+                          message="Waiting for a camera")
             return
 
         self._attempt += 1

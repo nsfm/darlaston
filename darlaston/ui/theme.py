@@ -79,6 +79,9 @@ def load_fonts() -> dict[str, str]:
 
 def stylesheet() -> str:
     fam = load_fonts()
+    from . import icons
+    chevron = icons.path_for("chevron-down", DIM)
+    chevron_off = icons.path_for("chevron-down", LINE)
     return f"""
     QWidget {{
         background: {BG}; color: {INK};
@@ -141,6 +144,12 @@ def stylesheet() -> str:
         margin: 1px;
     }}
     QComboBox:focus {{ border-color: {BRASS}; }}
+    /* Qt's default is a filled triangle, which was the heaviest mark on
+       screen and attached to the least important control. */
+    QComboBox::drop-down {{ border: 0; width: 16px; }}
+    QComboBox::down-arrow {{ image: url({chevron}); width: 12px;
+                             height: 12px; }}
+    QComboBox::down-arrow:disabled {{ image: url({chevron_off}); }}
     QComboBox QAbstractItemView {{
         background: {PANEL}; border: 1px solid {LINE};
         selection-background-color: {LINE};

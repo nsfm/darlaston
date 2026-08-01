@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera.base import CameraState
 from ..camera.session import FRAMERATES
-from . import theme
+from . import icons, theme
 
 
 class Dot(QtWidgets.QWidget):
@@ -155,7 +155,10 @@ class StatusBar(QtWidgets.QFrame):
             f" margin: 1px; padding: 1px 6px; color: {theme.DIM};"
             f" background: transparent; }}"
             f"QComboBox:hover {{ color: {theme.INK}; }}"
-            f"QComboBox::drop-down {{ border: 0; width: 12px; }}")
+            f"QComboBox::drop-down {{ border: 0; width: 16px; }}"
+            f"QComboBox::down-arrow {{ image: url("
+            f"{icons.path_for('chevron-down', theme.DIM)}); width: 11px;"
+            f" height: 11px; }}")
 
         # Frame rate, beside resolution: the two knobs that trade preview
         # quality against load, and the pair a person reaches for together.
@@ -418,8 +421,10 @@ class WaitingPage(QtWidgets.QWidget):
         self.heading.style().unpolish(self.heading)
         self.heading.style().polish(self.heading)
 
-        self.body.setText(status.detail or
-                          "Connect a camera and it will appear here.")
+        # Empty when there is nothing to add. A subtitle that only says the
+        # heading again, at greater length, is worse than white space.
+        self.body.setText(status.detail or "")
+        self.body.setVisible(bool(status.detail))
 
         steps = getattr(status, "steps", ())
         if steps:
@@ -506,8 +511,15 @@ class ObjectiveStepper(QtWidgets.QWidget):
         super().__init__()
         self._turret = None
 
-        self.prev = QtWidgets.QPushButton("‹")
-        self.next = QtWidgets.QPushButton("›")
+        # Drawn, like the close mark and the combo chevrons. The single
+        # angle quotation marks were a near miss at every font size: they
+        # sit above the optical centre and are lighter than the hairline
+        # they are framed by.
+        self.prev = QtWidgets.QPushButton()
+        self.next = QtWidgets.QPushButton()
+        for b, mark in ((self.prev, "chevron-left"), (self.next, "chevron-right")):
+            b.setIcon(icons.hover_icon(mark, theme.DIM, theme.INK, 12))
+            b.setIconSize(QtCore.QSize(12, 12))
         for b in (self.prev, self.next):
             b.setProperty("role", "step")
         self.label = QtWidgets.QLabel("--")
