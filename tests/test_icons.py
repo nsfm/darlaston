@@ -83,3 +83,48 @@ def test_stylesheet_paths_exist_and_are_reachable_by_qt(qapp):
 def test_a_missing_icon_says_which_one():
     with pytest.raises(FileNotFoundError, match="nosuchmark"):
         icons._source("nosuchmark")
+
+
+def test_rendering_keeps_its_transparency(qapp):
+    """The reported fault: black marks on any light surface.
+
+    `QPixmap.loadFromData` returns whatever pixmap format the platform
+    feels like, and where that comes back without an alpha channel every
+    transparent pixel resolves to opaque black. Rendering onto a surface
+    we allocate ourselves cannot depend on the answer.
+    """
+    from PySide6 import QtGui
+
+    for name in icons.available():
+        img = icons._render(name, theme.INK, 16).toImage()
+        assert img.hasAlphaChannel(), f"{name} lost its alpha"
+        for corner in ((0, 0), (15, 0), (0, 15), (15, 15)):
+            alpha = QtGui.QColor.fromRgba(img.pixel(*corner)).alpha()
+            assert alpha == 0, f"{name} has an opaque corner: alpha {alpha}"
+
+
+def test_stroke_weight_survives_being_drawn_small(qapp):
+    """The other half of "nearly invisible": the art is on a 16px grid at
+    1.2, so drawn at 12 it lands at 0.9 of a pixel and antialiases to about
+    seventy per cent. Faint, not thin. The weight is scaled to the render
+    size so a mark is as solid at 12 as at 24."""
+    from PySide6 import QtGui
+
+    for size in (12, 16, 24, 32):
+        img = icons._render("close", theme.INK, size).toImage()
+        peak = max(QtGui.QColor.fromRgba(img.pixel(x, y)).alpha()
+                   for x in range(size) for y in range(size))
+        assert peak > 240, f"at {size}px the stroke peaks at only {peak}/255"
+
+
+def test_the_marks_are_light_against_a_dark_interface(qapp):
+    """They were dim, which on a grey button is nearly nothing."""
+    from PySide6 import QtGui
+
+    img = icons._render("close", theme.INK, 16).toImage()
+    opaque = [QtGui.QColor.fromRgba(img.pixel(x, y))
+              for x in range(16) for y in range(16)
+              if QtGui.QColor.fromRgba(img.pixel(x, y)).alpha() > 200]
+    assert opaque, "nothing solid enough to see"
+    assert all(c.lightness() > 180 for c in opaque), \
+        "the mark is darker than the surface it sits on"

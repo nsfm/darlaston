@@ -157,7 +157,7 @@ class StatusBar(QtWidgets.QFrame):
             f"QComboBox:hover {{ color: {theme.INK}; }}"
             f"QComboBox::drop-down {{ border: 0; width: 16px; }}"
             f"QComboBox::down-arrow {{ image: url("
-            f"{icons.path_for('chevron-down', theme.DIM)}); width: 11px;"
+            f"{icons.path_for('chevron-down', theme.INK)}); width: 11px;"
             f" height: 11px; }}")
 
         # Frame rate, beside resolution: the two knobs that trade preview
@@ -534,7 +534,7 @@ class ObjectiveStepper(QtWidgets.QWidget):
         self.prev = QtWidgets.QPushButton()
         self.next = QtWidgets.QPushButton()
         for b, mark in ((self.prev, "chevron-left"), (self.next, "chevron-right")):
-            b.setIcon(icons.hover_icon(mark, theme.DIM, theme.INK, 12))
+            b.setIcon(icons.hover_icon(mark, theme.INK, theme.BRASS, 12))
             b.setIconSize(QtCore.QSize(12, 12))
         for b in (self.prev, self.next):
             b.setProperty("role", "step")

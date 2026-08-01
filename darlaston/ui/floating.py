@@ -51,7 +51,7 @@ class FloatingPanel(QtWidgets.QWidget):
         # arrives at a different weight and height from every fallback
         # font, and this one has to sit level with a hairline title rule.
         self._close = QtWidgets.QPushButton(self)
-        self._close.setIcon(icons.hover_icon("close", theme.DIM, theme.INK, 12))
+        self._close.setIcon(icons.hover_icon("close", theme.INK, theme.BRASS, 12))
         self._close.setIconSize(QtCore.QSize(12, 12))
         self._close.setFixedSize(16, 16)
         self._close.setCursor(QtCore.Qt.CursorShape.ArrowCursor)

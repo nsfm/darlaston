@@ -19,6 +19,7 @@ file at all.
 """
 from __future__ import annotations
 
+import re
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -61,22 +62,47 @@ def path_for(name: str, colour: str) -> str:
     return out.as_posix()
 
 
+def _render(name: str, colour: str, size: int) -> QtGui.QPixmap:
+    """Rasterise one mark, onto a surface we control.
+
+    Through QSvgRenderer and an explicitly transparent ARGB image rather
+    than QPixmap.loadFromData: that path returns whatever the platform's
+    pixmap format happens to be, and where it comes back without an alpha
+    channel every transparent pixel resolves to opaque black -- which is
+    a mark that reads as a black square on any light surface it is drawn
+    against. Reported on real hardware, not reproducible offscreen, so it
+    is fixed by not depending on the answer.
+    """
+    from PySide6 import QtSvg
+
+    # Hold the stroke at a constant *device* width. The art is drawn on a
+    # 16px grid at 1.2, so at 12px it lands at 0.9 of a pixel, antialiases
+    # to about seventy per cent alpha, and reads as faint rather than as
+    # thin -- which is half of why these looked invisible.
+    source = tinted(name, colour).decode("utf-8")
+    scale = 16.0 / max(size, 1)
+    source = re.sub(r'stroke-width="([\d.]+)"',
+                    lambda m: f'stroke-width="{float(m.group(1)) * scale:.3f}"',
+                    source)
+
+    image = QtGui.QImage(size, size,
+                         QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QtCore.Qt.GlobalColor.transparent)
+    renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(source.encode("utf-8")))
+    if not renderer.isValid():
+        return QtGui.QPixmap()
+    painter = QtGui.QPainter(image)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    renderer.render(painter)
+    painter.end()
+    return QtGui.QPixmap.fromImage(image)
+
+
 @lru_cache(maxsize=64)
 def icon(name: str, colour: str, size: int = 16) -> QtGui.QIcon:
-    """A QIcon of `name`, stroked in `colour`.
-
-    Rendered to a pixmap at the device ratio rather than handed to Qt as
-    an SVG: a QIcon built from SVG data re-rasterises at whatever size it
-    is asked for, and these are drawn at one size, at one weight, on
-    purpose.
-    """
-    renderer = QtGui.QPixmap()
-    renderer.loadFromData(tinted(name, colour), "SVG")
-    if renderer.isNull():                    # no SVG plugin in this build
-        return QtGui.QIcon()
-    return QtGui.QIcon(renderer.scaled(
-        size, size, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-        QtCore.Qt.TransformationMode.SmoothTransformation))
+    """A QIcon of `name`, stroked in `colour`."""
+    pix = _render(name, colour, size)
+    return QtGui.QIcon() if pix.isNull() else QtGui.QIcon(pix)
 
 
 def available() -> list[str]:
@@ -98,11 +124,8 @@ def hover_icon(name: str, colour: str, hover: str,
     for mode, shade in ((QtGui.QIcon.Mode.Normal, colour),
                         (QtGui.QIcon.Mode.Active, hover),
                         (QtGui.QIcon.Mode.Selected, hover)):
-        pix = QtGui.QPixmap()
-        pix.loadFromData(tinted(name, shade), "SVG")
+        pix = _render(name, shade, size)
         if pix.isNull():
             return QtGui.QIcon()
-        both.addPixmap(pix.scaled(
-            size, size, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation), mode)
+        both.addPixmap(pix, mode)
     return both

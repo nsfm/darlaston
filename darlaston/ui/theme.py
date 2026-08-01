@@ -80,7 +80,7 @@ def load_fonts() -> dict[str, str]:
 def stylesheet() -> str:
     fam = load_fonts()
     from . import icons
-    chevron = icons.path_for("chevron-down", DIM)
+    chevron = icons.path_for("chevron-down", INK)
     chevron_off = icons.path_for("chevron-down", LINE)
     return f"""
     QWidget {{
