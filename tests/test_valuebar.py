@@ -6,6 +6,24 @@ from darlaston.ui import theme
 from darlaston.ui.widgets import BG_TEXT, BRASS, ValueBar
 
 
+def is_cell(img, x, y):
+    """Is this pixel a dither cell, rather than a letter's edge beside one?
+
+    Tight, because a cell is filled with antialiasing off and comes out as
+    exactly the brass -- while the type over it is drawn with antialiasing
+    on, so the pixels along a stem are blends of the two. At a tolerance of
+    24 a blend counted as a cell, and whether any given stem produced one
+    was a matter of how the glyph happened to land on the pixel grid: none
+    on a desktop, eighteen on a CI runner, on the same PySide6 and from
+    bit-identical geometry. The blends measured #c1873e and #b7a05c against
+    a real cell's #c89b4a.
+    """
+    c = QtGui.QColor(img.pixel(x, y))
+    return (abs(c.red() - BRASS.red()) <= 6
+            and abs(c.green() - BRASS.green()) <= 6
+            and abs(c.blue() - BRASS.blue()) <= 6)
+
+
 @pytest.fixture
 def bar(qapp):
     b = ValueBar("exposure")
@@ -66,10 +84,7 @@ def test_the_dissolve_keeps_clear_of_the_letterforms(bar):
     img = bar.grab().toImage()
 
     def is_amber(x, y):
-        c = QtGui.QColor(img.pixel(x, y))
-        return (abs(c.red() - BRASS.red()) < 24
-                and abs(c.green() - BRASS.green()) < 24
-                and abs(c.blue() - BRASS.blue()) < 24)
+        return is_cell(img, x, y)
 
     # Nothing amber lands on a letter or in its ring of air.
     hits = [(x, y) for x in range(bar.width()) for y in range(bar.height())
@@ -129,10 +144,7 @@ def test_a_full_bar_shows_no_dissolve(qapp):
         cols = set()
         for x in range(b.width()):
             for y in range(4, b.height() - 4):
-                c = QtGui.QColor(img.pixel(x, y))
-                if (abs(c.red() - BRASS.red()) < 24
-                        and abs(c.green() - BRASS.green()) < 24
-                        and abs(c.blue() - BRASS.blue()) < 24):
+                if is_cell(img, x, y):
                     cols.add(x)
                     break
         return cols
