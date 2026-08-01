@@ -276,11 +276,19 @@ worth protecting when deciding what to build next.
       them. Faint on purpose: a guide that competes with the specimen is
       worse than no guide. Remembered between sessions, since it is a habit
       rather than a decision.
-- [ ] **Report frames the driver dropped**, from
-      `TOUPCAM_OPTION_NUMBER_DROP_FRAME`, beside our own count in the
-      performance panel. Ours says the loop could not keep up; this one says
-      the link or the hub could not, and today those two failures look
-      identical from the outside.
+- [x] ~~**Report frames the driver dropped.**~~ In the performance panel
+      beside our own count, and only when there is something to report:
+      silent when the camera cannot say, and silent at zero. They want
+      opposite fixes -- ours means less work per frame, theirs means a
+      lower rate or another USB port, and no amount of optimising the loop
+      touches it.
+- [x] ~~**A film of a mosaic.**~~ Darkroom > Fly through a mosaic. Opens
+      close enough that the areolae are visible and the subject is not,
+      moves between specimens it picks itself by looking for structure, and
+      pulls back until the arrangement resolves. Nothing to configure and
+      nothing needed but the composite -- no depth map, no calibration, no
+      scale -- so it works on the first mosaic anybody ever shoots. 40 s
+      and 19 MB for fourteen seconds on a 52 MP composite.
 - [ ] **Auto-exposure.** The SDK has policy (exposure or gain preferred),
       a target percentile and damping coefficients, and darlaston is
       manual-only, which is fine for a practised operator and a black screen
