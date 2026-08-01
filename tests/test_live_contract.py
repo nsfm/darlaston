@@ -651,3 +651,40 @@ def test_about_is_frameless_and_draggable(qapp):
         assert d._drag_from is None
     finally:
         d.deleteLater()
+
+
+def test_the_histogram_draws_the_data_across_its_whole_width(qapp):
+    """It used to draw 256 lines at `i * w / 256`, which at any width over
+    256 skips columns and turns the plot into a comb of gaps that are nothing
+    to do with the frame."""
+    import cv2
+    import numpy as np
+    from PySide6 import QtGui
+
+    from darlaston.ui.widgets import Histogram
+
+    def render(hist, width):
+        w = Histogram()
+        w.resize(width, 96)
+        w.set_data(hist, 0.0, (0.0, 0.0, 0.0))
+        img = QtGui.QImage(w.size(), QtGui.QImage.Format.Format_RGB888)
+        w.render(img)
+        return np.frombuffer(img.constBits(), np.uint8).reshape(
+            img.height(), -1, 3)[:, :width].copy()
+
+    rng = np.random.default_rng(11)
+    flat = cv2.calcHist([rng.integers(0, 256, 400_000).astype(np.uint8)],
+                        [0], None, [256], [0, 256]).ravel()
+    # Above the amber's darkest channel and well above the quarter rules,
+    # which are drawn behind the plot and are not the plot.
+    plot = render(flat, 420)[:84]                    # above the caption strip
+    lit = (plot.max(axis=2) > 90).sum(axis=0)
+    assert (lit > 0).all(), \
+        f"{int((lit == 0).sum())} of 420 columns drew nothing on a flat histogram"
+
+    # A spike at one end must not be plotted at the other.
+    spike = np.zeros(256, np.float32)
+    spike[8] = 1e6
+    left = render(spike, 420)[:84].max(axis=2) > 90
+    assert left[:, :40].any() and not left[:, 200:].any(), \
+        "a spike in the shadows was plotted somewhere it is not"

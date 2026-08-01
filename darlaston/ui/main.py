@@ -1724,7 +1724,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     backend.driver_dropped() if backend is not None else None)
                 self.perf.update_costs(s.costs, s.stats)
             self.histogram.set_data(s.histogram, s.clipped_fraction,
-                                    s.black_fraction, s.channel_clipped)
+                                    s.channel_clipped)
             self.focus.set_data(s.focus_trace, s.focus_fraction_of_peak)
             self.strip.set_live(s)
 

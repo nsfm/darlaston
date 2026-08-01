@@ -53,7 +53,6 @@ class LiveSignals:
     preview: np.ndarray                      # owned copy, safe to keep
     histogram: np.ndarray
     clipped_fraction: float
-    black_fraction: float
     focus_metric: float
     focus_fraction_of_peak: float
     focus_trace: np.ndarray
@@ -152,8 +151,8 @@ class LivePipeline:
         #: explicit copy, the histogram is its own array, and the tracker,
         #: turret and peaking all resize into new buffers of their own.
         self._planes: list[np.ndarray] | None = None
-        #: Last (histogram, per-channel clipping, black fraction), reused on
-        #: the frames between instrument repaints.
+        #: Last (histogram, per-channel clipping), reused on the frames
+        #: between instrument repaints.
         self._levels: tuple | None = None
         self._analysed = 0
         #: Per-feature frame costs, always running. live/profile.py
@@ -394,8 +393,8 @@ class LivePipeline:
             else:
                 hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
                 per = (0.0, float(hist[255] / total), 0.0)
-            self._levels = (hist, per, float(hist[0] / total))
-        hist, per, black = self._levels
+            self._levels = (hist, per)
+        hist, per = self._levels
 
         # Clipping is judged on green, not on luminance or on any channel.
         #
@@ -534,7 +533,6 @@ class LivePipeline:
             preview=data.copy(),          # explicit: the UI outlives the pool
             histogram=hist,
             clipped_fraction=clipped,
-            black_fraction=black,
             channel_clipped=per,
             looks_blank=blank,
             settled=settled,

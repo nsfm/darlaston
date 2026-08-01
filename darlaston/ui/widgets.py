@@ -378,56 +378,142 @@ class LiveView(QtWidgets.QWidget):
 
 
 class Histogram(QtWidgets.QWidget):
-    """Log-scaled histogram with explicit clipping and black-crush markers.
+    """Log-scaled histogram with an explicit clipping marker.
 
     Non-negotiable, because the incumbent software was blowing 62% of the frame
     and giving no indication whatsoever.
+
+    Drawn as one image rather than as 256 lines. Two hundred and fifty six
+    `drawLine` calls into a panel of arbitrary width also drew the wrong
+    picture: at any width above 256 the integer column position skips, so
+    the plot came out as a comb of gaps that were nothing to do with the
+    data, and below 256 the bins overwrote each other and only the last one
+    of each group survived. Resampling to the actual pixel width fixes both
+    and costs a single numpy pass.
     """
+
+    #: Pixels of dissolve at the top of a column, and the share of the plot
+    #: a column has to reach before it starts to firm up. Deliberately the
+    #: same rule as the value bars directly above this widget, turned on its
+    #: side: there a full bar is solid and a short one dissolves, and here a
+    #: tall column is solid and the tails dissolve. One dither grammar for
+    #: the whole panel, so the two do not read as two programs.
+    DITHER = 26
+    FIRM = 0.75
+    #: Bins of blur across the histogram before it is drawn. The tone curve
+    #: stretches twelve bits into eight, so some output levels can be
+    #: reached by no input level at all and the raw plot is a picket fence
+    #: of empty bins. One bin of blur closes them without moving anything
+    #: that is really there.
+    SMOOTH = 1.0
+    #: Caption strip along the bottom.
+    CAPTION = 12
 
     def __init__(self) -> None:
         super().__init__()
         self._hist = np.zeros(256, np.float32)
         self._clipped = 0.0
-        self._black = 0.0
+        self._per: tuple[float, float, float] | None = None
+        self._image: QtGui.QImage | None = None
+        self._pixels: np.ndarray | None = None
+        self._rows: np.ndarray | None = None
+        self._tile: np.ndarray | None = None
         self.setFixedHeight(96)
+        self.setToolTip(
+            "Brightness of the preview, counted per level and plotted on a "
+            "log scale.\n\n"
+            "clipped -- share of the frame at maximum, where highlight "
+            "detail is gone for good. Under-exposure needs no number: the "
+            "plot piles against the left wall and says so itself.")
 
-    def set_data(self, hist: np.ndarray, clipped: float, black: float,
+    def set_data(self, hist: np.ndarray, clipped: float,
                  per_channel: tuple[float, float, float] | None = None) -> None:
-        self._hist, self._clipped, self._black = hist, clipped, black
+        self._hist, self._clipped = hist, clipped
         self._per = per_channel
         self.update()
+
+    def _plot(self, w: int, h: int) -> QtGui.QImage:
+        """The dissolving amber plot, as an alpha mask the width of the widget.
+
+        The buffer is kept and reused: a QImage does not copy what it wraps,
+        so the array has to outlive the paint anyway, and re-allocating a
+        few hundred kilobytes twenty times a second for a picture that
+        rarely changes size is work for nothing.
+        """
+        v = np.log1p(np.asarray(self._hist, np.float32))
+        if self.SMOOTH:
+            v = cv2.GaussianBlur(v.reshape(1, -1), (0, 0), self.SMOOTH,
+                                 borderType=cv2.BORDER_REPLICATE).ravel()
+        # INTER_AREA both ways: widening, it interpolates; narrowing, it
+        # averages, so a spike two bins wide still shows up in a plot half
+        # the width of the data instead of falling between samples.
+        cols = cv2.resize(v.reshape(1, -1), (w, 1),
+                          interpolation=cv2.INTER_AREA).ravel()
+        peak = float(cols.max()) or 1.0
+        tops = h - cols / peak * h                      # y of each column top
+
+        if self._pixels is None or self._pixels.shape[:2] != (h, w):
+            self._pixels = np.empty((h, w, 4), np.uint8)
+            self._image = QtGui.QImage(
+                self._pixels.data, w, h, 4 * w,
+                QtGui.QImage.Format.Format_RGBA8888_Premultiplied)
+            # None of these depend on the data, only on the size, and the
+            # size changes when the rail is dragged rather than twenty
+            # times a second.
+            self._rows = np.arange(h, dtype=np.float32)[:, None]
+            self._tile = np.tile(_BAYER, (h // 8 + 1, w // 8 + 1))[:h, :w]
+        rgba, rows = self._pixels, self._rows
+
+        # The bars' taper, transposed. A column at the peak gets no dissolve
+        # at all and ends on a clean edge; one in the tails dissolves over
+        # the full band, so the shape is crisp where the pixels are and
+        # feathers out where there are almost none.
+        t = cols / peak
+        taper = np.where(t < self.FIRM, 1.0, (1.0 - t) / (1.0 - self.FIRM))
+        band = np.maximum(self.DITHER * taper, 1e-3)
+        depth = np.clip((rows - tops[None, :]) / band[None, :], 0.0, 1.0)
+        on = (rows >= tops[None, :]) & (depth > self._tile)
+
+        rgba[..., 0] = BRASS.red()
+        rgba[..., 1] = BRASS.green()
+        rgba[..., 2] = BRASS.blue()
+        # Premultiplied, and the fill is fully opaque where it is on at all,
+        # so the colour planes need no scaling.
+        rgba[..., 3] = on * np.uint8(255)
+        np.multiply(rgba[..., :3], on[..., None], out=rgba[..., :3])
+        return self._image
 
     def paintEvent(self, _event) -> None:
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), PANEL)
         h, w = self.height(), self.width()
-        v = np.log1p(self._hist)
-        peak = float(v.max()) or 1.0
-        p.setPen(QtGui.QPen(INK, 1))
-        for i in range(256):
-            x = int(i * w / 256)
-            bar = int(v[i] / peak * (h - 14))
-            p.drawLine(x, h - 12, x, h - 12 - bar)
+        plot = h - self.CAPTION
+
+        # Quarter-tone rules, behind the plot: a histogram with no marks on
+        # it says "there is a hump somewhere", and the question is always
+        # where the hump is.
+        p.setPen(QtGui.QPen(LINE, 1))
+        for q in (1, 2, 3):
+            x = int(w * q / 4)
+            p.drawLine(x, 0, x, plot)
+
+        if w > 0 and plot > 0:
+            p.drawImage(0, 0, self._plot(w, plot))
 
         # Warning bands live at the ends, where the damage happens.
         if self._clipped > 0.0005:
-            p.fillRect(w - 6, 0, 6, h - 12, BAD)
-        if self._black > 0.0005:
-            p.fillRect(0, 0, 6, h - 12, WARN)
+            p.fillRect(w - 6, 0, 6, plot, BAD)
 
         p.setPen(DIM)
         f = p.font()
         f.setPointSizeF(7.5)
         p.setFont(f)
-        per = getattr(self, "_per", None)
+        msg = f"clipped {self._clipped * 100:.2f}%"
+        per = self._per
         if per and max(per) > 0.0005:
-            hot = "".join(n for n, v in zip("RGB", per) if v > 0.0005)
-            msg = (f"clipped {self._clipped * 100:.2f}% (green)   {hot} hot"
-                   f"   black {self._black * 100:.2f}%")
-        else:
-            msg = (f"clipped {self._clipped * 100:.2f}%"
-                   f"   black {self._black * 100:.2f}%")
-        p.drawText(QtCore.QRect(0, h - 12, w, 12),
+            msg += " (green)   " + "".join(
+                n for n, v in zip("RGB", per) if v > 0.0005) + " hot"
+        p.drawText(QtCore.QRect(0, plot, w, self.CAPTION),
                    QtCore.Qt.AlignmentFlag.AlignCenter, msg)
 
 
