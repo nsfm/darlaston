@@ -71,7 +71,10 @@ class ShutterButton(QtWidgets.QPushButton):
         # "ready" and "not yet" is a shape and not only a shade.
         fill = theme.BRASS if live else "transparent"
         edge = theme.BRASS if live else theme.LINE
-        text = theme.INK if live else theme.DIM
+        # Dark on amber, not light: #e4e7e0 on #c89b4a is about 1.9:1, which
+        # is under any legibility threshold there is. The near-black ground
+        # gives about 7:1 on the same fill.
+        text = theme.BG if live else theme.DIM
         # Right side square: the averaging arrow butts against it to make one
         # pill, so the seam between them must not be rounded.
         self.setStyleSheet(
@@ -79,6 +82,7 @@ class ShutterButton(QtWidgets.QPushButton):
             f" border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
             f" margin: 1px 0 1px 1px;"
             f" color: {text}; font-size: 14px; letter-spacing: 1px;"
+            f" font-family: '{theme.load_fonts()['sans']}'; font-weight: 600;"
             f" background: {fill}; }}"
             f"QPushButton:hover:enabled {{ background: {theme.BRASS_LIT}; }}"
             f"QPushButton:pressed:enabled {{ background: {theme.BRASS_DEEP}; }}")

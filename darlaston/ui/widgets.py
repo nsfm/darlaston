@@ -14,6 +14,10 @@ GOOD = QtGui.QColor("#5fb37a")
 WARN = QtGui.QColor("#d9a441")
 BAD = QtGui.QColor("#d0605e")
 BRASS = QtGui.QColor("#c89b4a")
+LINE = QtGui.QColor("#2a2e29")
+#: Type drawn over the amber fill. Near-black rather than white:
+#: light type on this amber is about 1.9:1, which is unreadable.
+BG_TEXT = QtGui.QColor("#101210")
 
 #: Paint costs land in the same table as the pipeline's feature costs, so
 #: "the preview" and "the slide map" can be compared against "peaking"
@@ -586,3 +590,239 @@ class CoverageMeter(QtWidgets.QWidget):
                    else f"{self._value * 100:.0f}% through focus"
                    + ("  still finding structure"
                       if self._value >= 0.999 else ""))
+
+
+#: Ordered dither, the 8x8 Bayer matrix, normalised to 0..1. Ordered
+#: rather than random because the pattern is the point: error diffusion
+#: gives a cloud that reads as noise or as a rendering fault, and this
+#: wants to read as drawn -- the cross-hatch of a plate in an old book, or
+#: the shading ramp in a game that had four colours to work with.
+_BAYER = np.array([
+    [0, 32, 8, 40, 2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44, 4, 36, 14, 46, 6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [3, 35, 11, 43, 1, 33, 9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47, 7, 39, 13, 45, 5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+], dtype=np.float32) / 64.0
+
+
+class ValueBar(QtWidgets.QWidget):
+    """A slider that is its own label, filled and dithered.
+
+    Two rows became one. A slider with a name above it and a number
+    opposite spends three lines of a rail on one number, and the rail is
+    the most contested space in the window -- so the name and the value
+    move inside the bar and the bar does the work of all three.
+
+    The fill does not stop at an edge, it *dissolves*: solid amber, then
+    an ordered-dither ramp, then the handle. A hard edge on a value that
+    is being dragged reads as a boundary, and this is a quantity rather
+    than a boundary. It also says, quietly, that the number is a setting
+    on a sensor and not a measurement.
+
+    The text is drawn twice, clipped to the fill and to the track, dark
+    over the amber and light over the ground. That is per-pixel exact and
+    needs no outline, no shadow and no guessing at which side a word has
+    landed on -- a letter straddling the edge is simply dark on its left
+    half and light on its right.
+    """
+
+    valueChanged = QtCore.Signal(int)
+
+    HEIGHT = 26
+    #: How far the dissolve reaches back from the handle.
+    DITHER = 34
+    #: Size of one dither cell in device pixels. Two reads as deliberate;
+    #: one reads as noise, and four starts to look like a chequerboard.
+    CELL = 2
+    PAD = 9
+
+    def __init__(self, label: str, parent=None) -> None:
+        super().__init__(parent)
+        self._label = label
+        self._text = ""
+        self._min, self._max, self._value = 0, 100, 0
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+
+    # ---- the slider's own interface -------------------------------------
+
+    def setRange(self, lo: int, hi: int) -> None:
+        self._min, self._max = int(lo), int(hi)
+        self.setValue(self._value)
+
+    def minimum(self) -> int:
+        return self._min
+
+    def maximum(self) -> int:
+        return self._max
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int) -> None:
+        value = max(self._min, min(self._max, int(value)))
+        if value == self._value:
+            return
+        self._value = value
+        self.update()
+        self.valueChanged.emit(value)
+
+    def set_value_text(self, text: str) -> None:
+        """The reading, formatted by whoever knows the units."""
+        if text != self._text:
+            self._text = text
+            self.update()
+
+    # ---- painting --------------------------------------------------------
+
+    def _fill_x(self) -> float:
+        span = max(self._max - self._min, 1)
+        usable = self.width() - 2
+        return 1 + usable * (self._value - self._min) / span
+
+    def paintEvent(self, _event) -> None:
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        rect = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        radius = 3.0
+        on = self.isEnabled()
+
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        p.setClipPath(path)
+
+        p.fillRect(self.rect(), PANEL if on else QtGui.QColor("#141614"))
+
+        edge = self._fill_x()
+        amber = BRASS if on else QtGui.QColor("#3a3a35")
+        solid = max(0.0, edge - self.DITHER)
+        p.fillRect(QtCore.QRectF(0, 0, solid, self.height()), amber)
+        # The dissolve yields to the type. Half amber and half ground is
+        # the one background no colour of text can be read against, so the
+        # cells that would fall behind a word are simply not drawn, and
+        # the word sits on clean ground instead of on noise.
+        self._dither(p, solid, edge, amber, keep_clear=self._text_rects())
+
+        # The handle: a full-height rule, because a knob on a bar this
+        # short would be larger than the bar and would hide the dissolve
+        # it is supposed to terminate.
+        if on:
+            p.fillRect(QtCore.QRectF(edge - 1.5, 0, 3.0, self.height()), INK)
+
+        # Where the amber actually wins, not where the fill nominally
+        # ends. Coverage falls as (1-t)^2, so it passes half at t = 1 -
+        # sqrt(0.5); left of that the dither is mostly ink and dark type
+        # reads, right of it mostly ground and light type reads. Splitting
+        # at the handle instead drew dark letters onto a region that had
+        # already dissolved, and the start of the word disappeared.
+        # Split at the solid edge, now that nothing is dithered behind the
+        # words: left of it the ground really is amber, right of it it
+        # really is not, and there is no in-between left to guess about.
+        self._labels(p, solid)
+
+        p.setClipping(False)
+        p.setPen(QtGui.QPen(LINE, 1))
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect, radius, radius)
+
+    def _text_rects(self) -> list:
+        """Where the two words will land, with a little air around them."""
+        metrics = QtGui.QFontMetrics(self._label_font())
+        h = self.height()
+        out = []
+        if self._label:
+            w = metrics.horizontalAdvance(self._label)
+            out.append(QtCore.QRectF(self.PAD - 3, 0, w + 6, h))
+        if self._text:
+            w = metrics.horizontalAdvance(self._text)
+            out.append(QtCore.QRectF(self.width() - self.PAD - w - 3, 0,
+                                     w + 6, h))
+        return out
+
+    def _label_font(self) -> QtGui.QFont:
+        font = QtGui.QFont(self.font())
+        font.setPixelSize(11)
+        return font
+
+    def _dither(self, p: QtGui.QPainter, start: float, end: float,
+                colour: QtGui.QColor, keep_clear=()) -> None:
+        """The ramp from solid to nothing, one Bayer cell at a time."""
+        if end <= start:
+            return
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(colour)
+        width = end - start
+        for cx in range(int(start), int(end) + 1, self.CELL):
+            # Coverage falls from 1 at the solid end to 0 at the handle,
+            # squared so the pattern thins slowly and then gives way --
+            # a linear ramp reads as a grey wash rather than a dissolve.
+            t = (cx - start) / width
+            coverage = (1.0 - t) ** 2
+            col = (cx // self.CELL) % 8
+            for cy in range(0, self.height(), self.CELL):
+                row = (cy // self.CELL) % 8
+                if _BAYER[row, col] >= coverage:
+                    continue
+                cell = QtCore.QRectF(cx, cy, self.CELL, self.CELL)
+                if any(r.intersects(cell) for r in keep_clear):
+                    continue
+                p.drawRect(cell)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+    def _labels(self, p: QtGui.QPainter, split: float) -> None:
+        """Name on the left, reading on the right, inside the bar.
+
+        Painted twice under opposite clips rather than once in a colour
+        chosen by comparing the value to some threshold. Exact at the
+        pixel, needs no outline, and a word lying across the edge simply
+        changes colour halfway through.
+        """
+        p.setFont(self._label_font())
+        left = QtCore.QRect(self.PAD, 0, self.width() - self.PAD * 2,
+                            self.height())
+        right = QtCore.QRect(self.PAD, 0, self.width() - self.PAD * 2,
+                             self.height())
+        vcentre = QtCore.Qt.AlignmentFlag.AlignVCenter
+        over_fill = QtCore.QRectF(0, 0, split, self.height())
+        over_track = QtCore.QRectF(split, 0, self.width() - split,
+                                   self.height())
+
+        for clip, colour in ((over_fill, BG_TEXT), (over_track, INK)):
+            p.save()
+            p.setClipRect(clip, QtCore.Qt.ClipOperation.IntersectClip)
+            p.setPen(colour if self.isEnabled() else DIM)
+            p.drawText(left, vcentre | QtCore.Qt.AlignmentFlag.AlignLeft,
+                       self._label)
+            p.drawText(right, vcentre | QtCore.Qt.AlignmentFlag.AlignRight,
+                       self._text)
+            p.restore()
+
+    # ---- dragging --------------------------------------------------------
+
+    def _set_from_x(self, x: float) -> None:
+        span = self._max - self._min
+        usable = max(self.width() - 2, 1)
+        frac = min(1.0, max(0.0, (x - 1) / usable))
+        self.setValue(round(self._min + frac * span))
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() is QtCore.Qt.MouseButton.LeftButton and self.isEnabled():
+            self._set_from_x(event.position().x())
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.buttons() & QtCore.Qt.MouseButton.LeftButton and self.isEnabled():
+            self._set_from_x(event.position().x())
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if not self.isEnabled():
+            return
+        step = max(1, (self._max - self._min) // 100)
+        self.setValue(self._value
+                      + (step if event.angleDelta().y() > 0 else -step))

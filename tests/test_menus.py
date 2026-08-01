@@ -123,3 +123,43 @@ def test_no_microscopy_false_friends_in_the_render_list():
     for _key, label, hint, _on in darkroom_ui.RENDERS:
         assert "artifact" not in (label + hint).lower()
         assert "artefact" not in (label + hint).lower()
+
+
+def test_measure_from_can_be_turned_off_and_back_on(win):
+    """Clicked, not called. Qt toggles a checkable button *before* `clicked`
+    reaches the handler, so a handler that asks the buttons what was active
+    sees the state after the click -- every button looks like the one
+    already chosen, and every click collapses to `full`. Calling the
+    handler directly skips that and hides it.
+    """
+    from darlaston.live.focus import Region
+
+    b = win._region_buttons
+
+    def chosen():
+        return [r for r, x in b.items() if x.isChecked()]
+
+    assert chosen() == [Region.CENTRE]
+
+    b[Region.FULL].click()
+    assert chosen() == [Region.FULL]
+
+    # Full must not be a trap: the others stay reachable from it.
+    b[Region.SPOT].click()
+    assert chosen() == [Region.SPOT]
+    b[Region.CENTRE].click()
+    assert chosen() == [Region.CENTRE]
+
+    # Clicking the active one releases the restriction.
+    b[Region.CENTRE].click()
+    assert chosen() == [Region.FULL]
+
+    # And full has nowhere to release to.
+    b[Region.FULL].click()
+    assert chosen() == [Region.FULL]
+
+    # A dragged box wins over every preset and unchecks them all.
+    win._on_custom_region((0.1, 0.1, 0.2, 0.2))
+    assert chosen() == []
+    b[Region.SPOT].click()
+    assert chosen() == [Region.SPOT]

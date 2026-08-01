@@ -53,7 +53,7 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .widgets import FocusGroup, Histogram, LiveView
+from .widgets import FocusGroup, Histogram, LiveView, ValueBar
 
 def _provisional_scope() -> ScopeProfile:
     """A plausible stand, for a camera we have never seen on one.
@@ -394,24 +394,23 @@ class MainWindow(QtWidgets.QMainWindow):
         col.addLayout(_group("exposure", self.histogram))
         col.addWidget(self.focus)
 
-        # Sensor
-        self.exposure = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        # Sensor. Each control was three lines -- a name, a reading
+        # opposite it, and a slider underneath -- for one number. The rail
+        # is the most contested space in the window, so the name and the
+        # reading moved inside the bar and six lines became two.
+        self.exposure = ValueBar("exposure")
         self.exposure.setRange(1, 1000)
         self.exposure.setValue(120)
+        self.exposure.set_value_text("8.3 ms")
         self.exposure.valueChanged.connect(self._on_exposure)
-        self.exposure_value = QtWidgets.QLabel("8.3 ms")
-        self.exposure_value.setProperty("role", "value")
 
-        self.gain = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.gain = ValueBar("gain")
         self.gain.setRange(100, 2000)
         self.gain.setValue(100)
+        self.gain.set_value_text("1.0×")
         self.gain.valueChanged.connect(self._on_gain)
-        self.gain_value = QtWidgets.QLabel("1.0×")
-        self.gain_value.setProperty("role", "value")
 
-        sensor = _group("sensor", _readout("exposure", self.exposure_value))
-        sensor.addWidget(self.exposure)
-        sensor.addLayout(_readout("gain", self.gain_value))
+        sensor = _group("sensor", self.exposure)
         sensor.addWidget(self.gain)
         col.addLayout(sensor)
 
@@ -436,6 +435,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._region_buttons = {r: b for r, b in
                                 zip((Region.SPOT, Region.CENTRE, Region.FULL),
                                     self.regions.buttons())}
+        #: What the metric is actually restricted to. The buttons show it;
+        #: they are not where it is kept.
+        self._region = Region.CENTRE
         measure = _group("measure from", row)
         hint = QtWidgets.QLabel("drag on the image for a custom box")
         hint.setProperty("role", "key")
@@ -537,9 +539,9 @@ class MainWindow(QtWidgets.QMainWindow):
             widget.blockSignals(True)
             widget.setValue(max(widget.minimum(), min(widget.maximum(), value)))
             widget.blockSignals(False)
-        self.exposure_value.setText(
+        self.exposure.set_value_text(
             f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
-        self.gain_value.setText(f"{gain / 100:.1f}×")
+        self.gain.set_value_text(f"{gain / 100:.1f}×")
         self._synced = True
 
     def _switch_to_synthetic(self) -> None:
@@ -569,13 +571,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Metrics are normalised against intensity, but clipping breaks that,
         # so a peak recorded before a big brightness change is not comparable.
         self.pipeline.reset_focus_peak()
-        self.exposure_value.setText(
+        self.exposure.set_value_text(
             f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
 
     def _on_gain(self, value: int) -> None:
         self.session.set_gain(value)
         self.pipeline.reset_focus_peak()
-        self.gain_value.setText(f"{value / 100:.1f}×")
+        self.gain.set_value_text(f"{value / 100:.1f}×")
 
     def _on_preview_res(self, at: int) -> None:
         index = self.strip.preview.itemData(at)
@@ -776,22 +778,26 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_region(self, region: Region) -> None:
         """Choose where the metric looks, or stop restricting it.
 
-        These are a restriction, and `full` is the absence of one -- so
-        clicking the active button again releases the restriction rather
-        than doing nothing, and the frame is measured whole. Clicking
-        `full` while it is active is the one case with nowhere to go: it
-        is already the unrestricted state, so it stays.
+        These are a restriction and `full` is the absence of one, so
+        clicking the active button again releases it rather than doing
+        nothing. Clicking `full` while it is active has nowhere to go.
+
+        Read from `self._region` rather than from the buttons, because Qt
+        toggles a checkable button *before* `clicked` reaches us: asking
+        the buttons what was active returns the state after the click, so
+        every button looked like the one already chosen and every click
+        collapsed to `full`.
         """
-        current = next((r for r, b in self._region_buttons.items()
-                        if b.isChecked()), None)
-        if region is current:
+        if region is self._region:
             region = Region.FULL
+        self._region = region
         self.pipeline.set_focus_region(region)
         for r, b in self._region_buttons.items():
             b.setChecked(r is region)
 
     def _on_custom_region(self, rect: tuple) -> None:
         """A box dragged on the image wins over any preset."""
+        self._region = Region.CUSTOM
         self.pipeline.set_focus_region(Region.CUSTOM, rect)
         for b in self._region_buttons.values():
             b.setChecked(False)
@@ -1759,16 +1765,6 @@ def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout):
     col.addLayout(first) if isinstance(first, QtWidgets.QLayout) else col.addWidget(first)
     return col
 
-
-def _readout(key: str, value_widget: QtWidgets.QLabel) -> QtWidgets.QHBoxLayout:
-    row = QtWidgets.QHBoxLayout()
-    row.setContentsMargins(0, 0, 0, 0)
-    k = QtWidgets.QLabel(key)
-    k.setProperty("role", "key")
-    row.addWidget(k)
-    row.addStretch(1)
-    row.addWidget(value_widget)
-    return row
 
 
 def _list_cameras() -> int:
