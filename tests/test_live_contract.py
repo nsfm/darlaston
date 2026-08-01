@@ -415,3 +415,57 @@ def test_disk_readout_warns_before_it_is_too_late(qapp):
     # And an unreachable capture folder reports nothing rather than lying.
     bar.set_disk(None)
     assert bar.disk.text() == ""
+
+
+def test_framing_guides_read_on_both_a_white_and_a_black_field(qapp):
+    """A microscope preview is either mostly blown white (brightfield) or
+    mostly black (darkfield), and a single-colour guide vanishes into one of
+    them. Hence the double stroke, and hence this test.
+    """
+    import numpy as np
+    from PySide6 import QtGui
+    from darlaston.ui.widgets import LiveView
+
+    def render(view, fill):
+        frame = np.full((300, 400, 3), fill, np.uint8)
+        view._set_frame(frame, None)
+        img = QtGui.QImage(view.size(), QtGui.QImage.Format.Format_RGB888)
+        view.render(img)
+        b = img.constBits()
+        return np.frombuffer(b, np.uint8).reshape(img.height(), -1, 3).copy()
+
+    view = LiveView()
+    view.resize(400, 300)
+    for fill in (255, 0):
+        view.framing_grid = "none"
+        view.framing_cross = False
+        plain = render(view, fill)
+        view.framing_grid = "thirds"
+        view.framing_cross = True
+        guided = render(view, fill)
+        changed = int((np.abs(guided.astype(int) - plain.astype(int))
+                       .max(axis=2) > 6).sum())
+        assert changed > 200, (
+            f"guides invisible on a field of {fill}: only {changed} pixels moved")
+        # And faint: a guide that competes with the specimen is worse than none.
+        assert changed < guided[:, :, 0].size * 0.06, \
+            f"guides too heavy on {fill}: {changed} pixels"
+
+
+def test_framing_guides_persist_and_are_independent(tmp_path):
+    """Centring a specimen and composing a frame are different jobs, so the
+    cross is not part of the grid choice."""
+    from darlaston.session.settings import Settings
+
+    s = Settings()
+    assert s.framing_grid == "none" and s.framing_cross is False
+    s.framing_grid = "thirds"
+    s.framing_cross = True
+    s.save(tmp_path / "s.json")
+    back = Settings.load(tmp_path / "s.json")
+    assert back.framing_grid == "thirds" and back.framing_cross is True
+
+    from darlaston.ui.widgets import LiveView
+    assert set(LiveView.GUIDES) == {"none", "thirds", "grid"}
+    assert LiveView.GUIDES["thirds"] == 3
+    assert LiveView.GUIDES["grid"] > LiveView.GUIDES["thirds"]

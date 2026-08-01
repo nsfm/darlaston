@@ -94,6 +94,10 @@ class Settings:
     #: destroying the session's actual work.
     image_format: str = "both"       # both | raw | jpeg
     jpeg_quality: int = 95
+    #: Framing guides over the live view, as a camera's viewfinder offers.
+    #: Kept between sessions because it is a habit rather than a decision.
+    framing_grid: str = "none"       # none | thirds | grid
+    framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built
     sequence_resets_daily: bool = True
     #: Written into every file as EXIF Artist and Copyright. Empty writes

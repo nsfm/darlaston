@@ -265,10 +265,17 @@ worth protecting when deciding what to build next.
       the number from pixel pitch and total magnification, and putting it on
       the picture costs almost nothing. Nice to have rather than urgent --
       see the note on what this program is for.
-- [ ] **Grids and crosshairs on the live view.** For framing, the way a
-      camera's viewfinder does it, which is exactly the job here. Rule of
-      thirds, a centre cross, and a plain grid; drawn over the preview, not
-      burnt into anything.
+- [x] ~~**Grids and crosshairs on the live view.**~~ Capture > Framing
+      guides: none, rule of thirds, or a fine six-way grid, plus a centre
+      cross that is independent of the grid because centring a specimen and
+      composing a frame are different jobs. Drawn over the *image*
+      rectangle, so thirds means thirds of the frame you will capture
+      rather than of a window with letterboxing in it, and stroked twice --
+      dark under, light over -- because a microscope field is either blown
+      white or nearly black and a single colour disappears into one of
+      them. Faint on purpose: a guide that competes with the specimen is
+      worse than no guide. Remembered between sessions, since it is a habit
+      rather than a decision.
 - [ ] **Report frames the driver dropped**, from
       `TOUPCAM_OPTION_NUMBER_DROP_FRAME`, beside our own count in the
       performance panel. Ours says the loop could not keep up; this one says

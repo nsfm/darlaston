@@ -37,6 +37,11 @@ class LiveView(QtWidgets.QWidget):
         self._drag_to: QtCore.QPointF | None = None
         #: full | reduced | fast. See `_scaled`, and the dialog that sets it.
         self.preview_quality = "full"
+        #: Framing guides: none | thirds | grid, and a centre cross that is
+        #: independent of them because centring a specimen and composing a
+        #: frame are different jobs and people want them separately.
+        self.framing_grid = "none"
+        self.framing_cross = False
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
         self.setMinimumSize(480, 320)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
@@ -75,6 +80,48 @@ class LiveView(QtWidgets.QWidget):
         if peaking is not None:
             self._peaking = self._peaking_overlay(peaking, (tw, th))
         self.update()
+
+    #: Divisions each way, per guide style. Thirds is the photographer's
+    #: habit; the fine grid is for lining an arrangement up with the frame,
+    #: which is the microscope-specific job.
+    GUIDES = {"none": 0, "thirds": 3, "grid": 6}
+
+    def _draw_guides(self, p: QtGui.QPainter, target: QtCore.QRect) -> None:
+        """Framing guides over the preview, the way a viewfinder does it.
+
+        Drawn twice, dark then light, because this has to read against both
+        a blown-white brightfield and a black darkfield -- either colour
+        alone disappears into one of them. Both strokes are faint: a guide
+        that competes with the specimen is worse than no guide.
+
+        Over the image rectangle rather than the widget, so the lines mean
+        thirds *of the frame you will capture* rather than thirds of a
+        window that happens to have letterboxing in it.
+        """
+        n = self.GUIDES.get(self.framing_grid, 0)
+        if not n and not self.framing_cross:
+            return
+        lines = []
+        for i in range(1, n):
+            x = target.x() + target.width() * i / n
+            y = target.y() + target.height() * i / n
+            lines.append(QtCore.QLineF(x, target.top(), x, target.bottom()))
+            lines.append(QtCore.QLineF(target.left(), y, target.right(), y))
+        if self.framing_cross:
+            cx = target.x() + target.width() / 2
+            cy = target.y() + target.height() / 2
+            arm = min(target.width(), target.height()) * 0.045
+            lines.append(QtCore.QLineF(cx - arm, cy, cx + arm, cy))
+            lines.append(QtCore.QLineF(cx, cy - arm, cx, cy + arm))
+        if not lines:
+            return
+        p.save()
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+        for colour, width in ((QtGui.QColor(0, 0, 0, 60), 3),
+                              (QtGui.QColor(255, 255, 255, 90), 1)):
+            p.setPen(QtGui.QPen(colour, width))
+            p.drawLines(lines)
+        p.restore()
 
     def _scaled(self, rgb: np.ndarray, w: int, h: int,
                 tw: int, th: int) -> np.ndarray:
@@ -220,6 +267,8 @@ class LiveView(QtWidgets.QWidget):
         p.drawImage(target.topLeft(), self._image)
         if self._peaking is not None:
             p.drawImage(target.topLeft(), self._peaking)
+
+        self._draw_guides(p, target)
 
         # The measured region, drawn so it is never a mystery what the focus
         # number refers to.

@@ -17,7 +17,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera.base import CameraBackend, CameraState
 from ..camera.session import CameraSession, SessionStatus
@@ -183,6 +183,31 @@ class MainWindow(QtWidgets.QMainWindow):
         capture_menu = self.toolbar.add_menu("Capture")
         capture_menu.addAction("Location and naming…", self._open_settings)
         capture_menu.addAction("Timelapse…", self._open_timelapse)
+        # Framing guides, as a viewfinder offers them: set while shooting,
+        # so here rather than in the instrument menu, and out of the rail
+        # because the rail is already too full to spend space on a habit.
+        guides = capture_menu.addMenu("Framing guides")
+        self._guide_actions = {}
+        group = QtGui.QActionGroup(self)
+        group.setExclusive(True)
+        for value, label in (("none", "None"), ("thirds", "Rule of thirds"),
+                             ("grid", "Fine grid")):
+            act = guides.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.settings.framing_grid == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_framing(grid=v))
+            group.addAction(act)
+            self._guide_actions[value] = act
+        guides.addSeparator()
+        self.cross_action = guides.addAction("Centre cross")
+        self.cross_action.setCheckable(True)
+        self.cross_action.setChecked(self.settings.framing_cross)
+        self.cross_action.setToolTip(
+            "Independent of the grid: centring a specimen and composing a "
+            "frame are different jobs.")
+        self.cross_action.toggled.connect(
+            lambda on: self._set_framing(cross=on))
         capture_menu.addSeparator()
         # In the menu rather than the rail: it is set once per illumination
         # style and then left alone, and the rail is already too full to
@@ -1356,6 +1381,23 @@ class MainWindow(QtWidgets.QMainWindow):
                                      or self.stack_session is not None
                                      or self.focus.stack.isChecked())
 
+    def _set_framing(self, grid: str | None = None,
+                     cross: bool | None = None) -> None:
+        """Change a framing guide and remember it.
+
+        Saved immediately rather than on some later confirmation, because
+        this is a habit rather than a decision -- somebody who wants thirds
+        wants thirds tomorrow too.
+        """
+        if grid is not None:
+            self.settings.framing_grid = grid
+        if cross is not None:
+            self.settings.framing_cross = bool(cross)
+        self.view.framing_grid = self.settings.framing_grid
+        self.view.framing_cross = self.settings.framing_cross
+        self.view.update()
+        self.settings.save()
+
     def _open_performance(self) -> None:
         PerformanceDialog(self.settings, self._apply_performance, self).exec()
 
@@ -1367,6 +1409,8 @@ class MainWindow(QtWidgets.QMainWindow):
         against a memory of the last one.
         """
         self.view.preview_quality = self.settings.preview_quality
+        self.view.framing_grid = self.settings.framing_grid
+        self.view.framing_cross = self.settings.framing_cross
         apply_thread_budget(self.settings.cpu_threads)
 
     def settings_rate(self) -> int:
