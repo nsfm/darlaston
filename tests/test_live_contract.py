@@ -469,3 +469,33 @@ def test_framing_guides_persist_and_are_independent(tmp_path):
     assert set(LiveView.GUIDES) == {"none", "thirds", "grid"}
     assert LiveView.GUIDES["thirds"] == 3
     assert LiveView.GUIDES["grid"] > LiveView.GUIDES["thirds"]
+
+
+def test_driver_drops_are_reported_apart_from_ours(qapp):
+    """Two opposite faults with opposite fixes: ours means the analysis
+    could not keep up and wants less work per frame; the driver's means the
+    link could not deliver and wants a lower rate or another USB port. From
+    outside, both look like the frame rate sagging."""
+    from darlaston.camera.base import CameraBackend
+    from darlaston.ui.perf_ui import PerfPanel
+
+    panel = PerfPanel()
+    stats = {"analysed_fps": 30.0, "delivered": 90, "dropped": 10}
+
+    panel.update_costs({"decode": 5.0}, stats)
+    assert "driver" not in panel.summary.text(), \
+        "silence when the camera cannot say, rather than a confident zero"
+
+    panel.set_driver_dropped(0)
+    panel.update_costs({"decode": 5.0}, stats)
+    assert "driver" not in panel.summary.text(), "zero is not worth the room"
+
+    panel.set_driver_dropped(42)
+    panel.update_costs({"decode": 5.0}, stats)
+    text = panel.summary.text()
+    assert "42 dropped by the driver" in text
+    assert "10% of frames dropped" in text, "our own count must survive"
+
+    # The base backend answers None, so a camera that cannot report simply
+    # says nothing rather than raising into the UI thread.
+    assert CameraBackend.driver_dropped(object()) is None

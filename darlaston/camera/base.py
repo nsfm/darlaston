@@ -99,6 +99,19 @@ class CameraBackend(ABC):
     def get_gain(self) -> int:
         """Percent, as the camera actually has it."""
 
+    def driver_dropped(self) -> int | None:
+        """Frames the driver pulled off the bus and then threw away.
+
+        A different failure from the one we already count. Ours says the
+        analysis could not keep up with what it was given; this says the
+        link or the host could not deliver what the sensor produced, and
+        from the outside those two look identical -- the frame rate sags
+        either way, and the fixes are opposite.
+
+        None where the camera cannot say, which is most of them.
+        """
+        return None
+
     @abstractmethod
     def start_stream(self, on_frame: Callable[[Frame], None]) -> None:
         """Begin delivering preview frames.

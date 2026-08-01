@@ -59,6 +59,18 @@ class PerfPanel(QtWidgets.QWidget):
         deadline the loop is actually trying to hit."""
         self._budget_ms = 1000.0 / max(fps or 60, 1)
 
+    def set_driver_dropped(self, count: int | None) -> None:
+        """Frames the driver threw away before we ever saw them.
+
+        Kept apart from our own drop count because they are opposite
+        faults with opposite fixes: ours means the analysis could not
+        keep up and wants less work per frame, theirs means the link or
+        the host could not deliver and wants a lower rate, a smaller
+        preview, or a different USB port. From the outside both look
+        like the frame rate sagging.
+        """
+        self._driver_dropped = count
+
     def update_costs(self, costs: dict, stats: dict) -> None:
         rows = list(costs.items()) + list(UI_METER.snapshot().items())
         rows = [(name, ms) for name, ms in rows if ms >= 0.005]
@@ -69,10 +81,13 @@ class PerfPanel(QtWidgets.QWidget):
         delivered = stats.get("delivered", 0) + stats.get("dropped", 0)
         dropped = stats.get("dropped", 0)
         drop_pct = 100.0 * dropped / max(delivered, 1)
+        driver = getattr(self, "_driver_dropped", None)
+        theirs = ("" if not driver else
+                  f" &nbsp;·&nbsp; {driver} dropped by the driver")
         self.summary.setText(
             f"<b>{total:.1f} ms</b> per frame of a {self._budget_ms:.0f} ms "
             f"budget &nbsp;·&nbsp; {fps:.0f} fps &nbsp;·&nbsp; "
-            f"{drop_pct:.0f}% of frames dropped")
+            f"{drop_pct:.0f}% of frames dropped{theirs}")
 
         self.table.setRowCount(len(rows))
         for r, (name, ms) in enumerate(rows):

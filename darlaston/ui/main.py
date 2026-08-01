@@ -1605,6 +1605,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tick = getattr(self, "_tick", 0) + 1
         if self._tick % INSTRUMENT_DIVISOR == 0:
             if self.perf_window.isVisible():
+                backend = self.session.backend
+                self.perf.set_driver_dropped(
+                    backend.driver_dropped() if backend is not None else None)
                 self.perf.update_costs(s.costs, s.stats)
             self.histogram.set_data(s.histogram, s.clipped_fraction,
                                     s.black_fraction, s.channel_clipped)

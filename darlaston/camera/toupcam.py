@@ -332,6 +332,20 @@ class ToupcamBackend(CameraBackend):
         except Exception:
             return self._exposure_us
 
+    def driver_dropped(self) -> int | None:
+        """The SDK's own count of frames grabbed and discarded.
+
+        Supported on the reference camera and not on all of them, so a
+        refusal is an answer rather than an error.
+        """
+        cam = self._cam
+        if cam is None:
+            return None
+        try:
+            return int(cam.get_Option(self._t.TOUPCAM_OPTION_NUMBER_DROP_FRAME))
+        except Exception:
+            return None
+
     def get_gain(self) -> int:
         try:
             return int(self._cam.get_ExpoAGain())
