@@ -391,14 +391,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_button.clicked.connect(self._toggle_calibration)
         col.addWidget(self.calib_button)
 
-        col.addLayout(_group("exposure", self.histogram))
-        col.addWidget(self.focus)
-
-        # Sensor. Each control was three lines -- a name, a reading
-        # opposite it, and a slider underneath -- for one number. The rail
-        # is the most contested space in the window, so the name and the
-        # reading moved inside the bar and six lines became two.
-        self.exposure = ValueBar("exposure")
+        # Exposure: what the sensor was given, and the two controls that
+        # give it. The histogram is the reading and these are the knobs
+        # that move it, so they belong under one heading rather than in a
+        # separate group called "sensor" three inches further down.
+        #
+        # "time" rather than "exposure": under a heading that already says
+        # exposure, the long word only repeats it, and the two bars then
+        # read as the pair they are -- time and gain.
+        self.exposure = ValueBar("time")
         self.exposure.setRange(1, 1000)
         self.exposure.setValue(120)
         self.exposure.set_value_text("8.3 ms")
@@ -410,9 +411,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text("1.0×")
         self.gain.valueChanged.connect(self._on_gain)
 
-        sensor = _group("sensor", self.exposure)
-        sensor.addWidget(self.gain)
-        col.addLayout(sensor)
+        exposure = _group("exposure", self.histogram)
+        exposure.addWidget(self.exposure)
+        exposure.addWidget(self.gain)
+        col.addLayout(exposure)
+        col.addWidget(self.focus)
 
         # Where the metric looks. Field curvature puts the frame edges on a
         # different focal plane, so a full-field score averages together things
@@ -438,10 +441,11 @@ class MainWindow(QtWidgets.QMainWindow):
         #: What the metric is actually restricted to. The buttons show it;
         #: they are not where it is kept.
         self._region = Region.CENTRE
+        # Where the metric looks belongs with the metric, under Focus --
+        # and the box it draws is labelled on the image itself, so the
+        # line telling people a box could be dragged is one they will find
+        # by dragging.
         measure = _group("measure from", row)
-        hint = QtWidgets.QLabel("drag on the image for a custom box")
-        hint.setProperty("role", "key")
-        measure.addWidget(hint)
         col.addLayout(measure)
 
         col.addStretch(1)

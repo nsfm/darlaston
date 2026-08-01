@@ -85,6 +85,37 @@ class LiveView(QtWidgets.QWidget):
             self._peaking = self._peaking_overlay(peaking, (tw, th))
         self.update()
 
+    def _label_box(self, p: QtGui.QPainter, box: QtCore.QRectF,
+                   text: str) -> None:
+        """Name an overlay, inside its own top-left corner.
+
+        A dashed rectangle over a live image is a question until it is
+        named -- it could be a crop, a region of interest, a warning. One
+        small word answers it once and then stops being read.
+
+        Set on a plate rather than outlined: this sits over photographs
+        that are white in brightfield and black in darkfield, and a
+        stroked letter has to survive both. A filled corner survives them
+        by not depending on either.
+        """
+        font = QtGui.QFont(self.font())
+        font.setPixelSize(9)
+        font.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 0.6)
+        metrics = QtGui.QFontMetrics(font)
+        w = metrics.horizontalAdvance(text) + 10
+        h = metrics.height() + 3
+        if box.width() < w + 6 or box.height() < h + 6:
+            return                    # too small to label without covering it
+        plate = QtCore.QRectF(box.left() + 1, box.top() + 1, w, h)
+        p.save()
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(16, 18, 16, 190))
+        p.drawRect(plate)
+        p.setPen(BRASS)
+        p.setFont(font)
+        p.drawText(plate, QtCore.Qt.AlignmentFlag.AlignCenter, text)
+        p.restore()
+
     #: Divisions each way, per guide style. Thirds is the photographer's
     #: habit; the fine grid is for lining an arrangement up with the frame,
     #: which is the microscope-specific job.
@@ -288,6 +319,7 @@ class LiveView(QtWidgets.QWidget):
             p.setPen(pen)
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             p.drawRect(box)
+            self._label_box(p, box, "focus assist")
 
         if self._drag_from is not None and self._drag_to is not None:
             p.setPen(QtGui.QPen(BRASS, 1))
@@ -701,13 +733,20 @@ class ValueBar(QtWidgets.QWidget):
 
         edge = self._fill_x()
         amber = BRASS if on else QtGui.QColor("#3a3a35")
-        solid = max(0.0, edge - self.DITHER)
+        # The dissolve narrows away over the last quarter of the travel.
+        # A bar at maximum has nothing left to fade into, and a pattern
+        # running off the end of the track reads as an unfinished edge
+        # rather than as a full one.
+        span = max(self._max - self._min, 1)
+        t = (self._value - self._min) / span
+        taper = 1.0 if t < 0.75 else max(0.0, (1.0 - t) / 0.25)
+        solid = max(0.0, edge - self.DITHER * taper)
         p.fillRect(QtCore.QRectF(0, 0, solid, self.height()), amber)
         # The dissolve yields to the type. Half amber and half ground is
         # the one background no colour of text can be read against, so the
         # cells that would fall behind a word are simply not drawn, and
         # the word sits on clean ground instead of on noise.
-        self._dither(p, solid, edge, amber, keep_clear=self._text_rects())
+        self._dither(p, solid, edge, amber, halo=self._text_halo())
 
         # The handle: a full-height rule, because a knob on a bar this
         # short would be larger than the bar and would hide the dissolve
@@ -731,19 +770,41 @@ class ValueBar(QtWidgets.QWidget):
         p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
         p.drawRoundedRect(rect, radius, radius)
 
-    def _text_rects(self) -> list:
-        """Where the two words will land, with a little air around them."""
+    #: How far the dissolve keeps clear of a letter. Two pixels of air is
+    #: enough to read against and tight enough that the pattern still
+    #: flows between the words rather than stopping at a panel edge.
+    HALO = 2.0
+
+    def _text_geometry(self) -> tuple:
+        """Baseline and the x of each word.
+
+        One source for the halo and for the drawing, so the hole cut in
+        the dissolve cannot drift off the glyphs it was cut for.
+        """
         metrics = QtGui.QFontMetrics(self._label_font())
-        h = self.height()
-        out = []
+        baseline = (self.height() + metrics.ascent() - metrics.descent()) / 2
+        value_x = (self.width() - self.PAD
+                   - metrics.horizontalAdvance(self._text))
+        return baseline, float(self.PAD), float(value_x)
+
+    def _text_halo(self) -> QtGui.QPainterPath:
+        """The letterforms themselves, fattened -- not their boxes.
+
+        A rectangle around a word punches a hole in the dissolve the size
+        of the word. Stroking the glyph outlines instead lets the pattern
+        run right up to the letters and between them, which is most of
+        the reason for having a pattern at all.
+        """
+        font = self._label_font()
+        baseline, label_x, value_x = self._text_geometry()
+        path = QtGui.QPainterPath()
         if self._label:
-            w = metrics.horizontalAdvance(self._label)
-            out.append(QtCore.QRectF(self.PAD - 3, 0, w + 6, h))
+            path.addText(label_x, baseline, font, self._label)
         if self._text:
-            w = metrics.horizontalAdvance(self._text)
-            out.append(QtCore.QRectF(self.width() - self.PAD - w - 3, 0,
-                                     w + 6, h))
-        return out
+            path.addText(value_x, baseline, font, self._text)
+        stroker = QtGui.QPainterPathStroker()
+        stroker.setWidth(self.HALO * 2)
+        return path.united(stroker.createStroke(path))
 
     def _label_font(self) -> QtGui.QFont:
         font = QtGui.QFont(self.font())
@@ -751,7 +812,7 @@ class ValueBar(QtWidgets.QWidget):
         return font
 
     def _dither(self, p: QtGui.QPainter, start: float, end: float,
-                colour: QtGui.QColor, keep_clear=()) -> None:
+                colour: QtGui.QColor, halo=None) -> None:
         """The ramp from solid to nothing, one Bayer cell at a time."""
         if end <= start:
             return
@@ -771,7 +832,7 @@ class ValueBar(QtWidgets.QWidget):
                 if _BAYER[row, col] >= coverage:
                     continue
                 cell = QtCore.QRectF(cx, cy, self.CELL, self.CELL)
-                if any(r.intersects(cell) for r in keep_clear):
+                if halo is not None and halo.intersects(cell):
                     continue
                 p.drawRect(cell)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
@@ -785,11 +846,7 @@ class ValueBar(QtWidgets.QWidget):
         changes colour halfway through.
         """
         p.setFont(self._label_font())
-        left = QtCore.QRect(self.PAD, 0, self.width() - self.PAD * 2,
-                            self.height())
-        right = QtCore.QRect(self.PAD, 0, self.width() - self.PAD * 2,
-                             self.height())
-        vcentre = QtCore.Qt.AlignmentFlag.AlignVCenter
+        baseline, label_x, value_x = self._text_geometry()
         over_fill = QtCore.QRectF(0, 0, split, self.height())
         over_track = QtCore.QRectF(split, 0, self.width() - split,
                                    self.height())
@@ -798,10 +855,8 @@ class ValueBar(QtWidgets.QWidget):
             p.save()
             p.setClipRect(clip, QtCore.Qt.ClipOperation.IntersectClip)
             p.setPen(colour if self.isEnabled() else DIM)
-            p.drawText(left, vcentre | QtCore.Qt.AlignmentFlag.AlignLeft,
-                       self._label)
-            p.drawText(right, vcentre | QtCore.Qt.AlignmentFlag.AlignRight,
-                       self._text)
+            p.drawText(QtCore.QPointF(label_x, baseline), self._label)
+            p.drawText(QtCore.QPointF(value_x, baseline), self._text)
             p.restore()
 
     # ---- dragging --------------------------------------------------------

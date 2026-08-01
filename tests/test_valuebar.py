@@ -53,25 +53,72 @@ def test_clicking_and_dragging_set_the_value(bar):
     assert bar.value() == 0, "dragging past the end should clamp, not wrap"
 
 
-def test_the_dissolve_gives_way_to_the_type(bar):
+def test_the_dissolve_keeps_clear_of_the_letterforms(bar):
     """Half amber and half ground is the one background no colour of text
-    can be read against, so no dither cell may land behind a word."""
+    can be read against -- but a rectangle around a word punches a hole the
+    size of the word. The exclusion is the stroked glyph outlines, so the
+    pattern runs right up to the letters and between them.
+    """
     bar.setValue(120)                      # fill edge inside the label
-    rects = bar._text_rects()
-    assert len(rects) == 2, "a label and a reading"
+    halo = bar._text_halo()
+    assert not halo.isEmpty()
 
     img = bar.grab().toImage()
-    # Inside the label's box, every pixel is either the ground or the type
-    # -- never a lone amber cell.
-    label = rects[0]
-    stray = 0
-    for x in range(int(label.left()) + 4, int(label.right()) - 4):
-        for y in range(4, bar.height() - 4):
-            c = QtGui.QColor(img.pixel(x, y))
-            if abs(c.red() - BRASS.red()) < 24 and abs(c.green() - BRASS.green()) < 24 \
-                    and abs(c.blue() - BRASS.blue()) < 24:
-                stray += 1
-    assert stray == 0, f"{stray} dither cells landed behind the label"
+
+    def is_amber(x, y):
+        c = QtGui.QColor(img.pixel(x, y))
+        return (abs(c.red() - BRASS.red()) < 24
+                and abs(c.green() - BRASS.green()) < 24
+                and abs(c.blue() - BRASS.blue()) < 24)
+
+    # Nothing amber lands on a letter or in its ring of air.
+    on_glyph = sum(1 for x in range(bar.width()) for y in range(bar.height())
+                   if halo.contains(QtCore.QPointF(x + 0.5, y + 0.5))
+                   and is_amber(x, y))
+    assert on_glyph == 0, f"{on_glyph} dither cells landed on the type"
+
+    # And the pattern is still present around them -- an exclusion that
+    # cleared the whole area would pass the check above and lose the point.
+    box = halo.boundingRect().adjusted(-14, 0, 14, 0)
+    near = sum(1 for x in range(max(0, int(box.left())),
+                                min(bar.width(), int(box.right())))
+               for y in range(bar.height()) if is_amber(x, y))
+    assert near > 20, "the dissolve was cleared away entirely, not worked around"
+
+
+def test_a_full_bar_shows_no_dissolve(qapp):
+    """A bar at maximum has nothing left to fade into, and a pattern
+    running off the end of the track reads as an unfinished edge."""
+    b = ValueBar("gain")
+    b.setRange(0, 100)
+    b.set_value_text("20.0x")
+    b.resize(240, ValueBar.HEIGHT)
+
+    def amber_columns():
+        img = b.grab().toImage()
+        cols = set()
+        for x in range(b.width()):
+            for y in range(4, b.height() - 4):
+                c = QtGui.QColor(img.pixel(x, y))
+                if (abs(c.red() - BRASS.red()) < 24
+                        and abs(c.green() - BRASS.green()) < 24
+                        and abs(c.blue() - BRASS.blue()) < 24):
+                    cols.add(x)
+                    break
+        return cols
+
+    b.setValue(50)
+    mid = amber_columns()
+    b.setValue(100)
+    full = amber_columns()
+    assert len(full) > len(mid), "a fuller bar should carry more amber"
+
+    # At maximum the amber is unbroken: no gaps, which is what a dissolve
+    # would leave behind.
+    run = sorted(full)
+    assert run, "a full bar drew no fill at all"
+    gaps = [b - a for a, b in zip(run, run[1:]) if b - a > 1]
+    assert not gaps, f"the fill is still dissolving at maximum: {gaps}"
 
 
 def test_type_flips_colour_across_the_fill(qapp):
@@ -111,3 +158,34 @@ def test_the_shutter_reads_against_its_own_fill(qapp):
     lo, hi = sorted((luminance(fill), luminance(text)))
     ratio = (hi + 0.05) / (lo + 0.05)
     assert ratio > 4.5, f"the shutter's type is at {ratio:.1f}:1"
+
+
+def test_the_focus_box_says_what_it_is(qapp):
+    """A dashed rectangle over a live image is a question until it is
+    named: it could be a crop, a region of interest, a warning."""
+    import numpy as np
+    from darlaston.ui.widgets import LiveView
+
+    view = LiveView()
+    view.resize(600, 400)
+    view.set_frame(np.full((300, 450, 3), 128, np.uint8), None)
+    view.set_focus_rect((0.2, 0.2, 0.5, 0.5))
+    img = view.grab().toImage()
+
+    # The plate is drawn inside the box's own top-left corner, so that
+    # corner is darker than the grey field it sits on. The plate is
+    # translucent, so over mid grey it lands near lightness 45 rather
+    # than at its own value -- which is the point of a plate.
+    def darker_than(image, limit):
+        return sum(1 for x in range(view.width()) for y in range(view.height())
+                   if QtGui.QColor(image.pixel(x, y)).lightness() < limit)
+
+    dark = darker_than(img, 70)
+    assert dark > 200, "no plate was drawn for the label"
+
+    # And it refuses to label a box too small to hold the word without
+    # covering what the box is pointing at.
+    view.set_focus_rect((0.48, 0.48, 0.02, 0.02))
+    small = view.grab().toImage()
+    tiny_dark = darker_than(small, 70)
+    assert tiny_dark < dark, "a tiny box was labelled over its own contents"
