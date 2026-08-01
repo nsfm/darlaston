@@ -1878,8 +1878,10 @@ def main() -> int:
     app = QtWidgets.QApplication(sys.argv)
     theme.install(app)
     theme.load_fonts()
+    theme.identify(app)                  # after the fonts: the mark is a letter
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
     win.show()
+    theme.match_frame(win)               # needs a native handle, so after show
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and
     # Ctrl-C does nothing. A timer that does nothing at all gives the

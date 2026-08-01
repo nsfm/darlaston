@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 # ---- palette --------------------------------------------------------------
 BG = "#101210"        # ground, green-grey biased: the inside of an instrument
@@ -101,6 +101,123 @@ class _OurIconsOnly(QtWidgets.QProxyStyle):
 def install(app) -> None:
     """Apply what has to be set on the application rather than a widget."""
     app.setStyle(_OurIconsOnly(app.style()))
+
+
+#: Sizes a window manager, taskbar, dock or alt-tab switcher is likely to
+#: ask for. Rasterised at each rather than scaled from one, because the
+#: mark is a letter and a letter scaled down from 256 to 16 is a smudge.
+ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+
+
+def app_icon() -> QtGui.QIcon:
+    """The mark: the wordmark's own initial, brass on the panel colour.
+
+    Drawn rather than shipped as a file. This is the first letter of the
+    name in the face the name is already set in, so it is not a new design
+    decision -- and generating it means one source of truth for the mark
+    instead of a folder of PNGs that drift from the wordmark the moment
+    anybody touches either.
+    """
+    fam = load_fonts()
+    icon = QtGui.QIcon()
+    for size in ICON_SIZES:
+        image = QtGui.QImage(size, size,
+                             QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(QtGui.QColor(0, 0, 0, 0))
+        p = QtGui.QPainter(image)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        # A hairline round the plate, as on every dialog in the program.
+        # It is also what stops the mark disappearing into a dark taskbar:
+        # the panel colour is four levels off the ground, which is right
+        # inside the window and invisible outside it. Dropped below 24 px,
+        # where a one-pixel border is a sixteenth of the whole icon.
+        stroke = size / 32.0 if size >= 24 else 0.0
+        p.setPen(QtGui.QPen(QtGui.QColor(BRASS_DEEP), stroke) if stroke
+                 else QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(PANEL))
+        inset = stroke / 2.0
+        radius = size * 0.22
+        p.drawRoundedRect(
+            QtCore.QRectF(inset, inset, size - stroke, size - stroke),
+            radius, radius)
+
+        font = QtGui.QFont(fam["display"])
+        # By pixel size, not point: at 16 px a point size is rounded to
+        # whatever the screen's DPI makes of it and the letter lands
+        # anywhere.
+        font.setPixelSize(max(8, int(size * 0.62)))
+        p.setFont(font)
+        p.setPen(QtGui.QColor(BRASS))
+        # Placed off the letter's own ink rather than off the font's line
+        # box. This face carries a tall ascender and a deep descender, so
+        # centring the box leaves the "d" riding high with its stem in the
+        # border; centring the glyph's actual bounding rectangle puts the
+        # mark where the eye expects it at every size.
+        box = QtCore.QRectF(0, 0, size, size)
+        ink = QtGui.QFontMetricsF(font).tightBoundingRect("d")
+        p.drawText(QtCore.QPointF(box.center().x() - ink.center().x(),
+                                  box.center().y() - ink.center().y()), "d")
+        p.end()
+        icon.addPixmap(QtGui.QPixmap.fromImage(image))
+    return icon
+
+
+def identify(app) -> None:
+    """Say who we are, everywhere a platform asks.
+
+    Qt's default is the literal string "PySideApp", and with no icon set at
+    all every title bar, taskbar, dock and alt-tab switcher on a platform
+    that draws them shows the interpreter's own mark. None of that is
+    visible on a window manager that draws no decorations, which is exactly
+    why it survived this long.
+
+    The desktop file name is the freedesktop hook: under Wayland it is the
+    only way the compositor can match a window to an installed icon, and
+    without it the window gets a generic placeholder however good the icon
+    we set here is.
+    """
+    app.setApplicationName("darlaston")
+    app.setApplicationDisplayName("darlaston")
+    app.setDesktopFileName("darlaston")
+    app.setWindowIcon(app_icon())
+
+
+#: DWM's dark-frame attribute. 20 from Windows 10 build 18985 onwards, 19
+#: on the builds just before it, and the call simply fails on anything
+#: older -- which is the whole error handling this needs.
+_DWM_DARK = (20, 19)
+
+
+def match_frame(window) -> bool:
+    """Ask the platform for a title bar that matches the program.
+
+    Windows draws the frame in the *system* light or dark setting, not the
+    application's, so a near-black program on a light-themed machine gets a
+    white title bar across the top of it. One documented DWM attribute
+    fixes that. Everywhere else this is a no-op: macOS follows the system
+    appearance and offers no supported way to disagree, and X11 and Wayland
+    decorations belong to the window manager by design.
+
+    Returns whether anything was actually changed, for the test.
+    """
+    import sys
+
+    if not sys.platform.startswith("win"):
+        return False
+    import ctypes
+
+    handle = ctypes.c_void_p(int(window.winId()))
+    enabled = ctypes.c_int(1)
+    for attribute in _DWM_DARK:
+        try:
+            ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                handle, ctypes.c_uint(attribute), ctypes.byref(enabled),
+                ctypes.sizeof(enabled))
+        except (AttributeError, OSError):
+            return False                 # no dwmapi: older than we support
+        if ok == 0:
+            return True
+    return False
 
 
 def stylesheet() -> str:

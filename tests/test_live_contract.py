@@ -793,3 +793,74 @@ def test_the_dither_screen_is_registered_to_the_light(qapp):
         seen.add(w._shift)
     assert len(seen) > 4, \
         f"the screen barely moved across the exposure range: {sorted(seen)}"
+
+
+def test_the_program_says_who_it_is_to_the_platform(qapp):
+    """Invisible on a window manager that draws no decorations, which is
+    exactly why it survived: Qt's default application name is the literal
+    string "PySideApp", and with no icon set every title bar, taskbar, dock
+    and alt-tab switcher on a platform that draws them shows the
+    interpreter's own mark."""
+    import numpy as np
+    from PySide6 import QtGui
+
+    from darlaston.ui import theme
+
+    theme.load_fonts()
+    theme.identify(qapp)
+    assert qapp.applicationName() == "darlaston"
+    assert qapp.applicationDisplayName() == "darlaston"
+    # The freedesktop hook. Under Wayland it is the only way a compositor
+    # can match the window to an installed icon.
+    assert qapp.desktopFileName() == "darlaston"
+
+    icon = qapp.windowIcon()
+    assert not icon.isNull()
+    have = {s.width() for s in icon.availableSizes()}
+    assert set(theme.ICON_SIZES) <= have, f"missing sizes: {have}"
+
+    def pixels(size):
+        img = icon.pixmap(size, size).toImage().convertToFormat(
+            QtGui.QImage.Format.Format_RGBA8888)
+        return np.frombuffer(img.constBits(), np.uint8).reshape(
+            img.height(), img.width(), 4)
+
+    for size in (16, 32, 128):
+        px = pixels(size)
+        assert px.shape[0] == size, f"{size} px entry came back {px.shape[0]}"
+        opaque = px[:, :, 3] > 200
+        assert opaque.any(), f"the {size} px mark is empty"
+        # The letter is actually drawn, not just the plate. Tested as warm
+        # and light rather than as the exact brass: a script "d" at 16 px is
+        # nearly all antialiased edge, and its brightest pixel there is
+        # (152, 120, 61) -- unmistakably the letter, and not the colour it
+        # was asked for.
+        r, b = px[:, :, 0].astype(int), px[:, :, 2].astype(int)
+        warm = opaque & (r > 90) & (r > b + 25)
+        assert warm.sum() > 8, \
+            f"only {warm.sum()} warm pixels at {size} px -- the letter is missing"
+
+    # And it has to survive a dark taskbar as well as a light one, which is
+    # what the hairline is for: the plate alone is four levels off the
+    # window ground and vanishes against it.
+    big = pixels(128)
+    edge = np.concatenate([big[0, :], big[-1, :], big[:, 0], big[:, -1]])
+    assert (edge[:, 3] < 40).any(), "the plate has no rounded corners"
+
+
+def test_asking_for_a_matching_title_bar_is_harmless_off_windows(qapp):
+    """Windows draws the frame in the system light or dark setting rather
+    than the application's. Everywhere else this must do nothing at all,
+    quietly."""
+    import sys
+
+    from PySide6 import QtWidgets
+
+    from darlaston.ui import theme
+
+    w = QtWidgets.QWidget()
+    w.show()
+    changed = theme.match_frame(w)
+    if not sys.platform.startswith("win"):
+        assert changed is False
+    w.close()
