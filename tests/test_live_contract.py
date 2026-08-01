@@ -688,3 +688,108 @@ def test_the_histogram_draws_the_data_across_its_whole_width(qapp):
     left = render(spike, 420)[:84].max(axis=2) > 90
     assert left[:, :40].any() and not left[:, 200:].any(), \
         "a spike in the shadows was plotted somewhere it is not"
+
+
+def _hist(centre, spread=40, blown=0.0, n=400_000, seed=5):
+    """A histogram shaped like a real preview, with a chosen share at 255."""
+    import cv2
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    x = np.clip(rng.normal(centre, spread, n), 0, 254).astype(np.uint8)
+    if blown:
+        x[:int(n * blown)] = 255
+    return (cv2.calcHist([x], [0], None, [256], [0, 256]).ravel(),
+            float((x == 255).mean()))
+
+
+def _render(widget, width=320, plot=84):
+    import numpy as np
+    from PySide6 import QtGui
+
+    img = QtGui.QImage(widget.size(), QtGui.QImage.Format.Format_RGB888)
+    widget.render(img)
+    return np.frombuffer(img.constBits(), np.uint8).reshape(
+        img.height(), -1, 3)[:plot, :width].copy()
+
+
+def test_a_moving_histogram_dissolves_and_firms_up_again(qapp):
+    """A plot that is still moving is not yet a measurement of anything.
+
+    Turning the lamp up should say so, and the reading should settle as the
+    scene does -- so movement deepens the dither and decays out of it.
+    """
+    import numpy as np
+
+    from darlaston.ui.widgets import Histogram
+
+    w = Histogram()
+    w.resize(320, 96)
+
+    def lit(hist, clipped):
+        w.set_data(hist, clipped, (0.0, clipped, 0.0))
+        return int((_render(w).max(axis=2) > 90).sum())
+
+    a, ca = _hist(110)
+    b, cb = _hist(150)
+    for _ in range(40):
+        lit(a, ca)
+    stirred = lit(b, cb)                       # same data, just arrived
+    for _ in range(40):
+        settled = lit(b, cb)                   # same data, stopped moving
+
+    assert stirred < settled * 0.95, (
+        f"movement did not dissolve the plot: {stirred} lit against "
+        f"{settled} once settled")
+
+    # And a repaint is not a frame. If the decay ran in paintEvent, merely
+    # uncovering the window would report the scene as settled.
+    w.set_data(b, cb, (0.0, cb, 0.0))
+    w.set_data(a, ca, (0.0, ca, 0.0))
+    moved = float(np.max(w._motion))
+    for _ in range(50):
+        _render(w)
+    assert float(np.max(w._motion)) == moved, \
+        "repainting decayed the movement reading"
+
+
+def test_the_clipping_band_carries_how_much_is_blown(qapp):
+    """It was a fixed slab that was either on or off, so half a per cent
+    blown and forty per cent blown looked exactly the same."""
+    from darlaston.ui.widgets import Histogram
+
+    w = Histogram()
+    w.resize(320, 96)
+
+    def reach(blown):
+        hist, clipped = _hist(150, blown=blown)
+        for _ in range(40):                    # settle, so only the band moves
+            w.set_data(hist, clipped, (0.0, clipped, 0.0))
+            px = _render(w)
+        # The band is the only red in the widget: it is much less green than
+        # the amber the plot is drawn in.
+        red = (px[:, :, 0] > 150) & (px[:, :, 1] < 120)
+        return int(red.any(axis=0).sum())
+
+    none, faint, bad = reach(0.0), reach(0.002), reach(0.08)
+    assert none == 0, "a clean frame must not show a clipping band"
+    assert faint > 0, "a fifth of a per cent blown went unreported"
+    assert bad > faint * 1.5, \
+        f"eight per cent blown reached {bad} px against {faint} for 0.2%"
+
+
+def test_the_dither_screen_is_registered_to_the_light(qapp):
+    """The pattern is offset by the frame's mean level, so it slides with
+    the histogram instead of sitting still on the glass."""
+    from darlaston.ui.widgets import Histogram
+
+    w = Histogram()
+    w.resize(320, 96)
+    seen = set()
+    for centre in range(40, 200, 8):
+        hist, clipped = _hist(centre)
+        w.set_data(hist, clipped, (0.0, clipped, 0.0))
+        _render(w)
+        seen.add(w._shift)
+    assert len(seen) > 4, \
+        f"the screen barely moved across the exposure range: {sorted(seen)}"
