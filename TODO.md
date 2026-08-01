@@ -210,13 +210,20 @@ Ordered within each section by how much it would change what gets built.
       and the wake cost. Today the loop uses about 15 ms of a 25 ms budget
       and drops nothing, so speed is not the constraint and a second code
       path would be tested on far fewer machines than the first.
-- [x] ~~**Read ToupLite's feature surface, and the SDK's.**~~ Its string
-      table is 1767 entries and the largest family by far is *measurement*
-      -- about 200 strings for calibration, scale bars, line/circle/angle/
-      polygon/arrow/text annotation, a measurement sheet, statistics, and
-      Word/Excel report templates. That is what people buy this class of
-      software for, and it is deliberately not what this is. The SDK is 146
-      documented options and darlaston uses ten of them.
+- [x] ~~**Read the vendor's feature surface, and the SDK's.**~~ The string
+      table beside ToupLite runs to 1767 entries and its largest family by
+      far is *measurement* -- about 200 strings for calibration, scale bars,
+      line/circle/angle/polygon/arrow/text annotation, a measurement sheet,
+      statistics, and Word/Excel report templates.
+      **Correction, from Nate, who uses the software: this is not
+      ToupLite.** It is a resource shared across ToupTek's product line,
+      largely the paid ToupView, and ToupLite itself does neither stacking
+      nor stitching -- its binary references none of those string ids, not
+      even the measurement ones. So the table describes what the *vendor*
+      sells, not what the free tool does, and **darlaston doing capture,
+      stacking and stitching in one program appears to have no free
+      equivalent at all.** The SDK is 146 documented options and darlaston
+      uses ten of them.
       **Asked the camera rather than the header, which killed the exciting
       ideas.** On the E3ISPM20000KPA: conversion gain (LCG/HCG), low-noise
       mode, the hardware sequencer, hardware HDR synthesis, precise frame
@@ -235,12 +242,15 @@ Ordered within each section by how much it would change what gets built.
       option only reaches the ISP path. FFC and DFC are separate options and
       remain untested; they need a captured reference before they do
       anything.
-- [ ] **A scale bar on the photograph.** Drawn on the printed plate already,
-      and nowhere else. It is the one piece of measurement worth having --
-      not a measurement tool, provenance: a micrograph published without one
-      is unreadable, and we already compute the number from pixel pitch and
-      total magnification. Wanted on captures, merged stacks and composites,
-      probably as a choice between burnt-in and left off.
+- [ ] **A scale bar on the photograph.** Drawn on the printed plate
+      already, and nowhere else. Not a measurement tool: we already compute
+      the number from pixel pitch and total magnification, and putting it on
+      the picture costs almost nothing. Nice to have rather than urgent --
+      see the note on what this program is for.
+- [ ] **Grids and crosshairs on the live view.** For framing, the way a
+      camera's viewfinder does it, which is exactly the job here. Rule of
+      thirds, a centre cross, and a plain grid; drawn over the preview, not
+      burnt into anything.
 - [ ] **Report frames the driver dropped**, from
       `TOUPCAM_OPTION_NUMBER_DROP_FRAME`, beside our own count in the
       performance panel. Ours says the loop could not keep up; this one says
