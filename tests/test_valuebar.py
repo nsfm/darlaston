@@ -72,10 +72,22 @@ def test_the_dissolve_keeps_clear_of_the_letterforms(bar):
                 and abs(c.blue() - BRASS.blue()) < 24)
 
     # Nothing amber lands on a letter or in its ring of air.
-    on_glyph = sum(1 for x in range(bar.width()) for y in range(bar.height())
-                   if halo.contains(QtCore.QPointF(x + 0.5, y + 0.5))
-                   and is_amber(x, y))
-    assert on_glyph == 0, f"{on_glyph} dither cells landed on the type"
+    hits = [(x, y) for x in range(bar.width()) for y in range(bar.height())
+            if halo.contains(QtCore.QPointF(x + 0.5, y + 0.5))
+            and is_amber(x, y)]
+    # Everything the failure needs, in the failure. This one only ever
+    # missed on a machine nobody could reach interactively, and "18 cells
+    # landed on the type" is not enough to work out why from a log.
+    assert not hits, (
+        f"{len(hits)} dither cells landed on the type at {hits[:12]}\n"
+        f"  widget      : {bar.width()}x{bar.height()}\n"
+        f"  face asked  : {bar._label_font().family()!r}\n"
+        f"  face used   : {QtGui.QFontInfo(bar._label_font()).family()!r}\n"
+        f"  px size     : {QtGui.QFontInfo(bar._label_font()).pixelSize()}\n"
+        f"  baseline/xs : {bar._text_geometry()}\n"
+        f"  halo bounds : {halo.boundingRect()}\n"
+        f"  fill edge   : {bar._fill_x()}  label {bar._label!r} "
+        f"value {bar._text!r}")
 
     # And the pattern is still present around them -- an exclusion that
     # cleared the whole area would pass the check above and lose the point.
