@@ -499,3 +499,48 @@ def test_driver_drops_are_reported_apart_from_ours(qapp):
     # The base backend answers None, so a camera that cannot report simply
     # says nothing rather than raising into the UI thread.
     assert CameraBackend.driver_dropped(object()) is None
+
+
+def test_the_rail_goes_quiet_without_a_camera(qapp):
+    """The first screen a stranger sees is this one, and it used to sit
+    fully lit: sliders for an exposure that does not exist, toggles for a
+    focus nothing is measuring. It read as an application that was broken
+    rather than one that was waiting.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.session import SessionStatus
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0), allow_synthetic=True,
+                     presence=lambda: False)
+    try:
+        win._set_shooting_enabled(False)
+        for w in (win.exposure, win.gain, win.focus, win.calib_button):
+            assert not w.isEnabled()
+        assert not any(b.isEnabled() for b in win.regions.buttons())
+
+        # What you can still do: name the subject and describe the optics,
+        # because those are reasonable to set while the camera is still in
+        # its box, and disabling them trades one wrong impression for another.
+        assert win.subject.isEnabled()
+        assert win.objective.isEnabled()
+
+        win._set_shooting_enabled(True)
+        for w in (win.exposure, win.gain, win.focus, win.calib_button):
+            assert w.isEnabled()
+        assert all(b.isEnabled() for b in win.regions.buttons())
+    finally:
+        win.shutdown()
+
+
+def test_disabled_controls_actually_look_disabled():
+    """Qt puts the state on the sub-control, not the widget, so
+    `QSlider:disabled::handle` silently matches nothing -- which is how the
+    first attempt disabled every slider and changed not one pixel."""
+    from darlaston.ui import theme
+
+    css = theme.stylesheet()
+    assert "QSlider::handle:horizontal:disabled" in css
+    assert "QSlider:disabled::handle" not in css, "matches nothing in Qt"
+    assert "QPushButton:disabled" in css

@@ -466,6 +466,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._adopt_camera_settings()
 
         self.shutter.set_available(status.is_live and not self.capture.busy)
+        self._set_shooting_enabled(status.is_live)
         if self.setup is not None:
             self.opportunist.set_key(flat_key(self.setup,
                                               self.subject.slide_note))
@@ -1394,6 +1395,25 @@ class MainWindow(QtWidgets.QMainWindow):
         except OSError:
             free = None
         self.strip.set_disk(free, root)
+
+    def _set_shooting_enabled(self, live: bool) -> None:
+        """Grey out the controls that need a camera to mean anything.
+
+        With nothing connected the rail used to sit there fully lit --
+        exposure and gain sliders, focus toggles, a measurement region --
+        every one of them a control over a thing that does not exist. It
+        read as an application that was broken rather than one that was
+        waiting, which is the first thing a stranger sees.
+
+        Deliberately partial. The subject and slide notes, the optics and
+        the menus stay live: those are things somebody can reasonably set
+        while walking back to the bench with the camera still in its box,
+        and disabling them would trade one wrong impression for another.
+        """
+        for w in (self.exposure, self.gain, self.focus, self.calib_button):
+            w.setEnabled(live)
+        for button in self.regions.buttons():
+            button.setEnabled(live)
 
     def _sync_raw_requirement(self) -> None:
         """Tell the capture whether this frame is a photograph or a part.

@@ -162,6 +162,23 @@ def stylesheet() -> str:
                                   margin: -5px 0; border-radius: 5px; }}
     QSlider::handle:horizontal:hover {{ background: {BRASS}; }}
 
+    /* Nothing was styled for being disabled, so a control that had gone
+       dead looked exactly like one that worked. With no camera attached
+       the rail sat fully lit -- sliders for an exposure that did not
+       exist, toggles for a focus nothing was measuring -- and read as an
+       application that was broken rather than one that was waiting. */
+    QSlider::groove:horizontal:disabled {{ background: {SUNK}; }}
+    QSlider::handle:horizontal:disabled {{ background: {LINE}; }}
+    QPushButton:disabled {{ color: {LINE}; border-color: {LINE}; }}
+    QPushButton[role="seg"]:disabled {{ color: {LINE};
+                                        border-color: {LINE}; }}
+    QPushButton[role="seg"]:checked:disabled {{ color: {LINE};
+                                                border-color: {LINE};
+                                                background: transparent; }}
+    QLabel:disabled {{ color: {LINE}; }}
+    QCheckBox:disabled {{ color: {LINE}; }}
+    QCheckBox:disabled::indicator {{ border-color: {LINE}; }}
+
     /* Qt's default tooltip is black on grey, which is unreadable against a
        dark interface and looks like it belongs to a different application. */
     QToolTip {{

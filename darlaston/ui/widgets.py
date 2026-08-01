@@ -526,6 +526,13 @@ class _Toggle(QtWidgets.QPushButton):
             " margin: 1px; padding: 1px 9px; font-size: 10px;"
             " color: #757a72; background: transparent; }"
             "QPushButton:hover { color: #e4e7e0; }"
+            # Its own stylesheet overrides the theme entirely, so the
+            # disabled state has to be spelled out here too or a chip for
+            # a camera that is not connected reads as live.
+            "QPushButton:disabled { color: #2a2e29;"
+            " border-color: #2a2e29; background: transparent; }"
+            "QPushButton:checked:disabled { color: #101210;"
+            " background: #2a2e29; border-color: #2a2e29; }"
             "QPushButton:checked { color: #101210; background: #c89b4a;"
             " border-color: #c89b4a; }")
 
