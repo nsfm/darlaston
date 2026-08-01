@@ -78,8 +78,26 @@ def test_the_dissolve_keeps_clear_of_the_letterforms(bar):
     # Everything the failure needs, in the failure. This one only ever
     # missed on a machine nobody could reach interactively, and "18 cells
     # landed on the type" is not enough to work out why from a log.
+    # A picture of the label region, since the numbers above turned out to
+    # be identical on the machine where this passes and the one where it
+    # does not. "#" is amber, ":" is inside the halo but not amber, "." is
+    # neither; the question is whether the leak is dither drawn where it
+    # should not be, or type drawn thinner than the halo cut for it.
+    def glyph(x, y):
+        if is_amber(x, y):
+            return "#"
+        return ":" if halo.contains(QtCore.QPointF(x + 0.5, y + 0.5)) else "."
+
+    picture = "\n".join(
+        "    " + "".join(glyph(x, y) for x in range(6, 66))
+        for y in range(6, 22))
+    swatch = "  ".join(f"{p}={QtGui.QColor(img.pixel(*p)).name()}"
+                       for p in hits[:6])
+
     assert not hits, (
         f"{len(hits)} dither cells landed on the type at {hits[:12]}\n"
+        f"  colours     : {swatch}\n"
+        f"{picture}\n"
         f"  widget      : {bar.width()}x{bar.height()}\n"
         f"  face asked  : {bar._label_font().family()!r}\n"
         f"  face used   : {QtGui.QFontInfo(bar._label_font()).family()!r}\n"
