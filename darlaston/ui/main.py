@@ -229,6 +229,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # prompt until now.
         darkroom = self.toolbar.add_menu("Darkroom")
         darkroom.addAction("Stitch mosaic…", self._stitch_mosaic)
+        darkroom.addAction("Fly through a mosaic…", self._flythrough)
         darkroom.addAction("Render depth from stack…", self._wiggle_dialog)
         darkroom.addAction("Make a plate…", self._plate_dialog)
         darkroom.addAction("Arrange specimens…", self._arrange_dialog)
@@ -1151,6 +1152,31 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.bridge.wiggle.emit((f"plate failed -- {exc}", False))
 
         threading.Thread(target=work, daemon=True, name="plate").start()
+
+    def _flythrough(self) -> None:
+        """Make a film of a stitched mosaic.
+
+        No dialog: there is nothing to ask. It reads the composite, picks
+        its own subjects by looking for structure, and everything else is
+        a decision about pacing that a number in a box would not improve.
+        """
+        start = str(self._wiggle_dir or self.settings.capture_root)
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Stitched mosaic to fly through", start)
+        if not directory:
+            return
+        self.strip.set_note("flying through the mosaic…")
+
+        def work():
+            from ..process.flythrough import flythrough
+            try:
+                path = flythrough(Path(directory))
+                self.bridge.wiggle.emit((f"flythrough → {path.name}", True))
+            except Exception as exc:
+                self.bridge.wiggle.emit(
+                    (f"flythrough failed -- {exc}", False))
+
+        threading.Thread(target=work, daemon=True, name="flythrough").start()
 
     def _arrange_dialog(self) -> None:
         start = str(self._wiggle_dir or self.settings.capture_root)
