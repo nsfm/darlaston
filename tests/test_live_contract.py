@@ -592,3 +592,62 @@ def test_the_wordmark_has_its_own_face_and_a_licence():
     assert theme.BRASS in mark[:mark.index("}")]
     hover = mark[mark.index(':hover'):]
     assert theme.INK in hover[:hover.index("}")]
+
+
+def test_about_carries_the_man_and_the_licences(qapp):
+    """The name is the one part of this project that argues for something,
+    so the dialog behind it has to be right about a real person and honest
+    about what it is made of."""
+    from darlaston.ui.about import TAGLINE, AboutDialog
+
+    d = AboutDialog()
+    try:
+        text = " ".join(w.text() for w in d.findChildren(
+            __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))
+
+        # His, from a 1917 price list, carried as an inscription.
+        assert TAGLINE == "Every Slide Perfect"
+        assert TAGLINE.upper() in text
+
+        # Sourced claims only. He was not a diatom arranger and we do not
+        # say he was; he did go professional at thirty-nine, not thirty-eight.
+        assert "1867-1949" in text
+        assert "amateur" in text and "Birmingham" in text
+        assert "thirty-nine" in text
+        assert "arranger" not in text.lower(), "he was a general preparer"
+
+        # Every bundled thing that carries a licence is named.
+        assert "GPLv3" in text
+        assert "IBM Plex" in text and "Petit Formal Script" in text
+        assert "Open Font License" in text
+        assert "linking exception" in text
+    finally:
+        d.deleteLater()
+
+
+def test_about_is_frameless_and_draggable(qapp):
+    from PySide6 import QtCore, QtGui
+    from darlaston.ui.about import AboutDialog
+
+    d = AboutDialog()
+    try:
+        assert d.windowFlags() & QtCore.Qt.WindowType.FramelessWindowHint
+        start = d.pos()
+        press = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonPress, QtCore.QPointF(20, 20),
+            QtCore.QPointF(start.x() + 20, start.y() + 20),
+            QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier)
+        d.mousePressEvent(press)
+        assert d._drag_from is not None
+        move = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseMove, QtCore.QPointF(20, 20),
+            QtCore.QPointF(start.x() + 90, start.y() + 60),
+            QtCore.Qt.MouseButton.NoButton, QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier)
+        d.mouseMoveEvent(move)
+        assert d.pos() != start, "a frameless window must be movable somehow"
+        d.mouseReleaseEvent(move)
+        assert d._drag_from is None
+    finally:
+        d.deleteLater()
