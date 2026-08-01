@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtWidgets
 
-from . import theme
+from .framed import FramedDialog
 
 #: Offered because most microscopy that gets shared is shared under one of
 #: these, and typing a licence string from memory is how you get it wrong.
@@ -28,11 +28,10 @@ LICENCES = (
 )
 
 
-class PhotographerDialog(QtWidgets.QDialog):
+class PhotographerDialog(FramedDialog):
     def __init__(self, settings, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(parent, width=460)
         self.setWindowTitle("Photographer")
-        self.setMinimumWidth(460)
         self._settings = settings
 
         self.name = QtWidgets.QLineEdit(settings.artist)
@@ -63,19 +62,42 @@ class PhotographerDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
-        col = QtWidgets.QVBoxLayout(self)
-        col.setContentsMargins(18, 18, 18, 18)
-        col.setSpacing(12)
+        col = self.content
         col.addLayout(form)
         col.addWidget(self.note)
         col.addStretch(1)
         col.addWidget(buttons)
-        self.setStyleSheet(theme.stylesheet())
+
+        self._restore_licence()
 
         self.licence.currentIndexChanged.connect(self._apply_licence)
         self.name.textChanged.connect(self._describe)
         self.notice.textChanged.connect(self._describe)
         self._describe()
+        self.finish()
+
+    def _restore_licence(self) -> None:
+        """Match the stored notice back to the licence that wrote it.
+
+        Only the notice itself is persisted, which is the right thing to
+        keep -- it is what gets written into the file, and a hand-edited
+        one must survive untouched. But the combo then opened on "none"
+        every time, so a licence chosen last week looked forgotten.
+
+        Matched on the tail rather than the whole string, because the
+        year and the name in front of it change. A notice that matches
+        nothing stays on "none", which is honest: it is a custom one.
+        """
+        stored = (self._settings.copyright or "").strip()
+        if not stored:
+            return
+        for index in range(1, self.licence.count()):
+            tail = self.licence.itemData(index).split("{name}.", 1)[-1].strip()
+            if tail and stored.endswith(tail):
+                self.licence.blockSignals(True)
+                self.licence.setCurrentIndex(index)
+                self.licence.blockSignals(False)
+                return
 
     def _apply_licence(self) -> None:
         template = self.licence.currentData()

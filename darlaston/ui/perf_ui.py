@@ -15,6 +15,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..cpu import THREAD_BUDGET, usable_cores
 from . import theme
+from .framed import FramedDialog
 from .widgets import UI_METER
 
 
@@ -146,7 +147,7 @@ PREVIEW_CHOICES = (
 )
 
 
-class PerformanceDialog(QtWidgets.QDialog):
+class PerformanceDialog(FramedDialog):
     """How much of the machine the live view is allowed to use.
 
     Both settings apply the moment they change, because the only way to
@@ -160,13 +161,12 @@ class PerformanceDialog(QtWidgets.QDialog):
     """
 
     def __init__(self, settings, on_change, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(parent, width=520)
         self.setWindowTitle("Performance")
-        self.setStyleSheet(theme.stylesheet())
         self._settings = settings
         self._on_change = on_change
 
-        col = QtWidgets.QVBoxLayout(self)
+        col = self.content
         col.setSpacing(10)
 
         col.addWidget(_heading("Preview quality"))
@@ -208,6 +208,7 @@ class PerformanceDialog(QtWidgets.QDialog):
         buttons.rejected.connect(self.accept)
         buttons.accepted.connect(self.accept)
         col.addWidget(buttons)
+        self.finish()
 
     def _quality_changed(self, button, checked: bool) -> None:
         if checked:

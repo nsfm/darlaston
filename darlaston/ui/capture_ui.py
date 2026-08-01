@@ -13,6 +13,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..session.settings import TOKENS, Settings, pictures_dir
 from . import theme
+from .framed import FramedDialog
 
 
 class ShutterButton(QtWidgets.QPushButton):
@@ -213,7 +214,7 @@ class SubjectField(QtWidgets.QWidget):
         return self.slide.text().strip()
 
 
-class SettingsDialog(QtWidgets.QDialog):
+class SettingsDialog(FramedDialog):
     """Where captures go and what they are called.
 
     Live preview of the resulting path, because a filename pattern you cannot
@@ -221,9 +222,8 @@ class SettingsDialog(QtWidgets.QDialog):
     """
 
     def __init__(self, settings: Settings, setup=None, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Settings")
-        self.setMinimumWidth(560)
+        super().__init__(parent, width=560)
+        self.setWindowTitle("Files")
         self._settings = settings
         self._setup = setup
 
@@ -280,8 +280,7 @@ class SettingsDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
-        col = QtWidgets.QVBoxLayout(self)
-        col.setContentsMargins(18, 18, 18, 18)
+        col = self.content
         col.setSpacing(14)
         col.addLayout(form)
         col.addWidget(_label("AVAILABLE TOKENS"))
@@ -294,7 +293,7 @@ class SettingsDialog(QtWidgets.QDialog):
         for w in (self.root, self.folder, self.filename):
             w.textChanged.connect(self._update_preview)
         self._update_preview()
-        self.setStyleSheet(theme.stylesheet())
+        self.finish()
 
     def _browse(self) -> None:
         start = self.root.text() or str(pictures_dir())

@@ -339,7 +339,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Now that the panels exist, give each its one route.
         self._bind_panel(self.calib_action, self.calib_window, (330, 190))
         self._bind_panel(self.map_action, self.map_window,
-                         self.slidemap.preferred_size(self.view))
+                         lambda: self.slidemap.preferred_size(self.view))
         self._bind_panel(
             self.perf_action, self.perf_window, (330, 320),
             before_show=lambda: self.perf.set_budget(self.settings_rate()))
@@ -1427,7 +1427,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if on:
                 if before_show is not None:
                     before_show()
-                window.place(size)
+                # Called, not captured: a default worked out at bind time
+                # comes from a view that has not been laid out yet.
+                window.place(size() if callable(size) else size)
                 window.show()
                 window.raise_()
             else:

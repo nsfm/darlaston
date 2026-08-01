@@ -44,6 +44,11 @@ class FloatingPanel(QtWidgets.QWidget):
         #: pixels that may now be off-screen.
         self._rel = (0.02, 0.6)
         self._dragging = False
+        #: Size and position are imposed once. After that the panel is the
+        #: operator's: closing one and opening it again used to hand back
+        #: whatever default was computed before the window had been laid
+        #: out, which is how the slide map came back smaller every time.
+        self._placed = False
 
         self.body = QtWidgets.QWidget(self)
 
@@ -60,6 +65,10 @@ class FloatingPanel(QtWidgets.QWidget):
         self._close.clicked.connect(self._on_close)
         self._close.setVisible(closable)
 
+        # Bottom-right, like every other resizeable thing on the desktop.
+        self._grip = QtWidgets.QSizeGrip(self)
+        self._grip.setFixedSize(14, 14)
+
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(9, TITLE_H + 2, 9, 9)
         outer.setSpacing(0)
@@ -68,10 +77,19 @@ class FloatingPanel(QtWidgets.QWidget):
 
     # ---- placement -------------------------------------------------------
 
-    def place(self, size: tuple[int, int] | None = None) -> None:
-        """Reassert size and position against the host's current geometry."""
-        if size is not None:
-            self.setFixedSize(*size)
+    def place(self, size: tuple[int, int] | None = None,
+              force: bool = False) -> None:
+        """Position against the host, and size it the first time only.
+
+        `resize` rather than `setFixedSize`: these are panels a person
+        works in, and one that cannot be made bigger is one that will be
+        the wrong size for somebody. The minimum keeps the title bar and
+        its close mark reachable.
+        """
+        if size is not None and (force or not self._placed):
+            self.setMinimumSize(180, TITLE_H + 40)
+            self.setMaximumSize(16777215, 16777215)
+            self.resize(*size)
         hw, hh = self._host.width(), self._host.height()
         x = int(self._rel[0] * hw)
         y = int(self._rel[1] * hh)
@@ -79,7 +97,9 @@ class FloatingPanel(QtWidgets.QWidget):
         # reachable or the panel cannot be moved back.
         x = max(-self.width() + 60, min(x, hw - 60))
         y = max(0, min(y, hh - TITLE_H))
-        self.move(x, y)
+        if not self._placed:
+            self.move(x, y)
+        self._placed = True
         self.raise_()
 
     def set_relative(self, fx: float, fy: float) -> None:
@@ -125,6 +145,7 @@ class FloatingPanel(QtWidgets.QWidget):
 
     def resizeEvent(self, event) -> None:
         self._close.move(self.width() - 22, 4)
+        self._grip.move(self.width() - 16, self.height() - 16)
         super().resizeEvent(event)
 
     def paintEvent(self, _event) -> None:

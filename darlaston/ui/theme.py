@@ -138,6 +138,27 @@ def stylesheet() -> str:
         padding: 2px 9px; font-size: 13px; min-width: 0;
     }}
 
+    /* Standard dialog buttons pull an icon from the *system* icon theme
+       -- a black tick or cross on a desktop whose icons were drawn for a
+       light one. It does not appear on every platform, which is why it
+       was invisible from here: the style hint is off under the offscreen
+       platform and on under GNOME and KDE. Turned off rather than
+       replaced, because "Close" is already a word. */
+    QDialogButtonBox {{ dialogbuttonbox-buttons-have-icons: 0; }}
+
+    /* Text fields were never styled at all, so every one of them drew a
+       bright platform-blue focus ring -- the only saturated colour in the
+       application, on the one widget you look at while typing. */
+    QLineEdit {{
+        font-family: "{fam['mono']}";
+        border: 1px solid {LINE}; border-radius: 3px; margin: 1px;
+        padding: 5px 7px; background: {SUNK}; color: {INK};
+        selection-background-color: {LINE}; selection-color: {INK};
+    }}
+    QLineEdit:focus {{ border-color: {BRASS}; }}
+    QLineEdit:disabled {{ color: {LINE}; border-color: {LINE}; }}
+    QLineEdit[readOnly="true"] {{ color: {DIM}; background: transparent; }}
+
     QComboBox {{
         font-family: "{fam['mono']}";
         border: 1px solid {LINE}; border-radius: 3px; padding: 4px 6px;

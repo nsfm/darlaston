@@ -10,10 +10,11 @@ repeating a name already set in eighteen point at the top of it.
 """
 from __future__ import annotations
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtWidgets
 
 from .. import __version__
 from . import theme
+from .framed import FramedDialog
 
 #: His, from the bottom of a 1917 price list. Carried as an inscription
 #: rather than as a claim: this program does not make slides, and the line
@@ -21,14 +22,10 @@ from . import theme
 TAGLINE = "Every Slide Perfect"
 
 
-class AboutDialog(QtWidgets.QDialog):
+class AboutDialog(FramedDialog):
     def __init__(self, parent=None) -> None:
-        super().__init__(parent)
+        super().__init__(parent, width=470)
         self.setWindowTitle("About darlaston")
-        self.setWindowFlags(QtCore.Qt.WindowType.Dialog
-                            | QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setFixedWidth(470)
-        self._drag_from: QtCore.QPoint | None = None
 
         fam = theme.load_fonts()
         wordmark = QtWidgets.QLabel("darlaston")
@@ -72,14 +69,7 @@ class AboutDialog(QtWidgets.QDialog):
         close.rejected.connect(self.reject)
         close.accepted.connect(self.reject)
 
-        # Everything lives inside a panel frame rather than on the dialog:
-        # a stylesheet border on a QDialog subclass needs a paintEvent to
-        # draw at all, and the theme already knows what a bordered panel
-        # looks like. One rounded rectangle, reused.
-        panel = QtWidgets.QFrame()
-        panel.setProperty("role", "panel")
-
-        col = QtWidgets.QVBoxLayout(panel)
+        col = self.content
         col.setContentsMargins(26, 22, 26, 18)
         col.setSpacing(0)
         col.addWidget(wordmark)
@@ -92,33 +82,4 @@ class AboutDialog(QtWidgets.QDialog):
         col.addWidget(version)
         col.addSpacing(14)
         col.addWidget(close)
-
-        outer = QtWidgets.QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(panel)
-        self.setStyleSheet(theme.stylesheet())
-
-    # ---- dragged by its own face ----------------------------------------
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        """Anywhere counts, since there is no bar to grab.
-
-        The button box swallows its own presses before this sees them, so
-        there is nothing to exclude by hand.
-        """
-        if event.button() is QtCore.Qt.MouseButton.LeftButton:
-            self._drag_from = event.globalPosition().toPoint() - self.pos()
-            self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
-        if self._drag_from is not None:
-            self.move(event.globalPosition().toPoint() - self._drag_from)
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
-        self._drag_from = None
-        self.unsetCursor()
-        super().mouseReleaseEvent(event)
+        self.finish()
