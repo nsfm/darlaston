@@ -1,14 +1,12 @@
 ---
 name: Bug report
 about: Something does not work
-title: ''
+title: ""
 labels: bug
 assignees: nsfm
-
 ---
 
 **What happened, and what you expected instead**
-
 
 **How to reproduce it**
 
@@ -17,10 +15,6 @@ assignees: nsfm
 3.
 
 **Output of `darlaston --selftest`**
-
-<!-- Run the program with --selftest and paste what it prints. It says
-     which of its own pieces the build can reach, and rules out a whole
-     class of packaging problems in one line. -->
 
 ```
 
@@ -37,6 +31,3 @@ assignees: nsfm
 - Illumination: <!-- brightfield / darkfield / phase -->
 
 **Anything else**
-
-<!-- A capture that triggers it is enormously helpful, if you can share
-     one. So is a photograph of the screen. -->
