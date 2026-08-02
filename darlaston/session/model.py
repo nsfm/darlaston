@@ -188,6 +188,11 @@ class CameraProfile:
 SYNTHETIC_SERIAL_PREFIX = "MOCK-"
 
 
+def is_synthetic(serial: str) -> bool:
+    """Is this the test camera rather than something on a bench?"""
+    return bool(serial) and serial.startswith(SYNTHETIC_SERIAL_PREFIX)
+
+
 def scope_id(name: str, existing: set[str] | None = None) -> str:
     """A stable id from a name, unique within the library.
 
@@ -399,6 +404,19 @@ class Library:
                                            last_scope=scope_id)
             self.save()
 
+    def file_camera(self, profile: CameraProfile) -> None:
+        """Record a camera's settings, if it is a camera worth recording.
+
+        The one way in. `remember_camera` refused the synthetic camera and
+        callers then wrote `library.cameras[serial] = profile` straight
+        past it -- so stepping an objective under --mock filed MockCam
+        anyway, which is how it came to be in a real library. A rule that
+        lives in one method and is enforced in another is not a rule.
+        """
+        if not profile.serial or is_synthetic(profile.serial):
+            return
+        self.cameras[profile.serial] = profile
+
     def remove_camera(self, serial: str) -> None:
         """Forget a camera. For the webcam that is not a microscope camera.
 
@@ -412,7 +430,7 @@ class Library:
 
     def remember_camera(self, serial: str, model: str) -> CameraProfile:
         """First sight of a camera gets a provisional name the user can change."""
-        if serial.startswith(SYNTHETIC_SERIAL_PREFIX):
+        if is_synthetic(serial):
             # The synthetic camera is a test fixture, not a device somebody
             # owns. Filing it put "MockCam (synthetic)" in the library and
             # then offered it as the camera to describe when nothing real

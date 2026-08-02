@@ -720,7 +720,7 @@ class CameraDialog(_LibraryDialog):
 
     def _commit(self) -> None:
         if self._selected and self._selected in self._library.cameras:
-            self._library.cameras[self._selected] = self.editor.build()
+            self._library.file_camera(self.editor.build())
 
     def _switch(self, row: int) -> None:
         if row < 0:

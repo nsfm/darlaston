@@ -39,10 +39,21 @@
       integrating, so the displacement is silently and permanently lost from
       the accumulated position. It would also double the settle latency
       before a capture is allowed, 0.27 s to 0.53 s.
-- [ ] **Empty vs capped turret positions.** Currently one state. They behave
-      oppositely for visual detection — an empty slot passes light, a capped
-      one blocks it — so the darkness sweep would read them as different
-      events entirely.
+- [ ] **Detection can never land on an empty turret position.** The
+      _marking_ shipped: `Turret.capped` exists, the setup editor offers a
+      "capped" box on every empty position, and `model_signatures()` predicts
+      0.0 for a capped slot and `condenser_na**2` for an open one -- opposite
+      ends of the scale, which is the whole reason the two were separated.
+      What is missing is anywhere for that prediction to be used.
+      `Turret.step()` skips empty positions, so the neighbour set `_decide()`
+      builds from it never contains one, and the magnification and brightness
+      arms then skip them again explicitly
+      (`if turret.positions[i] is None: continue`). So no proposal can name
+      an empty detent and the cap state cannot influence detection at all --
+      even though you can physically park on one, and a frame going white or
+      black is the loudest thing the darkness sweep will ever see. The mock
+      can occlude the field on demand, so both cases can be simulated as
+      soon as there is something to test.
 - [ ] **Which error was the tenth tile?** Unknown — the old message threw the
       code away. Next occurrence will name it. If it was E_TIMEOUT the retry
       may now paper over it silently; if it repeats, suspect the cable or a
@@ -186,7 +197,6 @@
 
 - [ ] **Inverted brightfield** native in the live view. Display and export
       transform only; the raw stays linear positive.
-- [ ] Optovar position in the UI, feeding total magnification and metadata.
 
 ## Optics and measurement
 
@@ -200,10 +210,6 @@
       matters most for the 6.3×, which has no phase ring and goes darkfield
       against the phase stop. Whether the learned values stay stable across a
       session (lamp drift, iris adjustments) is the open question.
-- [ ] **Empty vs capped slots, now testable.** The mock can occlude the field
-      on demand, so the two cases can finally be simulated: an empty slot
-      passes light and a capped one blocks it, which the darkness sweep reads
-      as opposite events.
 - [ ] Re-measure sensor dust after cleaning the C-mount adapter. Baseline is
       0.93% overall, 1.02% at fine scale, 57 features near the cover glass.
 
@@ -277,7 +283,6 @@
 - [ ] **Z motorisation.** 0.8 MOD gear ring on the fine focus, NEMA 17 +
       TMC2209 + RP2040, ~$35. Optional accelerator only; the unmodified-scope
       workflow must be complete without it.
-- [ ] Setup editor, so the provisional scope in `ui/main.py` can go away.
 - [ ] Session resumability, needed once mosaics reach 40 tiles. The
       _budgeting_ half is done: free space is on the status bar permanently,
       brass under 20 GB and red under 2, so a session no longer dies of a

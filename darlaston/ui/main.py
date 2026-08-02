@@ -33,7 +33,7 @@ from ..live.focus import Illumination, Region
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
-                             Objective, ScopeProfile, Setup, Turret)
+                             ScopeProfile, Setup, Turret)
 from ..session.settings import Settings
 from . import theme
 from .about import AboutDialog
@@ -54,25 +54,6 @@ from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .widgets import FocusGroup, Histogram, LiveView, ValueBar
-
-def _provisional_scope() -> ScopeProfile:
-    """A plausible stand, for a camera we have never seen on one.
-
-    Built fresh each time rather than shared. As a module-level constant it
-    was a mutable singleton that the setup editor wrote through, so the
-    placeholder quietly became whatever was last configured -- and, worse,
-    kept the id "unconfigured" while doing it.
-    """
-    return ScopeProfile(
-        id="unconfigured", name="Microscope",
-        turret=Turret([Objective(10, 0.30), Objective(20, 0.50),
-                       Objective(40, 0.75),
-                       Objective(100, 1.30, immersion="oil")], current=2,
-                      capped=[False] * 4),
-        # No magnification changer. Most stands have none, and the four
-        # Zeiss Optovar factors that used to be here were one particular
-        # microscope's, offered to everybody as though they were normal.
-        optovar=[], optovar_current=0)
 
 
 class Bridge(QtCore.QObject):
@@ -463,11 +444,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.objective = ObjectiveStepper()
         self.objective.changed.connect(self._on_objective_stepped)
+        # Directly under the objective because it multiplies into the same
+        # number, and hidden unless the stand has one -- see _sync_optovar.
+        # Zeiss call theirs an Optovar; Leitz, Olympus and Nikon call it a
+        # magnification changer, so the generic name is on screen and the
+        # trade name is in the tooltip, exactly as in the setup editor.
+        self.optovar = QtWidgets.QComboBox()
+        self.optovar.setToolTip(
+            "Where the magnification changer is set. It sits between the "
+            "objective\nand the tube lens and multiplies into total "
+            "magnification exactly as the\nrelay does, so it goes into every "
+            "file and into the flat's key.\n\nZeiss call theirs an Optovar.")
+        self.optovar.currentIndexChanged.connect(self._on_optovar)
+        self.optovar.hide()
         self.illumination = QtWidgets.QComboBox()
         for mode in BUILTIN_ILLUMINATION:
             self.illumination.addItem(mode.display, mode)
         self.illumination.currentIndexChanged.connect(self._on_illumination)
         optics = _group("optics", self.objective)
+        optics.addWidget(self.optovar)
         optics.addWidget(self.illumination)
         col.addLayout(optics)
 
@@ -494,6 +489,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- session ---------------------------------------------------------
 
+    def _first_scope(self) -> ScopeProfile:
+        """A real stand in the library, for a camera we have never seen on one.
+
+        This used to invent one: a four-position turret of 10x/0.30,
+        20x/0.50, 40x/0.75 and 100x/1.30 oil, which is a plausible set and a
+        claim about hardware the owner may not have. It reached the status
+        bar, the filename tokens and the EXIF of every frame shot before
+        anybody found the setup window, and a wrong objective in an archived
+        file is not recoverable later.
+
+        So the turret is created empty instead. Four positions because that
+        is the commonest count and the number of *detents* is a fact about
+        the stand rather than about the objectives in it, and every one of
+        them says "nothing here" until somebody says otherwise.
+        """
+        scope = self.library.add_scope("Microscope")
+        scope.turret = Turret(positions=[None] * 4, capped=[False] * 4)
+        self.library.save()
+        return scope
+
     @QtCore.Slot(object)
     def _on_status(self, status: SessionStatus) -> None:
         info = status.info
@@ -504,10 +519,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # ignored on every subsequent launch -- a configured Zeiss
             # reverting to a placeholder turret every time the app started.
             scope = (self.library.scope_or_default(profile.last_scope)
-                     or _provisional_scope())
+                     or self._first_scope())
             self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
             self.objective.set_turret(self.setup.scope.turret)
+            self._sync_optovar()
             self._push_turret()
 
         self.strip.update_status(status, self.setup)
@@ -762,7 +778,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.setup is None:
             return
         self.library.scopes[self.setup.scope.id] = self.setup.scope
-        self.library.cameras[self.setup.camera.serial] = self.setup.camera
+        self.library.file_camera(self.setup.camera)
         self.library.bind(self.setup.camera.serial, self.setup.scope.id)
         self.library.save()
 
@@ -777,6 +793,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
         self._push_turret()
+
+    def _sync_optovar(self) -> None:
+        """Offer the magnification changer only on a stand that has one.
+
+        Hidden rather than disabled, and hidden at one factor as well as at
+        none: a changer is rare glass, and a control for a piece of the
+        optical path that is not fitted is a question its owner cannot
+        answer. A one-factor list is somebody having ticked the box and
+        typed a single number, which is a stand with nothing to choose.
+
+        Rebuilt from scratch every time, because the scope underneath can be
+        replaced wholesale -- by the setup editor, or by a camera arriving
+        and bringing the stand it was last on.
+        """
+        factors = list(self.setup.scope.optovar) if self.setup else []
+        self.optovar.blockSignals(True)
+        try:
+            self.optovar.clear()
+            for i, factor in enumerate(factors):
+                self.optovar.addItem(f"{factor:g}× changer", i)
+            if factors:
+                # Clamped: a saved position can outlive the list it indexed
+                # if the factors were edited, and `optovar_factor` clamps the
+                # same way, so the control must agree with it rather than
+                # showing a position the scope is not using.
+                self.optovar.setCurrentIndex(
+                    min(self.setup.scope.optovar_current, len(factors) - 1))
+        finally:
+            self.optovar.blockSignals(False)
+        self.optovar.setVisible(len(factors) > 1)
+
+    def _on_optovar(self, index: int) -> None:
+        """The changer was moved, so say so before the next frame is written.
+
+        Nothing recorded this before: the factor was pinned at the first
+        position, so anybody using the 1.6 setting got a total magnification
+        and a µm-per-pixel figure understated by exactly that much, silently
+        and in the file rather than only on screen. It is the same kind of
+        event as the objective changing -- one term of the same product --
+        so it takes the same path, which also re-keys the flat, since
+        `Setup.calibration_key()` carries the factor.
+        """
+        if self.setup is None or index < 0:
+            return
+        if index == self.setup.scope.optovar_current:
+            return
+        self.setup.scope.optovar_current = index
+        self._on_objective_changed()
 
     def _on_rate(self, at: int) -> None:
         fps = self.strip.rate.itemData(at)
@@ -1588,6 +1652,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.setup.scope = scope
         self.objective.set_turret(scope.turret)
+        # The changer belongs to the stand, so a different stand may have a
+        # different one, or none at all.
+        self._sync_optovar()
         self._push_turret()
         self.strip.update_status(self.session.status, self.setup)
         # The optical stack changed, so anything banked for the old one is

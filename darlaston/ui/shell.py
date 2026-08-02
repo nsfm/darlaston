@@ -581,9 +581,22 @@ class ObjectiveStepper(QtWidgets.QWidget):
 
     def _refresh(self) -> None:
         obj = self._turret.objective if self._turret else None
-        text = obj.label if obj else "--"
-        if obj and self._uncertain:
-            text += "  ?"
+        positions = getattr(self._turret, "positions", None) or []
+        hint = ""
+        if obj:
+            text = obj.label + ("  ?" if self._uncertain else "")
+        elif positions and not any(positions):
+            # A turret nobody has described yet, which is not the same thing
+            # as being parked on an empty detent of one that was -- and "--"
+            # said both. A new stand now starts empty rather than being given
+            # four invented objectives, so this is the first thing a stranger
+            # sees here and it should say what to do about it.
+            text = "no objectives yet"
+            hint = ("Nothing has been put in this turret. Setup > Microscopes "
+                    "is where\nthe objectives and how many positions there "
+                    "are get described.")
+        else:
+            text = "--"
         self.label.setText(text)
         self.label.setStyleSheet(
             f"color: {theme.BRASS};" if self._uncertain else "")
@@ -591,4 +604,4 @@ class ObjectiveStepper(QtWidgets.QWidget):
             "A turret rotation was detected and never answered, so this may "
             "no longer be\nthe objective in the light path. Step it, or "
             "answer the next prompt, to be sure."
-            if self._uncertain else "")
+            if self._uncertain else hint)

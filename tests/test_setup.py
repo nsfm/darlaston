@@ -69,9 +69,6 @@ def test_the_magnification_changer_is_off_unless_fitted(qapp):
     """Most stands have none. The four Zeiss Optovar factors that used to be
     the default were one microscope's, offered to everybody."""
     from darlaston.session.model import ScopeProfile
-    from darlaston.ui.main import _provisional_scope
-
-    assert _provisional_scope().optovar == []
 
     editor = _editor(ScopeProfile(id="s"))
     assert not editor.has_changer.isChecked()
@@ -107,6 +104,165 @@ def test_a_stand_without_a_changer_says_nothing_about_one():
     assert "Optovar" not in meta.description
     assert "optovar=1.6" in fitted.comment
     assert "Optovar 1.6" in fitted.description
+
+
+def _window(qapp, tmp_path, monkeypatch):
+    """A main window whose library is a scratch file.
+
+    `MainWindow` builds its own `Library` from the user's config directory,
+    so without redirecting XDG_CONFIG_HOME a test would file cameras into
+    whatever is really on the machine and then assert against it.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    return MainWindow(lambda: MockCamera(fps=30.0))
+
+
+def _camera_arrives(win, scope=None):
+    """The moment a camera is recognised, which is when the setup is built.
+
+    Driven directly rather than waited for: the session emits its status
+    from its own thread through a queued connection, so nothing is
+    delivered until an event loop runs, and a test that spins one is a test
+    that can hang.
+    """
+    from darlaston.camera.base import CameraInfo, CameraState
+    from darlaston.camera.session import SessionStatus
+
+    if scope is not None:
+        win.library.scopes = {scope.id: scope}
+    info = CameraInfo(model="E3ISPM20000KPA", serial="TP2112071101",
+                      resolutions=(), max_bit_depth=12, bayer_pattern="GBRG",
+                      exposure_range_us=(100, 1000000),
+                      gain_range_pct=(100, 2000))
+    win._on_status(SessionStatus(CameraState.READY, info=info))
+
+
+def _stand(optovar):
+    from darlaston.session.model import Objective, ScopeProfile, Turret
+
+    return ScopeProfile(id="z", name="Stand",
+                        turret=Turret([Objective(40, 0.75)]),
+                        optovar=list(optovar))
+
+
+def test_the_changer_is_only_offered_on_a_stand_that_has_one(
+        qapp, tmp_path, monkeypatch):
+    """Rare glass. A control for a piece of the optical path that is not
+    fitted is a question its owner cannot answer, and one factor is a stand
+    with nothing to choose between."""
+    win = _window(qapp, tmp_path, monkeypatch)
+    try:
+        _camera_arrives(win, _stand([]))
+        assert win.optovar.isHidden(), "no changer, and it was offered anyway"
+
+        # A different stand, as the setup window hands one over.
+        win.setup.scope = _stand([1.0])
+        win._sync_optovar()
+        assert win.optovar.isHidden(), "one factor is not a choice"
+
+        win.setup.scope = _stand([1.0, 1.25, 1.6, 2.0])
+        win._sync_optovar()
+        assert not win.optovar.isHidden()
+        assert [win.optovar.itemText(i) for i in range(win.optovar.count())] \
+            == ["1× changer", "1.25× changer", "1.6× changer", "2× changer"]
+
+        # And it shows where the changer already is, not the top of the list.
+        win.setup.scope = _stand([1.0, 1.6])
+        win.setup.scope.optovar_current = 1
+        win._sync_optovar()
+        assert win.optovar.currentIndex() == 1
+    finally:
+        win.shutdown()
+
+
+def test_choosing_a_changer_factor_reaches_the_magnification_and_the_file(
+        qapp, tmp_path, monkeypatch):
+    """The whole reason it needed a control: the factor was pinned at the
+    first position, so anybody using the 1.6 setting got a total
+    magnification and a scale understated by exactly that much -- silently,
+    and in the file rather than only on screen."""
+    from darlaston.process.metadata import from_setup
+
+    win = _window(qapp, tmp_path, monkeypatch)
+    try:
+        _camera_arrives(win, _stand([1.0, 1.25, 1.6, 2.0]))
+        assert win.setup.total_magnification == 40.0
+        was = win.opportunist._key
+
+        win.optovar.setCurrentIndex(2)
+        assert win.setup.scope.optovar_current == 2
+        assert win.setup.total_magnification == 64.0
+
+        meta = from_setup(win.setup, exposure_us=1000, gain_pct=100)
+        assert "optovar=1.6" in meta.comment
+        assert "total_magnification=64" in meta.comment
+        # Folded to ASCII on the way out, as every description is.
+        assert "Optovar 1.6x" in meta.description
+        assert "64x total" in meta.description
+
+        # A flat is only valid for the stack it was shot through, and the
+        # changer is part of that stack.
+        assert win.opportunist._key != was
+        assert "optovar1.6" in win.opportunist._key
+    finally:
+        win.shutdown()
+
+
+def test_the_changer_position_survives_a_reload(qapp, tmp_path, monkeypatch):
+    """It is a property of the stand, so it belongs on disk with it. Moving
+    the changer used to reach nothing at all; reaching only the running
+    session would be the same bug one launch later."""
+    from darlaston.session.model import Library
+
+    win = _window(qapp, tmp_path, monkeypatch)
+    try:
+        _camera_arrives(win, _stand([1.0, 1.25, 1.6, 2.0]))
+        win.optovar.setCurrentIndex(3)
+        library_path = win.library.path
+    finally:
+        win.shutdown()
+
+    saved = Library(library_path).scopes["z"]
+    assert saved.optovar_current == 3
+    assert saved.optovar_factor == 2.0
+
+
+def test_a_first_camera_makes_a_stand_with_no_invented_objectives(
+        qapp, tmp_path, monkeypatch):
+    """A plausible turret -- 10x/0.30, 20x/0.50, 40x/0.75, 100x/1.30 oil --
+    used to be invented for a camera we had never seen on a stand. It is a
+    claim about hardware the owner may not have, and it reached the status
+    bar, the filename tokens and the EXIF of every frame shot before anybody
+    found the setup window."""
+    from darlaston.session.model import Library
+
+    win = _window(qapp, tmp_path, monkeypatch)
+    try:
+        assert win.library.scopes == {}, "a scratch library was not scratch"
+        _camera_arrives(win)
+
+        scope = win.setup.scope
+        assert scope.turret.positions == [None] * 4, \
+            f"objectives invented from nowhere: {scope.turret.positions}"
+        assert scope.turret.capped == [False] * 4
+        assert scope.turret.objective is None
+        assert win.setup.total_magnification is None
+        assert scope.optovar == []
+
+        # A real stand in the library rather than a placeholder passing
+        # through, so describing it in the setup window has something to
+        # write to and the calibration key is not "unconfigured".
+        assert win.library.scopes == {scope.id: scope}
+        assert Library(win.library.path).scopes[scope.id].name == "Microscope"
+
+        # And the rail says so in words, because "--" is what it also shows
+        # when parked on an empty detent of a turret somebody did describe.
+        assert win.objective.label.text() == "no objectives yet"
+    finally:
+        win.shutdown()
 
 
 def test_the_microscope_window_opens_with_no_camera_attached(qapp, tmp_path):
@@ -200,3 +356,32 @@ def test_the_camera_window_says_so_when_none_has_been_seen(qapp, tmp_path):
     assert dialog.empty.isHidden() is False
     assert dialog.editor.isHidden() is True
     assert dialog.list.isHidden() is True
+
+
+def test_the_mock_camera_cannot_get_into_the_library_by_any_route(qapp, tmp_path):
+    """remember_camera() refused it and callers then wrote
+    library.cameras[serial] = profile straight past the refusal, so stepping
+    an objective under --mock filed MockCam anyway. A rule that lives in one
+    method and is enforced in another is not a rule."""
+    from darlaston.session.model import CameraProfile, Library
+
+    library = Library(tmp_path / "library.json")
+    mock = CameraProfile(serial="MOCK-0000000000000000000000000",
+                         name="MockCam (synthetic)")
+
+    library.remember_camera(mock.serial, mock.name)
+    library.file_camera(mock)
+    library.bind(mock.serial, "some-scope")
+    library.save()
+
+    assert library.cameras == {}
+    assert Library(tmp_path / "library.json").cameras == {}
+
+    # And a camera that has never identified itself is not filed either.
+    library.file_camera(CameraProfile(serial="", name="Camera"))
+    assert library.cameras == {}
+
+    real = CameraProfile(serial="TP2112071101", name="Scope cam")
+    library.file_camera(real)
+    library.save()
+    assert list(Library(tmp_path / "library.json").cameras) == ["TP2112071101"]
