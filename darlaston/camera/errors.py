@@ -16,42 +16,45 @@ words a person reads at midnight with a diatom under the objective.
 """
 from __future__ import annotations
 
+from ..i18n import N_, _
+
 #: HRESULT -> (short name, what to do about it). Codes from the SDK header.
-_CODES: dict[int, tuple[str, str]] = {
-    0x8000FFFF: ("E_UNEXPECTED",
-                 "The camera refused a setting while it was running. This is "
-                 "a bug in darlaston's mode handling. Please report it."),
-    0x80004001: ("E_NOTIMPL",
-                 "This camera model does not support that feature."),
-    0x80070005: ("E_ACCESSDENIED",
-                 "No permission to open the camera. Install the SDK's udev "
-                 "rules file, then unplug and replug the camera."),
-    0x8007000E: ("E_OUTOFMEMORY", "The system is out of memory."),
-    0x80070057: ("E_INVALIDARG",
-                 "The camera rejected an argument. This is a bug in "
-                 "darlaston. Please report it."),
-    0x80004003: ("E_POINTER",
-                 "The camera was handed a null pointer. This is a bug in "
-                 "darlaston. Please report it."),
-    0x80004005: ("E_FAIL", "The camera reported a generic failure."),
-    0x8001010E: ("E_WRONG_THREAD",
-                 "The camera was called from the wrong thread. This is a bug "
-                 "in darlaston. Please report it."),
-    0x8007001F: ("E_GEN_FAILURE",
-                 "The camera stopped responding. This is almost always "
-                 "physical: try a different USB 3 port, reseat the cable, or "
-                 "avoid a hub. The link can also drop under a long session."),
-    0x800700AA: ("E_BUSY",
-                 "The camera is already in use. Another copy of darlaston "
-                 "or ToupLite may have it open."),
-    0x8000000A: ("E_PENDING", "The camera has no data ready yet."),
-    0x8001011F: ("E_TIMEOUT",
-                 "The camera did not deliver the frame in time. If the "
-                 "exposure is long this may just need more patience; if it "
-                 "repeats, the link may have dropped to USB 2.0, usually "
-                 "the cable."),
-    0x80072743: ("E_UNREACH", "The camera is unreachable over the network."),
-    0x800704C7: ("E_CANCELLED", "The operation was cancelled."),
+_CODES: dict[int, str] = {
+    0x8000FFFF: "E_UNEXPECTED",
+    0x80004001: "E_NOTIMPL",
+    0x80070005: "E_ACCESSDENIED",
+    0x8007000E: "E_OUTOFMEMORY",
+    0x80070057: "E_INVALIDARG",
+    0x80004003: "E_POINTER",
+    0x80004005: "E_FAIL",
+    0x8001010E: "E_WRONG_THREAD",
+    0x8007001F: "E_GEN_FAILURE",
+    0x800700AA: "E_BUSY",
+    0x8000000A: "E_PENDING",
+    0x8001011F: "E_TIMEOUT",
+    0x80072743: "E_UNREACH",
+    0x800704C7: "E_CANCELLED",
+}
+
+#: The advice for each code, by key. Split from the table above because
+#: the short name is a technical identifier that must not be translated --
+#: it is what somebody searches the vendor's header for -- while the
+#: sentence beside it is written for a person.
+_ADVICE = {
+    "E_UNEXPECTED": N_("error.code.e_unexpected"),
+    "E_NOTIMPL": N_("error.code.e_notimpl"),
+    "E_ACCESSDENIED": N_("error.code.e_accessdenied"),
+    "E_OUTOFMEMORY": N_("error.code.e_outofmemory"),
+    "E_INVALIDARG": N_("error.code.e_invalidarg"),
+    "E_POINTER": N_("error.code.e_pointer"),
+    "E_FAIL": N_("error.code.e_fail"),
+    "E_WRONG_THREAD": N_("error.code.e_wrong_thread"),
+    "E_GEN_FAILURE": N_("error.code.e_gen_failure"),
+    "E_BUSY": N_("error.code.e_busy"),
+    "E_PENDING": N_("error.code.e_pending"),
+    "E_TIMEOUT": N_("error.code.e_timeout"),
+    "E_UNREACH": N_("error.code.e_unreach"),
+    "E_CANCELLED": N_("error.code.e_cancelled"),
 }
 
 #: Failures worth one automatic retry: transient by nature, and a capture is
@@ -86,8 +89,12 @@ def explain(exc: BaseException) -> str:
     hr = hresult_of(exc)
     if hr is None:
         return str(exc) or exc.__class__.__name__
-    name, advice = _CODES.get(hr, ("unknown", "The camera reported an error."))
-    return f"{advice}  [{name} 0x{hr:08X}]"
+    name = _CODES.get(hr)
+    advice = _(_ADVICE[name]) if name else _("error.code.unknown")
+    # The code itself is never translated: it is what somebody pastes into
+    # a bug report or searches the vendor's header for.
+    return _("error.code.with_code", advice=advice,
+             name=name or "unknown", code=f"0x{hr:08X}")
 
 
 # ---- problems a person has to do something about ---------------------------
@@ -110,7 +117,8 @@ class CameraProblem(Exception):
 
     def __init__(self, heading: str, detail: str = "",
                  steps: tuple[str, ...] = ()) -> None:
-        super().__init__(heading if not detail else f"{heading}: {detail}")
+        super().__init__(heading if not detail
+                         else _("error.joined", heading=heading, detail=detail))
         self.heading = heading
         self.detail = detail
         self.steps = tuple(steps)
@@ -123,18 +131,11 @@ class SdkMissing(CameraProblem):
 
     def __init__(self, brands: tuple[str, ...] = ()) -> None:
         super().__init__(
-            "No camera SDK installed",
-            "Your camera needs a driver made by the company that built "
-            "it. This only has to be done once.",
-            (
-                "Click Install the camera driver below. darlaston will "
-                "download it and check that it works.",
-                "Or download it yourself from your camera maker's website "
-                "and unzip it into ~/toup/.",
-                "If you have an ordinary USB microscope camera instead, "
-                "start darlaston with --usb. Those need no driver, but "
-                "they cannot produce raw files.",
-            ))
+            _("error.sdk_missing.heading"),
+            _("error.sdk_missing.detail"),
+            (_("error.sdk_missing.step.install"),
+             _("error.sdk_missing.step.manual"),
+             _("error.sdk_missing.step.usb")))
 
 
 class SdkTooOld(CameraProblem):
@@ -144,14 +145,12 @@ class SdkTooOld(CameraProblem):
 
     def __init__(self, path: str, missing: tuple[str, ...]) -> None:
         super().__init__(
-            "The installed camera SDK is too old",
-            f"{path} is missing {', '.join(missing)}. ToupLite bundles a "
-            "library from 2021 under exactly the same filename as a current "
-            "SDK, so having both installed is easy to do by accident.",
-            ("Download a current SDK from your camera's manufacturer.",
-             "Set TOUPCAM_SDK to point at it, so the old copy is not found "
-             "first.",
-             "Restart darlaston."))
+            _("error.sdk_old.heading"),
+            _("error.sdk_old.detail", path=path,
+              missing=", ".join(missing)),
+            (_("error.sdk_old.step.download"),
+             _("error.sdk_old.step.point"),
+             _("error.sdk_old.step.restart")))
 
 
 class NoCameraFound(CameraProblem):
@@ -161,13 +160,11 @@ class NoCameraFound(CameraProblem):
 
     def __init__(self, what: str = "camera") -> None:
         super().__init__(
-            f"No {what} found",
-            "The software is working, but nothing answered on the bus.",
-            ("Check that the camera is plugged in.",
-             "Try a different USB port, and a different cable. A marginal "
-             "cable does not fail cleanly, it renegotiates to USB 2.0 and "
-             "everything simply becomes slow.",
-             "Some cameras take a few seconds after being plugged in."))
+            _("error.no_camera.heading", what=what),
+            _("error.no_camera.detail"),
+            (_("error.no_camera.step.plugged"),
+             _("error.no_camera.step.cable"),
+             _("error.no_camera.step.wait")))
 
 
 class CameraBusy(CameraProblem):
@@ -177,12 +174,11 @@ class CameraBusy(CameraProblem):
 
     def __init__(self, detail: str = "") -> None:
         super().__init__(
-            "Another program is using the camera",
-            detail or "The device opened, but something else holds it.",
-            ("Close ToupLite, ToupView, AmScope, or any other capture "
-             "program.",
-             "On a laptop, a video-call application may have claimed it.",
-             "darlaston will connect on its own once the camera is free."))
+            _("error.busy.heading"),
+            detail or _("error.busy.detail"),
+            (_("error.busy.step.close"),
+             _("error.busy.step.video_call"),
+             _("error.busy.step.wait")))
 
 
 class PermissionDenied(CameraProblem):
@@ -192,10 +188,8 @@ class PermissionDenied(CameraProblem):
 
     def __init__(self, detail: str = "") -> None:
         super().__init__(
-            "No permission to open the camera",
-            detail or "The camera is on the bus but this user cannot open "
-            "it. Cameras need a udev rule to be usable without root.",
-            ("Copy the SDK's udev rules file (99-toupcam.rules or your "
-             "brand's equivalent) into /etc/udev/rules.d/.",
-             "Run: sudo udevadm control --reload-rules",
-             "Unplug the camera and plug it back in."))
+            _("error.permission.heading"),
+            detail or _("error.permission.detail"),
+            (_("error.permission.step.rules"),
+             _("error.permission.step.reload"),
+             _("error.permission.step.replug")))

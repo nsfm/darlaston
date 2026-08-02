@@ -36,8 +36,9 @@ from __future__ import annotations
 from .catalogue import (Catalogue, available_languages, keys_in_use,
                         missing_keys, set_language, unused_keys)
 
-__all__ = ["_", "n_", "Catalogue", "set_language", "available_languages",
-           "keys_in_use", "missing_keys", "unused_keys"]
+__all__ = ["_", "n_", "N_", "Catalogue", "set_language",
+           "available_languages", "keys_in_use", "missing_keys",
+           "unused_keys"]
 
 #: The active catalogue. Replaced by `set_language`; never None, because a
 #: program with no words is not a state worth supporting.
@@ -59,6 +60,20 @@ def _(key: str, **params: object) -> str:
     has to be able to move them.
     """
     return _current().text(key, **params)
+
+
+def N_(key: str) -> str:
+    """Mark a key without looking it up yet, and hand it back unchanged.
+
+    gettext's own convention, for the case where keys live in a table and
+    are resolved somewhere else -- a mapping from an SDK error code to its
+    advice, say. Without a marker those keys are invisible to the check
+    that every named key exists, and the table quietly rots.
+
+    The name is upper case because it does not translate anything. It only
+    says "this string is a key", to the reader and to the checker.
+    """
+    return key
 
 
 def n_(key: str, count: int, **params: object) -> str:

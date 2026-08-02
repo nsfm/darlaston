@@ -111,3 +111,177 @@ msgid "calib.lut.tooltip"
 msgstr ""
 "Measures what the ISP does to the sensor data, so the histogram can "
 "report real headroom.\nTakes an exposure ramp, so it needs a few seconds."
+
+#. ---- camera errors ------------------------------------------------------
+#. Every message here says what to do, not merely what broke. These are the
+#. words a person reads at midnight with a diatom under the objective.
+
+#. Heading and detail joined, when a failure reaches a traceback.
+msgid "error.joined"
+msgstr "{heading}: {detail}"
+
+#. An SDK error code, with the code kept verbatim for bug reports.
+msgid "error.code.with_code"
+msgstr "{advice}  [{name} {code}]"
+
+msgid "error.code.unknown"
+msgstr "The camera reported an error."
+
+msgid "error.code.e_unexpected"
+msgstr ""
+"The camera refused a setting while it was running. This is a bug in "
+"darlaston's mode handling. Please report it."
+
+msgid "error.code.e_notimpl"
+msgstr "This camera model does not support that feature."
+
+msgid "error.code.e_accessdenied"
+msgstr ""
+"No permission to open the camera. Install the SDK's udev rules file, then "
+"unplug and replug the camera."
+
+msgid "error.code.e_outofmemory"
+msgstr "The system is out of memory."
+
+msgid "error.code.e_invalidarg"
+msgstr ""
+"The camera rejected an argument. This is a bug in darlaston. Please report "
+"it."
+
+msgid "error.code.e_pointer"
+msgstr ""
+"The camera was handed a null pointer. This is a bug in darlaston. Please "
+"report it."
+
+msgid "error.code.e_fail"
+msgstr "The camera reported a generic failure."
+
+msgid "error.code.e_wrong_thread"
+msgstr ""
+"The camera was called from the wrong thread. This is a bug in darlaston. "
+"Please report it."
+
+msgid "error.code.e_gen_failure"
+msgstr ""
+"The camera stopped responding. This is almost always physical: try a "
+"different USB 3 port, reseat the cable, or avoid a hub. The link can also "
+"drop under a long session."
+
+msgid "error.code.e_busy"
+msgstr ""
+"The camera is already in use. Another copy of darlaston or ToupLite may "
+"have it open."
+
+msgid "error.code.e_pending"
+msgstr "The camera has no data ready yet."
+
+msgid "error.code.e_timeout"
+msgstr ""
+"The camera did not deliver the frame in time. If the exposure is long this "
+"may just need more patience; if it repeats, the link may have dropped to "
+"USB 2.0, usually the cable."
+
+msgid "error.code.e_unreach"
+msgstr "The camera is unreachable over the network."
+
+msgid "error.code.e_cancelled"
+msgstr "The operation was cancelled."
+
+#. No vendor SDK installed at all.
+msgid "error.sdk_missing.heading"
+msgstr "No camera SDK installed"
+
+msgid "error.sdk_missing.detail"
+msgstr ""
+"Your camera needs a driver made by the company that built it. This only "
+"has to be done once."
+
+#. Must match the button on the waiting page.
+msgid "error.sdk_missing.step.install"
+msgstr ""
+"Click Install the camera driver below. darlaston will download it and "
+"check that it works."
+
+msgid "error.sdk_missing.step.manual"
+msgstr ""
+"Or download it yourself from your camera maker's website and unzip it into "
+"~/toup/."
+
+msgid "error.sdk_missing.step.usb"
+msgstr ""
+"If you have an ordinary USB microscope camera instead, start darlaston "
+"with --usb. Those need no driver, but they cannot produce raw files."
+
+#. A library is installed but predates functions darlaston needs.
+msgid "error.sdk_old.heading"
+msgstr "The installed camera SDK is too old"
+
+#. {path} is where it was found, {missing} the functions it lacks.
+msgid "error.sdk_old.detail"
+msgstr ""
+"{path} is missing {missing}. ToupLite bundles a library from 2021 under "
+"exactly the same filename as a current SDK, so having both installed is "
+"easy to do by accident."
+
+msgid "error.sdk_old.step.download"
+msgstr "Download a current SDK from your camera's manufacturer."
+
+msgid "error.sdk_old.step.point"
+msgstr "Set TOUPCAM_SDK to point at it, so the old copy is not found first."
+
+msgid "error.sdk_old.step.restart"
+msgstr "Restart darlaston."
+
+#. Nothing answered on the bus. {what} is usually "camera".
+msgid "error.no_camera.heading"
+msgstr "No {what} found"
+
+msgid "error.no_camera.detail"
+msgstr "The software is working, but nothing answered on the bus."
+
+msgid "error.no_camera.step.plugged"
+msgstr "Check that the camera is plugged in."
+
+msgid "error.no_camera.step.cable"
+msgstr ""
+"Try a different USB port, and a different cable. A marginal cable does not "
+"fail cleanly, it renegotiates to USB 2.0 and everything simply becomes slow."
+
+msgid "error.no_camera.step.wait"
+msgstr "Some cameras take a few seconds after being plugged in."
+
+#. Something else already owns the device.
+msgid "error.busy.heading"
+msgstr "Another program is using the camera"
+
+msgid "error.busy.detail"
+msgstr "The device opened, but something else holds it."
+
+msgid "error.busy.step.close"
+msgstr "Close ToupLite, ToupView, AmScope, or any other capture program."
+
+msgid "error.busy.step.video_call"
+msgstr "On a laptop, a video-call application may have claimed it."
+
+msgid "error.busy.step.wait"
+msgstr "darlaston will connect on its own once the camera is free."
+
+#. On the bus, but not openable by this user.
+msgid "error.permission.heading"
+msgstr "No permission to open the camera"
+
+msgid "error.permission.detail"
+msgstr ""
+"The camera is on the bus but this user cannot open it. Cameras need a udev "
+"rule to be usable without root."
+
+msgid "error.permission.step.rules"
+msgstr ""
+"Copy the SDK's udev rules file (99-toupcam.rules or your brand's "
+"equivalent) into /etc/udev/rules.d/."
+
+msgid "error.permission.step.reload"
+msgstr "Run: sudo udevadm control --reload-rules"
+
+msgid "error.permission.step.replug"
+msgstr "Unplug the camera and plug it back in."

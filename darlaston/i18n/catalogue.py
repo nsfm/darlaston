@@ -252,16 +252,18 @@ def set_language(language: str | None = None,
 
 # ---- checking ------------------------------------------------------------
 
-#: Matches `_("area.thing.role")` and `n_("area.thing.role", ...)`, which
-#: is how the code names a string. A regex over the source rather than an
+#: Matches `_("area.thing.role")`, `n_(...)` for plurals and `N_(...)` for
+#: a key held in a table and resolved later. Those are the three ways the
+#: code names a string. A regex over the source rather than an
 #: import of every module, because this has to run in a test without
 #: building a QApplication or opening a camera.
 #:
 #: At least one dot is required. Without it this also matched ordinary
 #: single-word arguments to any function ending in `_(`, and reported them
 #: as keys that were missing from the catalogue.
-_CALL = re.compile(r"""(?:^|[^\w.])n?_\(\s*["']([a-z0-9_]+(?:\.[a-z0-9_]+)+)["']""",
-                   re.MULTILINE)
+_CALL = re.compile(
+    r"""(?:^|[^\w.])[nN]?_\(\s*["']([a-z0-9_]+(?:\.[a-z0-9_]+)+)["']""",
+    re.MULTILINE)
 
 
 def keys_in_use(root: Path) -> dict[str, set[str]]:
