@@ -13,22 +13,28 @@ from __future__ import annotations
 from PySide6 import QtWidgets
 
 from .. import __version__
+from ..i18n import _
 from . import theme
 from .framed import FramedDialog
 
 #: His, from the bottom of a 1917 price list. Carried as an inscription
 #: rather than as a claim: this program does not make slides, and the line
 #: means something only while it stays his.
+#:
+#: **Deliberately not in the catalogue.** It is a quotation from a real
+#: person, and translating it would be putting words in his mouth. It is
+#: handed to the body text as a placeholder so it survives translation
+#: there too.
 TAGLINE = "Every Slide Perfect"
 
 
 class AboutDialog(FramedDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent, width=470)
-        self.setWindowTitle("About darlaston")
+        self.setWindowTitle(_("about.title"))
 
         fam = theme.load_fonts()
-        wordmark = QtWidgets.QLabel("darlaston")
+        wordmark = QtWidgets.QLabel(_("about.wordmark"))
         wordmark.setStyleSheet(
             f"font-family: '{fam['display']}'; font-size: 34px;"
             f"color: {theme.BRASS}; background: transparent;")
@@ -36,26 +42,11 @@ class AboutDialog(FramedDialog):
         tagline = QtWidgets.QLabel(TAGLINE.upper())
         tagline.setProperty("role", "label")
 
-        body = QtWidgets.QLabel(
-            "Herbert William Hutton Darlaston (1867-1949) was an amateur "
-            "naturalist from Birmingham. In 1888 a friend introduced him to "
-            "an elderly microscopist named Neville, and he came away \"in a "
-            "hot fever to do similar work\". He prepared nearly a thousand "
-            "slides that year; over the next twelve he made thousands more "
-            "and gave most of them away to beginners."
-            "<br><br>"
-            "At thirty-nine he started working at it professionally, sending "
-            "slides by post as far as Australia. His brochures promised "
-            "<i>Every Slide Perfect</i>. He made so many, so well, you can "
-            "still find them today, over a hundred years later.")
+        body = QtWidgets.QLabel(_("about.body", tagline=TAGLINE))
         body.setWordWrap(True)
         body.setProperty("role", "body")
 
-        licence = QtWidgets.QLabel(
-            "<i>darlaston</i> is provided freely to use, share, and modify "
-            "under the GPLv3, with a linking exception for the camera SDKs, "
-            "which are never redistributed. Type is IBM Plex and Petit "
-            "Formal Script, both under the SIL Open Font License.")
+        licence = QtWidgets.QLabel(_("about.licence"))
         licence.setWordWrap(True)
         licence.setProperty("role", "key")
 

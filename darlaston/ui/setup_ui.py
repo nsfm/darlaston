@@ -22,11 +22,29 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtWidgets
 
+from ..i18n import N_, _
 from ..session.model import (CameraProfile, Objective, ScopeProfile, Setup,
                              Turret)
 from . import theme
 
-_IMMERSION = ["", "oil", "water", "glycerol"]
+#: What sits between the front element and the slide: the value that gets
+#: stored, and the key for the word the menu shows.
+#:
+#: The left-hand string is an identifier, not a word. It reaches
+#: `Objective.immersion`, which is where the objective's label, the
+#: calibration key and the EXIF all read it from, so it must not move when
+#: the interface is translated. Dry is the empty string because that is
+#: what the model has always meant by "nothing between them".
+#:
+#: Paired here rather than kept as two parallel lists matched by position:
+#: the words are about to stop being recognisable next to the values they
+#: belong to, and nothing would have noticed the two lists drifting apart.
+_IMMERSION = (
+    ("", N_("setup.objective.immersion.dry.option")),
+    ("oil", N_("setup.objective.immersion.oil.option")),
+    ("water", N_("setup.objective.immersion.water.option")),
+    ("glycerol", N_("setup.objective.immersion.glycerol.option")),
+)
 
 #: Most turret positions anyone fits. Four and five are usual.
 MAX_SLOTS = 7
@@ -51,7 +69,7 @@ class ObjectiveRow(QtWidgets.QWidget):
         self.mag.setRange(0.0, 250.0)
         self.mag.setDecimals(1)
         self.mag.setSuffix("×")
-        self.mag.setSpecialValueText("empty")
+        self.mag.setSpecialValueText(_("setup.objective.mag.state.empty"))
         self.mag.setFixedWidth(84)
 
         self.na = QtWidgets.QDoubleSpinBox()
@@ -59,27 +77,23 @@ class ObjectiveRow(QtWidgets.QWidget):
         self.na.setDecimals(2)
         self.na.setSingleStep(0.05)
         self.na.setPrefix("NA ")
-        self.na.setSpecialValueText("--")
+        self.na.setSpecialValueText(_("setup.objective.na.state.unknown"))
         self.na.setFixedWidth(78)
 
         self.kind = QtWidgets.QLineEdit()
-        self.kind.setPlaceholderText("Planapo")
+        self.kind.setPlaceholderText(_("setup.objective.kind.placeholder"))
         self.kind.setMinimumWidth(70)
 
         self.immersion = QtWidgets.QComboBox()
-        self.immersion.addItems(["dry", "oil", "water", "glycerol"])
+        for value, label in _IMMERSION:
+            self.immersion.addItem(_(label), value)
         self.immersion.setFixedWidth(84)
 
         # Only meaningful on an empty position, so it is enabled by the
         # magnification going to zero and not otherwise.
-        self.capped = QtWidgets.QCheckBox("capped")
+        self.capped = QtWidgets.QCheckBox(_("setup.objective.capped.label"))
         self.capped.setFixedWidth(72)
-        self.capped.setToolTip(
-            "There is a dust cap in this position rather than an open hole.\n\n"
-            "The two look like opposite ends of the scale: an open position "
-            "passes\nthe whole condenser cone straight through and blows "
-            "white, a capped\none is black. Both are simply 'no objective' "
-            "unless you say which.")
+        self.capped.setToolTip(_("setup.objective.capped.tooltip"))
 
         for w in (self.mag, self.na):
             w.valueChanged.connect(self.changed)
@@ -112,7 +126,8 @@ class ObjectiveRow(QtWidgets.QWidget):
             magnification=self.mag.value(),
             na=self.na.value() or None,
             kind=self.kind.text().strip(),
-            immersion=_IMMERSION[self.immersion.currentIndex()])
+            # The stored identifier off the item, not the word on it.
+            immersion=self.immersion.currentData())
 
     def set_value(self, objective: Objective | None,
                   capped: bool = False) -> None:
@@ -139,9 +154,10 @@ class ObjectiveRow(QtWidgets.QWidget):
         self.mag.setValue(objective.magnification)
         self.na.setValue(objective.na or 0.0)
         self.kind.setText(objective.kind)
-        self.immersion.setCurrentIndex(
-            _IMMERSION.index(objective.immersion)
-            if objective.immersion in _IMMERSION else 0)
+        # An immersion this build does not offer falls back to dry rather
+        # than to whatever happens to sit at that index.
+        at = self.immersion.findData(objective.immersion)
+        self.immersion.setCurrentIndex(at if at >= 0 else 0)
 
 
 class ScopeEditor(QtWidgets.QWidget):
@@ -155,27 +171,26 @@ class ScopeEditor(QtWidgets.QWidget):
 
         self.name = QtWidgets.QLineEdit()
         self.condenser = QtWidgets.QLineEdit()
-        self.condenser.setPlaceholderText("phase turret, darkfield stop")
+        self.condenser.setPlaceholderText(
+            _("setup.scope.condenser.placeholder"))
 
         # Rare enough to be off by default. Zeiss call theirs an Optovar;
         # Leitz, Olympus and Nikon call it a magnification changer, so the
         # generic name is the label and the trade name is in the tooltip
         # where someone looking for it will find it.
-        self.has_changer = QtWidgets.QCheckBox("fitted")
+        self.has_changer = QtWidgets.QCheckBox(
+            _("setup.scope.changer.fitted.label"))
         self.optovar = QtWidgets.QLineEdit()
+        # Not a catalogue entry, deliberately. `_parse_factors` reads these
+        # with float() and treats a comma as a separator, so a placeholder
+        # written "1 1,25" in a locale that uses a decimal comma would be an
+        # example of input this field cannot accept.
         self.optovar.setPlaceholderText("1 1.25 1.6 2")
         changer_row = QtWidgets.QHBoxLayout()
         changer_row.setSpacing(6)
         changer_row.addWidget(self.has_changer)
         changer_row.addWidget(self.optovar, 1)
-        hint = ("An intermediate magnification changer, between the "
-                "objective and\nthe tube lens. Zeiss call theirs an Optovar; "
-                "Leitz, Olympus and\nNikon call it a magnification changer. "
-                "Most stands have none.\n\n"
-                "Its factors, space separated. It multiplies into total "
-                "magnification\nexactly as the relay does, and changes "
-                "magnification without moving\nthe optical axis, which is "
-                "what makes an overview frame cheap.")
+        hint = _("setup.scope.changer.tooltip")
         self.has_changer.setToolTip(hint)
         self.optovar.setToolTip(hint)
         self.has_changer.toggled.connect(self._sync_changer)
@@ -184,66 +199,39 @@ class ScopeEditor(QtWidgets.QWidget):
         self.tube_length.setRange(100.0, 300.0)
         self.tube_length.setDecimals(0)
         self.tube_length.setSuffix(" mm")
-        self.tube_length.setToolTip(
-            "What turns an objective's magnification into a focal length:\n"
-            "f = tube / M, which is the focal length written into every "
-            "capture.\n\n"
-            "160 is the DIN finite standard and what most pre-1990 stands "
-            "use. It is engraved on the objective, under the\n"
-            "magnification. An infinity\nstand has no tube length as such, "
-            "so put its tube *lens* focal length\nhere instead: 165 Zeiss, "
-            "180 Olympus, 200 Nikon and Leica.")
+        self.tube_length.setToolTip(_("setup.scope.tube.tooltip"))
 
         self.condenser_na = QtWidgets.QDoubleSpinBox()
         self.condenser_na.setRange(0.0, 1.6)
         self.condenser_na.setDecimals(2)
         self.condenser_na.setSingleStep(0.05)
-        self.condenser_na.setSpecialValueText("unknown")
-        self.condenser_na.setToolTip(
-            "The condenser's *working* aperture, not the number engraved on "
-            "it.\nAn NA 1.4 condenser only reaches 1.4 with oil between it "
-            "and the slide;\ndry, air caps it below 1.0, and the iris puts "
-            "it anywhere below that.\n\nIt sets how bright each objective "
-            "is, because the smaller of the two\napertures gathers the "
-            "light, and above about NA 0.5 that is the\ncondenser, not the "
-            "objective. Used only as a first guess; a confirmed\nrotation "
-            "teaches the real value.")
+        self.condenser_na.setSpecialValueText(
+            _("setup.scope.condenser_na.state.unknown"))
+        self.condenser_na.setToolTip(_("setup.scope.condenser_na.tooltip"))
 
         self.rotation_sign = QtWidgets.QComboBox()
-        self.rotation_sign.addItem("normal", 1)
-        self.rotation_sign.addItem("inverted", -1)
-        self.rotation_sign.setToolTip(
-            "How the image's handedness relates to the turret. Nothing to do "
-            "with\nwhether your turret is conventional.\n\nBetween the "
-            "turret moving and a pixel darkening, the handedness\npasses "
-            "through the objective (which inverts the image), the head and "
-            "any\nphoto tube, however the camera is screwed onto its "
-            "C-mount, and the\nraw stream arriving bottom-up. Four stages, "
-            "each able to flip a sign.\n\nYou should not need this: "
-            "correcting a wrong proposal once teaches it.")
+        self.rotation_sign.addItem(
+            _("setup.scope.handedness.normal.option"), 1)
+        self.rotation_sign.addItem(
+            _("setup.scope.handedness.inverted.option"), -1)
+        self.rotation_sign.setToolTip(_("setup.scope.handedness.tooltip"))
 
         stand = QtWidgets.QFormLayout()
-        stand.addRow("Name", self.name)
-        stand.addRow("Tube length", self.tube_length)
-        stand.addRow("Condenser", self.condenser)
-        stand.addRow("Condenser NA", self.condenser_na)
-        stand.addRow("Magnification changer", changer_row)
-        stand.addRow("Image handedness", self.rotation_sign)
+        stand.addRow(_("setup.scope.name.label"), self.name)
+        stand.addRow(_("setup.scope.tube.label"), self.tube_length)
+        stand.addRow(_("setup.scope.condenser.label"), self.condenser)
+        stand.addRow(_("setup.scope.condenser_na.label"), self.condenser_na)
+        stand.addRow(_("setup.scope.changer.label"), changer_row)
+        stand.addRow(_("setup.scope.handedness.label"), self.rotation_sign)
 
         # --- turret, in physical order
         self.slots = QtWidgets.QSpinBox()
         self.slots.setRange(1, MAX_SLOTS)
-        self.slots.setSuffix(" positions")
-        self.slots.setToolTip(
-            "How many positions the turret holds, including any that are "
-            "empty.\n\nFour and five are usual; six and seven exist. It has "
-            "to be the real\ncount, because stepping and turret detection "
-            "both work in physical\norder. A five-position turret "
-            "described as four is one position out\nfor half the ring.")
+        self.slots.setSuffix(_("setup.turret.slots.detail"))
+        self.slots.setToolTip(_("setup.turret.slots.tooltip"))
         self.slots.valueChanged.connect(self._sync_slots)
 
-        header = QtWidgets.QLabel(
-            "In turret order. The order matters for stepping and detection")
+        header = QtWidgets.QLabel(_("setup.turret.order.detail"))
         header.setProperty("role", "key")
         count_row = QtWidgets.QHBoxLayout()
         count_row.setSpacing(8)
@@ -264,7 +252,7 @@ class ScopeEditor(QtWidgets.QWidget):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(12)
         col.addLayout(stand)
-        col.addWidget(_label("OBJECTIVES"))
+        col.addWidget(_label(_("setup.turret.objectives.heading")))
         col.addLayout(turret_box)
         col.addStretch(1)
 
@@ -331,6 +319,12 @@ class ScopeEditor(QtWidgets.QWidget):
         capped = [row.is_capped() for row in self.rows[:count]]
         return ScopeProfile(
             id=base.id,
+            # Not a catalogue entry: this is the model's own default for a
+            # stand nobody has named, it is written to the library file, and
+            # `scope_id` derives the id -- and through it the calibration
+            # key -- from it. A name that changed with the interface
+            # language would file this session's flats somewhere the next
+            # one could not find them.
             name=self.name.text().strip() or "Microscope",
             turret=Turret(positions=positions,
                           current=min(base.turret.current,
@@ -364,47 +358,34 @@ class CameraEditor(QtWidgets.QWidget):
 
         self.name = QtWidgets.QLineEdit()
         self.relay = QtWidgets.QLineEdit()
-        self.relay.setPlaceholderText("AmScope 1-2x C-mount")
+        self.relay.setPlaceholderText(_("setup.camera.relay.placeholder"))
 
         self.serial = QtWidgets.QLabel()
         self.serial.setProperty("role", "key")
-        self.serial.setToolTip("Read from the camera. This is how it "
-                               "recognises itself between sessions.")
+        self.serial.setToolTip(_("setup.camera.serial.tooltip"))
 
         self.relay_factor = QtWidgets.QDoubleSpinBox()
         self.relay_factor.setRange(0.1, 10.0)
         self.relay_factor.setDecimals(2)
         self.relay_factor.setSingleStep(0.1)
         self.relay_factor.setPrefix("x ")
-        self.relay_factor.setToolTip(
-            "What the relay multiplies by, at the setting you use it.\n\n"
-            "It sits between the objective and the sensor, so it multiplies "
-            "into\ntotal magnification exactly as a magnification changer "
-            "does. A 1-2x\nC-mount adapter left at 2x doubles the "
-            "magnification at the sensor,\nwhich changes the f-number and "
-            "how much slide each pixel covers.")
+        self.relay_factor.setToolTip(_("setup.camera.relay_factor.tooltip"))
 
         self.pixel_um = QtWidgets.QDoubleSpinBox()
         self.pixel_um.setRange(0.0, 20.0)
         self.pixel_um.setDecimals(2)
         self.pixel_um.setSingleStep(0.1)
         self.pixel_um.setSuffix(" um")
-        self.pixel_um.setSpecialValueText("ask the camera")
-        self.pixel_um.setToolTip(
-            "Sensor pixel pitch, from the datasheet.\n\n"
-            "Set it and every capture can record how much slide one pixel "
-            "covers,\nwhich is the number a scale bar is drawn from. The "
-            "SDK is asked\nfirst when this is left at zero, but it reports "
-            "0 on some models,\nand a zero pitch means no scale bar "
-            "anywhere, quietly. The IMX183\nis 2.4 um.")
+        self.pixel_um.setSpecialValueText(_("setup.camera.pixel.state.ask"))
+        self.pixel_um.setToolTip(_("setup.camera.pixel.tooltip"))
 
         form = QtWidgets.QFormLayout(self)
         form.setContentsMargins(0, 0, 0, 0)
-        form.addRow("Name", self.name)
-        form.addRow("Relay / adapter", self.relay)
-        form.addRow("Relay factor", self.relay_factor)
-        form.addRow("Pixel pitch", self.pixel_um)
-        form.addRow("Serial", self.serial)
+        form.addRow(_("setup.camera.name.label"), self.name)
+        form.addRow(_("setup.camera.relay.label"), self.relay)
+        form.addRow(_("setup.camera.relay_factor.label"), self.relay_factor)
+        form.addRow(_("setup.camera.pixel.label"), self.pixel_um)
+        form.addRow(_("setup.camera.serial.label"), self.serial)
 
         for w in (self.name, self.relay):
             w.textChanged.connect(self.changed)
@@ -421,7 +402,8 @@ class CameraEditor(QtWidgets.QWidget):
             self.relay.setText(camera.relay)
             self.relay_factor.setValue(camera.relay_factor or 1.0)
             self.pixel_um.setValue(camera.pixel_um or 0.0)
-            self.serial.setText(camera.serial or "not seen yet")
+            self.serial.setText(camera.serial
+                                or _("setup.camera.serial.state.unseen"))
         finally:
             for w in widgets:
                 w.blockSignals(False)
@@ -430,6 +412,10 @@ class CameraEditor(QtWidgets.QWidget):
         base = self._camera or CameraProfile(serial="")
         return CameraProfile(
             serial=base.serial,
+            # English on purpose, as the stand's default name is: it is the
+            # model's own default and it goes to the library file, where a
+            # camera would otherwise be named after whatever language
+            # happened to be set the day it was last edited.
             name=self.name.text().strip() or "Camera",
             model=base.model,
             relay=self.relay.text().strip(),
@@ -475,13 +461,13 @@ class MicroscopeDialog(_LibraryDialog):
     def __init__(self, library, current: str | None = None,
                  parent=None) -> None:
         super().__init__(library, parent)
-        self.setWindowTitle("Microscopes")
+        self.setWindowTitle(_("setup.scopes.title"))
 
         self.editor = ScopeEditor()
         self.editor.changed.connect(self._refresh)
 
-        self.add = QtWidgets.QPushButton("New…")
-        self.remove = QtWidgets.QPushButton("Remove")
+        self.add = QtWidgets.QPushButton(_("setup.scopes.action.new"))
+        self.remove = QtWidgets.QPushButton(_("setup.scopes.action.remove"))
         self.add.clicked.connect(self._new)
         self.remove.clicked.connect(self._remove)
         list_buttons = QtWidgets.QHBoxLayout()
@@ -497,8 +483,7 @@ class MicroscopeDialog(_LibraryDialog):
         self.key = QtWidgets.QLabel()
         self.key.setProperty("role", "key")
         self.key.setWordWrap(True)
-        self.key.setToolTip("What a flat field is filed under. Change any of "
-                            "it and the existing flat no longer applies.")
+        self.key.setToolTip(_("setup.scopes.key.tooltip"))
 
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
@@ -513,7 +498,7 @@ class MicroscopeDialog(_LibraryDialog):
         right = QtWidgets.QVBoxLayout()
         right.setSpacing(10)
         right.addWidget(scroll, 1)
-        right.addWidget(_label("CALIBRATION KEY"))
+        right.addWidget(_label(_("setup.scopes.key.heading")))
         right.addWidget(self.key)
 
         body = QtWidgets.QHBoxLayout()
@@ -537,6 +522,8 @@ class MicroscopeDialog(_LibraryDialog):
         if not scopes:
             # An empty library is not a state this window can show, so it
             # makes the first stand rather than presenting nothing to edit.
+            # Named in English for the same reason `build` is: the name
+            # reaches the library file and the calibration key.
             scopes = [self._library.add_scope("Microscope")]
         self.list.blockSignals(True)
         self.list.clear()
@@ -569,8 +556,9 @@ class MicroscopeDialog(_LibraryDialog):
 
     def _new(self) -> None:
         name, ok = QtWidgets.QInputDialog.getText(
-            self, "New microscope", "Name",
-            text="Microscope %d" % (len(self._library.scopes) + 1))
+            self, _("setup.scopes.new.title"), _("setup.scopes.new.label"),
+            text=_("setup.scopes.new.detail",
+                   number=len(self._library.scopes) + 1))
         if not ok or not name.strip():
             return
         self._commit()
@@ -582,9 +570,8 @@ class MicroscopeDialog(_LibraryDialog):
             return
         name = self._library.scopes[self._selected].name
         if QtWidgets.QMessageBox.question(
-                self, "Remove microscope",
-                f"Remove {name}? Flat fields filed under it stay on disk but "
-                f"will no longer be found.") != \
+                self, _("setup.scopes.remove.title"),
+                _("setup.scopes.remove.detail", name=name)) != \
                 QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self._library.remove_scope(self._selected)
@@ -624,15 +611,12 @@ class CameraDialog(_LibraryDialog):
     def __init__(self, library, current: str | None = None,
                  parent=None) -> None:
         super().__init__(library, parent, width=520)
-        self.setWindowTitle("Cameras")
+        self.setWindowTitle(_("setup.cameras.title"))
 
         self.editor = CameraEditor()
         self.editor.changed.connect(self._refresh)
 
-        self.empty = QtWidgets.QLabel(
-            "No camera has been seen yet.\n\nOne is added the first time it "
-            "is plugged in, recognised by its serial, so there is nothing to "
-            "describe until then.")
+        self.empty = QtWidgets.QLabel(_("setup.cameras.empty.detail"))
         self.empty.setWordWrap(True)
         self.empty.setProperty("role", "body")
 
@@ -644,9 +628,8 @@ class CameraDialog(_LibraryDialog):
         # asking, and a stub you can correct beats a question you have to
         # answer before you can work. That means a built-in webcam ends up
         # in the list, so it has to be possible to take one out again.
-        self.remove = QtWidgets.QPushButton("Remove")
-        self.remove.setToolTip(
-            "Forget this camera. It comes back if it is plugged in again.")
+        self.remove = QtWidgets.QPushButton(_("setup.cameras.action.remove"))
+        self.remove.setToolTip(_("setup.cameras.remove.tooltip"))
         self.remove.clicked.connect(self._remove)
         list_buttons = QtWidgets.QHBoxLayout()
         list_buttons.setSpacing(6)
@@ -683,9 +666,9 @@ class CameraDialog(_LibraryDialog):
             return
         name = self._library.cameras[self._selected].display
         if QtWidgets.QMessageBox.question(
-                self, "Remove camera",
-                f"Forget {name}? It will be added again the next time it is "
-                f"plugged in.") != QtWidgets.QMessageBox.StandardButton.Yes:
+                self, _("setup.cameras.remove.title"),
+                _("setup.cameras.remove.detail", name=name)) != \
+                QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self._library.remove_camera(self._selected)
         self._selected = None
@@ -738,8 +721,9 @@ class CameraDialog(_LibraryDialog):
             return
         camera = self.editor.build()
         scope = self._library.scopes.get(camera.last_scope or "")
-        self.bound.setText(f"Last used on {scope.name}." if scope
-                           else "Not yet used on a microscope.")
+        self.bound.setText(
+            _("setup.cameras.bound.detail", name=scope.name) if scope
+            else _("setup.cameras.bound.detail.unused"))
         row = self.list.currentRow()
         if row >= 0 and self.list.item(row).text() != camera.display:
             self.list.item(row).setText(camera.display)

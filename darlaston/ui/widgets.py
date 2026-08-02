@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..i18n import _
 from ..live.profile import Meter
 
 INK = QtGui.QColor("#e8e6e3")
@@ -654,26 +655,17 @@ class FocusGroup(QtWidgets.QWidget):
         self.coverage = CoverageMeter()
         self.coverage.setVisible(False)
 
-        self.stack = _Toggle("stack", "Capture a Z-stack: rack the fine "
-                                      "focus, pause, and a slice is taken.\n"
-                                      "Rack again for the next. The knob is "
-                                      "the whole interface,\nnothing is "
-                                      "clicked between slices.")
+        self.stack = _Toggle(_("focus.stack.label"), _("focus.stack.tooltip"))
         self.stack.toggled.connect(self._on_stack)
-        self.peaking = _Toggle("peak", "Highlight the sharpest edges in the "
-                                       "live view.")
-        self.sweep = _Toggle("sweep", "Accumulate which parts of the frame "
-                                      "have been through focus.\nRack past "
-                                      "focus in both directions; it reads "
-                                      "100%\nwhen every region with something "
-                                      "in it has been passed.")
+        self.peaking = _Toggle(_("focus.peak.label"), _("focus.peak.tooltip"))
+        self.sweep = _Toggle(_("focus.sweep.label"), _("focus.sweep.tooltip"))
         self.peaking.toggled.connect(self.peaking_toggled)
         self.sweep.toggled.connect(self._on_sweep)
 
         header = QtWidgets.QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(4)
-        label = QtWidgets.QLabel("FOCUS")
+        label = QtWidgets.QLabel(_("focus.group.label"))
         label.setProperty("role", "label")
         header.addWidget(label)
         header.addStretch(1)
