@@ -5,9 +5,10 @@ not. Deliberately a nag rather than a gate: sometimes the light is right and
 the diatom is beautiful and calibration can wait. Capture anyway, and the file
 records what it did and did not have.
 
-The flat entry usually shows a count rather than a button, because blank fields
-are banked automatically while hunting for a subject -- most of the time enough
-are already in hand before anyone thinks to ask.
+The flat entry is a small mode rather than one button: collecting blank
+fields freezes the preview for a second at a time, and a flat is only valid
+at the illumination it was shot under, so it happens when the operator says
+so and not whenever the view happens to look empty.
 """
 from __future__ import annotations
 
@@ -111,6 +112,8 @@ class CalibrationPanel(QtWidgets.QWidget):
     capture_dark = QtCore.Signal()
     build_flat = QtCore.Signal()
     build_lut = QtCore.Signal()
+    #: Start or stop gathering blank fields.
+    collect_flat = QtCore.Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -118,10 +121,14 @@ class CalibrationPanel(QtWidgets.QWidget):
                          "Cap the lens or switch the lamp off, then shoot.\n"
                          "Averaged over several frames; ages after about eight "
                          "hours because this sensor has no cooling.")
-        self.flat = _Row("flat", "Build",
-                         "Blank fields are banked automatically while you hunt "
-                         "for a subject.\nFour at distinct stage positions are "
-                         "enough to median away slide debris.")
+        self.flat = _Row("flat", "Collect",
+                         "Set the light and the optics the way you will shoot, "
+                         "then collect.\nMove to blank glass and hold still; "
+                         "four frames at distinct stage\npositions median away "
+                         "slide debris. Each one freezes the preview for\nabout "
+                         "a second, and a flat is only valid at the "
+                         "illumination it\nwas shot under.")
+        self._collecting = False
         self.wb = _Row("white balance", "--",
                        "Measured from the flat. A featureless illuminated "
                        "field is neutral by definition.")
@@ -132,7 +139,7 @@ class CalibrationPanel(QtWidgets.QWidget):
                         "exposure ramp, so it needs a few seconds.")
 
         self.dark.act.connect(self.capture_dark)
-        self.flat.act.connect(self.build_flat)
+        self.flat.act.connect(self._on_flat)
         self.lut.act.connect(self.build_lut)
 
         self.progress = QtWidgets.QProgressBar()
@@ -156,19 +163,38 @@ class CalibrationPanel(QtWidgets.QWidget):
 
     # ---- state -----------------------------------------------------------
 
+    def _on_flat(self) -> None:
+        """One row, three jobs: start collecting, stop, or build."""
+        if self._collecting:
+            self.collect_flat.emit(False)
+        elif self.flat.button.text() == "Build":
+            self.build_flat.emit()
+        else:
+            self.collect_flat.emit(True)
+
     def set_status(self, status: dict, banked: int = 0, wanted: int = 4,
-                   live: bool = True) -> None:
+                   live: bool = True, collecting: bool = False) -> None:
         self.dark.set_state(status.get("dark", False), actionable=live)
         have_flat = status.get("flat", False)
-        # The flat's action only becomes available once enough blank fields
-        # have been banked -- otherwise the button is an invitation to fail.
-        # Say the counter fills itself. It climbing unprompted is the design
-        # working, but it reads as a glitch when nothing says so.
-        detail = "" if have_flat else f"{banked}/{wanted} auto"
-        if not have_flat and 0 < banked < 3:
-            detail += "  3+ rejects debris"
-        self.flat.set_state(have_flat, detail,
-                            actionable=live and banked >= 2 and not have_flat)
+        self._collecting = collecting
+        # Three states, because collecting is a mode with a cost: while it
+        # runs the preview freezes for a second at a time, so it has to be
+        # visible that it is running and stoppable without finishing.
+        if have_flat:
+            action, detail, actionable = "Build", "", False
+        elif collecting:
+            action = "Stop"
+            detail = f"{banked}/{wanted}  move to blank glass"
+            actionable = True
+        elif banked >= 2:
+            action = "Build"
+            detail = f"{banked}/{wanted}" + ("  3+ rejects debris"
+                                             if banked < 3 else "")
+            actionable = live
+        else:
+            action, detail, actionable = "Collect", f"{banked}/{wanted}", live
+        self.flat.button.setText(action)
+        self.flat.set_state(have_flat, detail, actionable=actionable)
         self.wb.set_state(status.get("white_balance", False),
                           "from flat", actionable=False)
         self.lut.set_state(status.get("preview_lut", False), actionable=live)

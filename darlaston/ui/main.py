@@ -279,6 +279,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_panel = CalibrationPanel()
         self.calib_panel.capture_dark.connect(self._do_dark)
         self.calib_panel.build_flat.connect(self._do_flat)
+        self.calib_panel.collect_flat.connect(self._collect_flat)
         self.calib_panel.build_lut.connect(self._do_lut)
         # Performance, in a floating panel like the others. Off by
         # default: it is a diagnostic, and a permanent cost table is a
@@ -880,6 +881,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _do_dark(self) -> None:
         self.calibration.capture_dark()
 
+    @QtCore.Slot(bool)
+    def _collect_flat(self, on: bool) -> None:
+        """Start or stop gathering blank fields.
+
+        A mode rather than a background habit: each frame freezes the
+        preview for about a second, and a flat is only valid at the
+        illumination it was shot under -- which nothing here can read, so
+        the operator saying "now" is the only reliable signal there is.
+        """
+        self.opportunist.enabled = on
+        self.strip.set_note(
+            "collecting blank fields -- move to empty glass" if on else "")
+        self._refresh_calibration()
+
     def _do_flat(self) -> None:
         self.calibration.build_flat(self.setup, self.opportunist.frames,
                                     self.subject.slide_note)
@@ -913,7 +928,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                    self.subject.slide_note)
         live = self.session.status.is_live and not self.calibration.busy
         self.calib_panel.set_status(status, self.opportunist.count,
-                                    self.opportunist.bank.wanted, live=live)
+                                    self.opportunist.bank.wanted, live=live,
+                                    collecting=self.opportunist.enabled)
         self.calib_button.set_status(status, busy=self.calibration.busy)
 
     def _on_capture(self) -> None:

@@ -281,3 +281,77 @@ def test_a_rejected_grab_still_costs_its_turn():
     assert len(grabs) <= 1, (
         f"{len(grabs)} raw grabs in 0.2 s; each one stalls the preview for "
         f"over a second")
+
+
+def test_blank_fields_are_only_collected_when_asked_for(qapp):
+    """Each frame freezes the preview for about a second, and a flat is only
+    valid at the illumination it was shot under -- which nothing here can
+    read. The operator saying "now" is the only reliable signal there is."""
+    import types
+
+    from darlaston.calib.opportunist import Opportunist
+    from darlaston.ui.calib_ui import CalibrationPanel
+
+    opportunist = Opportunist(types.SimpleNamespace(backend=object()))
+    assert not opportunist.enabled, "collecting on by default"
+
+    signals = types.SimpleNamespace(xy_offset=(0.0, 0.0), looks_blank=True,
+                                    settled=True)
+    assert not opportunist._should_grab(signals), \
+        "a blank, settled field grabbed without being asked"
+    opportunist.enabled = True
+    assert opportunist._should_grab(signals)
+
+    # The row is one control with three jobs, and it has to say which.
+    panel = CalibrationPanel()
+    asked = []
+    built = []
+    panel.collect_flat.connect(asked.append)
+    panel.build_flat.connect(lambda: built.append(True))
+
+    panel.set_status({"flat": False}, banked=0, collecting=False)
+    assert panel.flat.button.text() == "Collect"
+    panel.flat.button.click()
+    assert asked == [True]
+
+    panel.set_status({"flat": False}, banked=2, collecting=True)
+    assert panel.flat.button.text() == "Stop"
+    panel.flat.button.click()
+    assert asked == [True, False]
+
+    panel.set_status({"flat": False}, banked=4, collecting=False)
+    assert panel.flat.button.text() == "Build"
+    panel.flat.button.click()
+    assert built == [True], "Build did not build"
+
+
+def test_collecting_stops_itself_once_there_are_enough(qapp):
+    """A mode with a cost should not stay on after it is done."""
+    import types
+
+    import numpy as np
+
+    from darlaston.calib.opportunist import Opportunist
+
+    class Grab:
+        def copy(self):
+            return np.zeros((4, 4), np.uint16)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    opportunist = Opportunist(
+        types.SimpleNamespace(backend=types.SimpleNamespace(
+            grab_raw=lambda: Grab())), wanted=2)
+    opportunist.enabled = True
+    for step in range(2):
+        opportunist.bank.note_motion(500.0, 0.0)      # a fresh patch each time
+        # observe() takes this before spawning the grab thread; called
+        # directly, the test stands in for it.
+        opportunist._grabbing.acquire()
+        opportunist._grab()
+    assert opportunist.bank.complete
+    assert not opportunist.enabled, "left collecting after the bank filled"

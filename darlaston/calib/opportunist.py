@@ -1,26 +1,37 @@
-"""Collecting flat fields without asking for them.
+"""Collecting flat fields, while the operator is deliberately collecting them.
 
-Most of a session is spent crossing empty slide looking for something worth
-photographing. Those moments are free flat fields, if they can be taken without
-interrupting anything.
+Crossing empty slide looking for a subject *looks* like a free flat field,
+and this used to take one whenever it saw one. It is not free, and it was
+not sound:
 
-The awkward constraint is that **a flat has to be raw**. Blank detection runs on
-the 8-bit preview, but a flat built from preview frames cannot correct raw data
--- so noticing the moment is cheap and taking the frame is not: a full pull
-stops the stream, reconfigures, moves forty megabytes and restarts, over a
-second in all.
+  * the frame is not free. A flat has to be raw, so taking one stops the
+    stream, reconfigures, moves forty megabytes and restarts -- over a
+    second of frozen preview, unasked.
+  * a flat is only valid at the illumination it was shot under, and
+    nothing here can read the lamp or the condenser. Grabbing across a
+    session in which those are adjusted constantly builds a flat out of
+    frames that do not agree with each other or with the captures it
+    corrects.
+  * blankness is a guess, and a wrong guess is not a wasted frame -- it
+    bakes a specimen into the flat, and its inverse then appears on every
+    frame that flat ever corrects, undetectably.
 
-So the rule is conservative. A frame is only taken when all of these hold:
+So it is off unless the operator has said they are collecting, from the
+calibration panel, having put the light and the optics where they want
+them. It still earns its place there: four frames at *different* stage
+positions median away slide debris, and gathering those while the stage
+moves naturally beats asking somebody to find four empty spots by hand.
 
-  * the preview looks like empty slide
+While collecting, a frame is taken only when all of these hold:
+
+  * the preview looks like empty slide, patch by patch rather than on
+    average, so a few specimens on a lot of empty ground cannot pass
   * the view has been still for a moment -- nobody is mid-move
   * the stage is far enough from every patch already banked, because four
     frames of the same patch do not median away that patch's debris
-  * enough time has passed since the last one, so a long pause on an empty
-    field does not fire repeatedly
+  * enough time has passed since the last *attempt*, successful or not
 
-Even then the pause is visible, and it can be switched off. A tool that freezes
-unpredictably is worse than one that asks.
+and the pause is announced while it happens.
 """
 from __future__ import annotations
 
@@ -34,7 +45,7 @@ from .service import FlatBank
 
 
 class Opportunist:
-    """Watches the live signals and banks raw blank fields when it is safe to."""
+    """Banks raw blank fields, while the operator is collecting them."""
 
     #: Never twice within this many seconds, however still and blank it looks.
     MIN_INTERVAL = 4.0
@@ -46,7 +57,9 @@ class Opportunist:
         self._on_banked = on_banked or (lambda _n, _w: None)
         self._on_busy = on_busy or (lambda _b: None)
         self.bank = FlatBank(wanted=wanted)
-        self.enabled = True
+        #: Off until asked. See the module docstring for why this is not a
+        #: convenience default.
+        self.enabled = False
         self._key: str | None = None
         self._last = 0.0
         self._grabbing = threading.Lock()
@@ -111,6 +124,10 @@ class Opportunist:
             # we already have is discarded rather than silently duplicating it.
             if self.bank.offer(raw):
                 self._last = time.time()
+                # Enough is enough: stop of its own accord rather than
+                # leaving a mode running that nobody needs any more.
+                if self.bank.complete:
+                    self.enabled = False
                 self._on_banked(self.bank.count, self.bank.wanted)
         except Exception:
             pass          # a failed opportunistic grab must never surface
