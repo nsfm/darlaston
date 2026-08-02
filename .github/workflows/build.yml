@@ -4,9 +4,9 @@ name: artifacts
 #
 # `pip install` is a developer distribution and the users are not
 # developers, so every push produces a downloadable build, and every push
-# to main that any commit asked for a version becomes a release with a tag
-# of its own. Nobody types a version: packaging/version.py reads a `Bump:`
-# trailer out of the commit bodies. The builds are also *smoke tested* on the machine
+# to main is a release with a tag of its own. Nobody types a version:
+# packaging/version.py walks the history and counts [MAJOR] and [MINOR]
+# markers. The builds are also *smoke tested* on the machine
 # that made them: an artifact that was never started is a file, not a
 # program, and the failure modes here (a missing Qt plugin, a data file
 # left out of the bundle) all look like a clean build and a dead launch.
@@ -34,11 +34,12 @@ permissions:
   contents: write        # the release job pushes a tag and a release
 
 jobs:
-  # What this push is going to be called, decided before anything is built
-  # so the artifacts carry the real version in their filenames rather than
-  # a development one. The tag itself is only created at the end, once
-  # every platform has built and started -- a tag that exists for a release
-  # that failed is worse than no tag.
+  # What this commit is called, worked out from the whole history behind it
+  # by packaging/version.py -- every commit has its own version and no two
+  # share one. Decided before anything is built so the artifacts carry it
+  # in their filenames rather than a development string with a hash in it.
+  # The tag itself is created at the end, once every platform has built and
+  # started: a tag pointing at a release that failed is worse than no tag.
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -52,19 +53,14 @@ jobs:
         with:
           python-version: "3.12"
       - id: pick
-        # Exit 2 means "nothing here is worth releasing", which is a
-        # decision and not a failure, so it must not fail the job.
         run: |
-          set +e
-          TAG=$(python packaging/version.py --explain)
-          STATUS=$?
-          set -e
-          if [ "$STATUS" -eq 0 ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "releasing as $TAG"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "no release from this push"
+          VERSION=$(python packaging/version.py --bare --explain)
+          echo "this commit is $VERSION"
+          # Only main releases. A pull request still builds, so the
+          # artifacts can be downloaded and tried, but it does not tag.
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           fi
 
   build:
@@ -158,9 +154,8 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
-  # Rolling: every push to main that any commit asked for a version becomes
-  # a release, tag and all. Nobody types a version -- see
-  # packaging/version.py for the `Bump:` trailer that decides it.
+  # Rolling: every push to main is a release, tag and all, named for the
+  # commit it was built from.
   release:
     name: release
     needs: [version, build]

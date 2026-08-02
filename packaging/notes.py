@@ -3,13 +3,13 @@
 
 Written rather than hand-maintained because a changelog nobody updates is
 worse than no changelog: it goes stale silently and then misleads. The
-commit subjects in this project are already written as plain descriptions
-of what changed, which is exactly what a release note is, so they are
-reused directly instead of being duplicated into a second file.
+commit subjects in this project are already plain descriptions of what
+changed, which is what a release note is, so they are reused directly
+instead of being duplicated into a second file.
 
-Commits are grouped by the `Bump:` trailer that decided the version -- see
-packaging/version.py -- so anything called out as a minor or major change
-appears first, where somebody deciding whether to upgrade will read it.
+Grouped by what each commit did to the version -- see packaging/version.py
+-- so anything that moved the major or minor number appears first, where
+somebody deciding whether to upgrade will read it.
 """
 from __future__ import annotations
 
@@ -21,47 +21,48 @@ from pathlib import Path
 # not on the path by default.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from version import TAG, TRAILER, commits_since        # noqa: E402
+from version import MARKER, TAG, level_of, tag_for        # noqa: E402
 
 #: Most subjects listed under one heading.
 MOST = 25
 
 
-def _subject(message: str) -> str:
-    return message.strip().splitlines()[0].strip()
+def _git(*args: str) -> str:
+    return subprocess.run(("git",) + args, capture_output=True, text=True,
+                          check=True).stdout.strip()
 
 
-def _level(message: str) -> str:
-    found = TRAILER.findall(message)
-    return found[0].lower() if found else "patch"
+def previous_tag(current: str) -> str | None:
+    """The newest release tag that is not the one being released now."""
+    tags = [t for t in _git("tag", "--sort=-version:refname").splitlines()
+            if TAG.match(t) and t != current]
+    return tags[0] if tags else None
 
 
 def main() -> int:
     try:
-        tags = [t for t in subprocess.run(
-            ("git", "tag", "--sort=-version:refname"),
-            capture_output=True, text=True, check=True).stdout.splitlines()
-            if TAG.match(t)]
+        this = tag_for("HEAD")
+        previous = previous_tag(this)
+        span = f"{previous}..HEAD" if previous else "HEAD"
+        raw = _git("log", "--first-parent", span, "--format=%B%x00")
     except subprocess.CalledProcessError as exc:
         print(f"git failed: {exc}", file=sys.stderr)
         return 1
 
-    # The tag being released is HEAD's; the range is from the one before.
-    this = tags[0] if tags else None
-    previous = tags[1] if len(tags) > 1 else None
-    messages = commits_since(previous)
-
+    messages = [m.strip() for m in raw.split("\0") if m.strip()]
     buckets: dict[str, list[str]] = {"major": [], "minor": [], "patch": []}
     for message in messages:
-        subject = _subject(message)
+        subject = message.splitlines()[0].strip()
         if subject.startswith("Merge "):
             continue
-        buckets[_level(message)].append(subject)
+        # The marker did its job when the version was worked out. Here it
+        # is machinery showing through at the one person the notes are
+        # for, who is deciding whether to download something.
+        buckets[level_of(message)].append(MARKER.sub("", subject).strip())
 
-    print(f"## darlaston {this or 'unreleased'}\n")
-    headings = (("major", "Breaking"), ("minor", "New"),
-                ("patch", "Fixed and changed"))
-    for key, heading in headings:
+    print(f"## darlaston {this}\n")
+    for key, heading in (("major", "Breaking"), ("minor", "New"),
+                         ("patch", "Fixed and changed")):
         if not buckets[key]:
             continue
         print(f"### {heading}\n")
@@ -83,7 +84,7 @@ def main() -> int:
     print("- **Windows**: the `.zip`. Unpack it and run `darlaston.exe`.")
     print()
     print("These builds are unsigned, so macOS and Windows will warn about "
-          "them. The disk image contains a note explaining what to click, "
+          "them. The disk image carries a note explaining what to click, "
           "and the same text is in `packaging/NOTARISING.md`.")
     print()
     print("The camera SDK is never bundled -- it ships with no licence of "
