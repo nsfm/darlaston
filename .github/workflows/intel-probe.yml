@@ -1,0 +1,75 @@
+name: intel probe
+
+# Throwaway experiment, run by hand: can an Apple silicon runner produce an
+# Intel build, so the scarce macos-13 image is not needed?
+#
+# PyInstaller does not cross-compile -- it bundles the interpreter and the
+# native extensions of whatever is running it. But Apple silicon can *run*
+# x86_64 through Rosetta, so an x86_64 Python driving an x86_64 PyInstaller
+# would produce an x86_64 bundle without ever touching an Intel machine.
+#
+# Three things have to hold, and this job answers all three separately
+# rather than failing as one lump:
+#   1. Rosetta is present on the runner image
+#   2. an x86_64 Python 3.12 can be obtained there
+#   3. the x86_64 wheels for PySide6, OpenCV and numpy install and import
+#
+# Deleted once it has answered. It is here to be read in the run log.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is this actually Apple silicon
+        run: |
+          uname -m
+          sysctl -n machdep.cpu.brand_string || true
+
+      - name: Is Rosetta there
+        continue-on-error: true
+        run: |
+          if /usr/bin/pgrep -q oahd; then
+            echo "rosetta daemon is running"
+          else
+            echo "no rosetta daemon; trying to install"
+            sudo softwareupdate --install-rosetta --agree-to-license || \
+              echo "could not install rosetta"
+          fi
+          echo "--- can we run an x86_64 process? ---"
+          arch -x86_64 /usr/bin/uname -m || echo "arch -x86_64 FAILED"
+
+      - name: Can setup-python give us an x86_64 interpreter
+        id: xpy
+        continue-on-error: true
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: What did we get
+        continue-on-error: true
+        run: |
+          echo "setup-python outcome: ${{ steps.xpy.outcome }}"
+          which python || true
+          python -c "import platform, sys; print('python', sys.version.split()[0], platform.machine())" || true
+          file "$(which python)" || true
+
+      - name: Do the x86_64 wheels install and import
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy>=1.24" "opencv-python-headless>=4.8" "PySide6>=6.5"
+          python - <<'PY'
+          import platform
+          import cv2, numpy
+          from PySide6 import QtCore
+          print("machine:", platform.machine())
+          print("numpy", numpy.__version__, "cv2", cv2.__version__,
+                "Qt", QtCore.qVersion())
+          PY
