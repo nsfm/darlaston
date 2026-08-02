@@ -243,3 +243,122 @@ def test_pipeline_recovers_commanded_stage_motion():
     assert final.stage_pos[0] > 0 and final.stage_pos[1] > 0, \
         "stage moved +x/+y, so the view must have moved +x/+y over the slide"
     cam.close()
+
+
+def _fourier_walk(per_frame, frames=60, size=(480, 640)):
+    """Integrate a slow, steady pan through the real pipeline.
+
+    Frames are shifted by multiplying by a linear phase ramp, so each one
+    is a band-limited-exact translation of the last. That matters: any
+    interpolated or integer-quantised rig has its own sub-pixel error, and
+    sub-pixel error is the thing under test. The mock camera cannot be used
+    here at all -- it quantises stage position with int() twice, so it
+    renders no sub-pixel motion.
+    """
+    import cv2
+    import numpy as np
+
+    from darlaston.camera.buffers import BufferPool, Frame
+    from darlaston.live.pipeline import LivePipeline
+
+    h, w = size
+    rng = np.random.default_rng(9)
+    base = cv2.GaussianBlur(rng.normal(128, 40, (h, w)), (0, 0), 2.0)
+    fy = np.fft.fftfreq(h)[:, None]
+    fx = np.fft.fftfreq(w)[None, :]
+    spectrum = np.fft.fft2(base)
+
+    pool = BufferPool((h, w, 3), np.uint8, count=4)
+    got = []
+    pipe = LivePipeline(got.append)
+    travel = 0.0
+    for i in range(frames):
+        travel += per_frame
+        ramp = np.exp(-2j * np.pi * (fx * travel + fy * travel))
+        grey = np.clip(np.real(np.fft.ifft2(spectrum * ramp)),
+                       0, 255).astype(np.uint8)
+        buf = pool.acquire()
+        buf[:] = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+        frame = Frame(data=buf, seq=i, timestamp=i / 30.0, exposure_us=8000,
+                      gain_pct=100, binned=True, _pool=pool)
+        with frame:
+            pipe._analyse(frame)
+    return got[-1].stage_pos, travel - per_frame
+
+
+def test_a_slow_pan_is_not_quietly_lost():
+    """The bug this exists to prevent.
+
+    Integrating consecutive frames loses most of the travel of a slow hand.
+    Phase correlation's sub-pixel estimator is biased toward whole pixels
+    -- peak locking -- and the preview is reduced by four before
+    correlating, so one pixel of stage motion is a quarter of a pixel
+    there, well inside the biased region. Confidence stays above 0.9
+    throughout, so nothing is gated and nothing is logged while the
+    position stops keeping up.
+
+    Two measurements, because the size matters. At the real preview size
+    of 1824x1216, integrating frame to frame over ninety frames came out
+    at -47% x and -49% y for 1 px/frame. This test runs at 640x480 for
+    speed, where the same walk loses about 99%. Either way the assertion
+    below separates them by more than an order of magnitude; the
+    5% bound is nowhere near either regime.
+    """
+    for per_frame in (0.7, 1.0, 1.5, 3.0):
+        pos, travelled = _fourier_walk(per_frame)
+        assert pos is not None, f"never locked at {per_frame} px/frame"
+        for axis, got in enumerate(pos):
+            error = (abs(got) - travelled) / travelled
+            assert abs(error) < 0.05, (
+                f"{per_frame} px/frame lost {error * 100:+.0f}% on axis "
+                f"{'xy'[axis]}: {abs(got):.1f} of {travelled:.1f} px")
+
+
+def test_the_step_limit_is_per_axis():
+    """It used to be MAX_STEP * min(shape), so on a 3:2 frame x was allowed
+    23% of its own width while y was allowed 35% of its height."""
+    from darlaston.live.tracker import StageTracker
+
+    shape = (1216, 1824)                       # h, w
+    t = StageTracker()
+    t.advance((0.0, 0.0), 0.9, shape)
+
+    # 30% of the width is fine for x, and used to be rejected.
+    pos, locked = t.advance((0.30 * 1824, 0.0), 0.9, shape)
+    assert locked, "a shift well inside the frame width was rejected"
+
+    # 40% of the height is past the limit for y.
+    _, locked = t.advance((0.0, 0.40 * 1216), 0.9, shape)
+    assert not locked
+
+
+def test_the_anchor_replaces_the_position_rather_than_adding_to_it():
+    from darlaston.live.tracker import StageTracker
+
+    shape = (400, 400)
+    t = StageTracker()
+    # The same shift measured twice against one keyframe is one move, not
+    # two. Integrating would double it.
+    t.anchor((10.0, 0.0), 0.9, shape)
+    pos, locked, rekey = t.anchor((10.0, 0.0), 0.9, shape)
+    assert locked and not rekey
+    assert pos == (-10.0, 0.0), pos
+
+    # Once the view has slid far enough, a fresh keyframe is asked for and
+    # the next measurement is relative to the new anchor.
+    pos, _, rekey = t.anchor((0.30 * 400, 0.0), 0.9, shape)
+    assert rekey, "no new keyframe wanted after a large slide"
+    after, _, _ = t.anchor((5.0, 0.0), 0.9, shape)
+    assert after[0] == pos[0] - 5.0
+
+
+def test_an_unmeasurable_shift_asks_for_a_new_keyframe():
+    """Otherwise a view that outran its keyframe gates for ever."""
+    from darlaston.live.tracker import StageTracker
+
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, (400, 400))
+    before = t.gated
+    pos, locked, rekey = t.anchor((0.0, 380.0), 0.9, (400, 400))
+    assert not locked and rekey
+    assert t.gated == before + 1

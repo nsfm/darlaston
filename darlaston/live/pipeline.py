@@ -141,7 +141,12 @@ class LivePipeline:
         self._turret = None
         self._signatures = None
         self._learned = None
-        self._prev_small: np.ndarray | None = None
+        #: The frame the stage position is currently measured against, the
+        #: shift last measured from it, and the candidate that replaces it
+        #: when the tracker asks for a fresh anchor.
+        self._key: np.ndarray | None = None
+        self._key_offset: tuple[float, float] = (0.0, 0.0)
+        self._key_pending: np.ndarray | None = None
         self._hann: np.ndarray | None = None
         #: Split destinations, reused across frames. Allocating three fresh
         #: 2.2 MP planes per frame cost 3217 minor page faults -- the kernel
@@ -426,11 +431,13 @@ class LivePipeline:
         # square is 7.125x and measured *worse* than what it replaced.
         small = cv2.resize(gray, (gray.shape[1] // 4, gray.shape[0] // 4),
                            interpolation=cv2.INTER_AREA)
-        offset, confidence = self._track(small, gray.shape)
+        key_offset, offset, confidence = self._track(small, gray.shape)
         with self._lock:
-            stage_pos, stage_tracking = self._xy.advance(
-                offset, confidence, gray.shape)
+            stage_pos, stage_tracking, rekey = self._xy.anchor(
+                key_offset, confidence, gray.shape)
             self._confidence = confidence
+        if rekey or key_offset is None:
+            self._rekey()
 
         # Stillness, from the tracker we already run. Two pixels of drift is
         # hand tremor on a manual stage, not movement.
@@ -567,7 +574,8 @@ class LivePipeline:
         h, w = small.shape[:2]
         if self._hann is None or self._hann.shape[:2] != (h, w):
             self._hann = cv2.createHanningWindow((w, h), cv2.CV_32F)
-            self._prev_small = None
+            self._key = self._key_pending = None
+            self._key_offset = (0.0, 0.0)
         # OpenCV 5's phaseCorrelate windows its inputs IN PLACE, and the
         # current frame is kept as the next frame's `prev` -- which used to
         # need a defensive copy of both inputs on every call, or else each
@@ -582,13 +590,31 @@ class LivePipeline:
         # Do NOT pass self._hann to phaseCorrelate as well: that windows
         # already-windowed data and puts the bias straight back.
         cur = cv2.multiply(small, self._hann, dtype=cv2.CV_32F)
-        prev, self._prev_small = self._prev_small, cur
-        if prev is None:
-            return None, 0.0
-        (dx, dy), response = cv2.phaseCorrelate(prev, cur)
+        # Correlated against the *keyframe*, not the previous frame. See
+        # StageTracker.anchor for the measurements: integrating consecutive
+        # frames loses about half the travel of a slow hand, and does it
+        # with the confidence sitting near 1.0.
+        if self._key is None:
+            self._key, self._key_offset = cur, (0.0, 0.0)
+            return None, None, 0.0
+        (dx, dy), response = cv2.phaseCorrelate(self._key, cur)
         sx = full_shape[1] / w
         sy = full_shape[0] / h
-        return (dx * sx, dy * sy), float(response)
+        key_offset = (dx * sx, dy * sy)
+        # Frame-to-frame motion for free, as the change in the shift from a
+        # fixed reference. A second correlation would cost another 2 ms per
+        # frame to answer the same question slightly worse.
+        motion = (key_offset[0] - self._key_offset[0],
+                  key_offset[1] - self._key_offset[1])
+        self._key_offset = key_offset
+        self._key_pending = cur
+        return key_offset, motion, float(response)
+
+    def _rekey(self) -> None:
+        """Adopt the current frame as the new anchor point."""
+        if self._key_pending is not None:
+            self._key = self._key_pending
+            self._key_offset = (0.0, 0.0)
 
     #: The sharpness field is computed at half the preview's linear size.
     #: Both its consumers are insensitive to that: the peaking overlay is

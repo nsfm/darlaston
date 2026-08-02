@@ -42,16 +42,29 @@ class StageTracker:
     #: A single-frame shift beyond this fraction of the frame is rejected:
     #: phase correlation cannot measure past half a frame, and matches near
     #: that limit are where the wraparound lies live.
+    #:
+    #: Applied per axis. It used to be `MAX_STEP * min(shape)`, which on a
+    #: 3:2 frame gave x 23% of its own width and y 35% of its height, for
+    #: no physical reason -- the measurable range is a property of each
+    #: axis separately.
     MAX_STEP = 0.35
+
+    #: Re-anchor once the view has slid this far from the keyframe, as a
+    #: fraction of the correlated image's shorter side. Far enough that the
+    #: shift is measured well, near enough that the two frames still share
+    #: most of their content.
+    REKEY = 0.20
 
     def __init__(self) -> None:
         self._pos = (0.0, 0.0)
+        self._anchor = (0.0, 0.0)
         self._tracking = False
         self._ever = False
         self._gated = 0
 
     def reset(self) -> None:
         self._pos = (0.0, 0.0)
+        self._anchor = (0.0, 0.0)
         self._tracking = False
         self._ever = False
         self._gated = 0
@@ -75,22 +88,81 @@ class StageTracker:
         the same thing as it not having moved."""
         return self._gated
 
+    def _acceptable(self, offset: tuple[float, float], confidence: float,
+                    shape: tuple[int, ...]) -> bool:
+        if confidence < self.CONFIDENCE:
+            return False
+        return (abs(offset[0]) <= self.MAX_STEP * shape[1]
+                and abs(offset[1]) <= self.MAX_STEP * shape[0])
+
     def advance(self, offset: tuple[float, float] | None, confidence: float,
                 shape: tuple[int, ...]) -> tuple[tuple[float, float] | None, bool]:
-        """Fold in one frame's measured shift. Returns (position, locked)."""
+        """Fold in one frame's measured shift. Returns (position, locked).
+
+        Kept for consumers that genuinely have only a frame-to-frame
+        measurement. `anchor` is what the live pipeline uses, and is far
+        more accurate for slow motion -- see its docstring.
+        """
         if offset is None:
             self._tracking = False
             return self.position, False
-        limit = self.MAX_STEP * min(shape[0], shape[1])
-        if (confidence < self.CONFIDENCE
-                or abs(offset[0]) > limit or abs(offset[1]) > limit):
+        if not self._acceptable(offset, confidence, shape):
             self._tracking = False
             self._gated += 1
             return self.position, False
         self._pos = (self._pos[0] - offset[0], self._pos[1] - offset[1])
+        self._anchor = self._pos
         self._tracking = True
         self._ever = True
         return self._pos, True
+
+    def anchor(self, offset: tuple[float, float] | None, confidence: float,
+               shape: tuple[int, ...]
+               ) -> tuple[tuple[float, float] | None, bool, bool]:
+        """Set the position from a shift measured against a *keyframe*.
+
+        Returns (position, locked, wants_new_keyframe).
+
+        Integrating consecutive frames is the obvious design and it loses
+        half the travel of a slow hand. Phase correlation's sub-pixel
+        estimator is biased toward whole pixels -- peak locking -- and the
+        preview is reduced by four before correlating, so one pixel of
+        stage motion is a quarter of a pixel here, deep in the biased
+        region. Measured on Fourier-exact shifts through the shipped code
+        path, integrating frame to frame over ninety frames:
+
+            0.7 px/frame   -52% x   -53% y
+            1.0 px/frame   -47% x   -49% y
+            1.5 px/frame   -39% x   -40% y
+            10  px/frame    -2% x    -3% y
+
+        and the confidence stays above 0.93 throughout, so nothing is
+        gated and nothing is logged while the position quietly stops
+        keeping up. Measuring against a keyframe instead holds every one of
+        those cases inside +-1%, because the shift being measured grows
+        until it is large enough to measure well, and the answer *replaces*
+        the position rather than adding to it. Error is then bounded by one
+        keyframe interval instead of accumulating without limit.
+
+        It is not free of bias, only bounded: a keyframe interval's worth
+        of sub-pixel error still lands each time the anchor moves.
+        """
+        if offset is None:
+            self._tracking = False
+            return self.position, False, False
+        if not self._acceptable(offset, confidence, shape):
+            self._tracking = False
+            self._gated += 1
+            # A shift too big to trust is also a shift that has outrun its
+            # keyframe, so ask for a fresh one rather than gating for ever.
+            return self.position, False, True
+        self._pos = (self._anchor[0] - offset[0], self._anchor[1] - offset[1])
+        self._tracking = True
+        self._ever = True
+        rekey = max(abs(offset[0]), abs(offset[1])) > self.REKEY * min(shape[:2])
+        if rekey:
+            self._anchor = self._pos
+        return self._pos, True, rekey
 
 
 @dataclass
