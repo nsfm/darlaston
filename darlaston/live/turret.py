@@ -50,9 +50,26 @@ def model_signatures(turret, condenser_na: float | None = 0.55
     condenser matched to one position and not another.
     """
     out: list[float | None] = []
-    for objective in getattr(turret, "positions", []) or []:
+    positions = getattr(turret, "positions", []) or []
+    for index, objective in enumerate(positions):
         if objective is None or not objective.magnification:
-            out.append(None)
+            # An empty position is not unknown once it is known to be
+            # empty, and the two kinds sit at opposite ends of the scale.
+            # Capped is black. Open passes the condenser cone straight
+            # through with nothing to magnify it, which is the same
+            # formula at M = 1 -- about 340x the brightest objective on a
+            # typical turret, and in practice a blown white frame.
+            #
+            # Guessing here is safe in a way it would not be elsewhere:
+            # these are far enough from every objective's value that the
+            # ordering is right even if the number is not, and a confirmed
+            # rotation replaces it with a measurement.
+            if getattr(turret, "is_capped", None) and turret.is_capped(index):
+                out.append(0.0)
+            elif objective is None and condenser_na:
+                out.append(condenser_na ** 2)
+            else:
+                out.append(None)
             continue
         na = objective.na
         if na is None:

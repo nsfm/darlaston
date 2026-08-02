@@ -95,6 +95,28 @@ class Turret:
 
     positions: list[Objective | None] = field(default_factory=list)
     current: int = 0
+    #: Which empty positions have a dust cap in them, parallel to
+    #: `positions` and short or absent on older saved libraries.
+    #:
+    #: Worth distinguishing from an open hole because the two look like
+    #: opposite ends of the scale: an open position passes the whole
+    #: condenser cone straight through and blows white, a capped one is
+    #: black. Detection sees both as "no objective" and can predict
+    #: neither without being told which it is.
+    capped: list[bool] = field(default_factory=list)
+
+    def is_capped(self, index: int) -> bool:
+        return (self.positions[index] is None if 0 <= index < len(self.positions)
+                else False) and index < len(self.capped) and bool(
+                    self.capped[index])
+
+    def resize(self, count: int) -> None:
+        """Set how many positions the turret holds, keeping what fits."""
+        count = max(0, count)
+        self.positions = (self.positions + [None] * count)[:count]
+        self.capped = (self.capped + [False] * count)[:count]
+        if self.current >= count:
+            self.current = max(0, count - 1)
 
     def step(self, delta: int) -> int:
         """Advance around the ring, skipping empty positions."""
@@ -305,9 +327,15 @@ class Setup:
 # --------------------------------------------------------------------------
 
 def _turret_from(d: dict) -> Turret:
+    positions = [Objective(**o) if o else None for o in d.get("positions", [])]
+    capped = list(d.get("capped", []))[:len(positions)]
     return Turret(
-        positions=[Objective(**o) if o else None for o in d.get("positions", [])],
+        positions=positions,
         current=d.get("current", 0),
+        # Absent from every library written before cap state existed, so it
+        # is padded rather than required: an old file means "nothing known
+        # to be capped", not a load failure.
+        capped=capped + [False] * (len(positions) - len(capped)),
     )
 
 

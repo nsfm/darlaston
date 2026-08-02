@@ -32,8 +32,8 @@ from ..cpu import apply_thread_budget
 from ..live.focus import Illumination, Region
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
-from ..session.model import (BUILTIN_ILLUMINATION, Library, Objective,
-                             ScopeProfile, Setup, Turret)
+from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
+                             Objective, ScopeProfile, Setup, Turret)
 from ..session.settings import Settings
 from . import theme
 from .about import AboutDialog
@@ -67,8 +67,12 @@ def _provisional_scope() -> ScopeProfile:
         id="unconfigured", name="Microscope",
         turret=Turret([Objective(10, 0.30), Objective(20, 0.50),
                        Objective(40, 0.75),
-                       Objective(100, 1.30, immersion="oil")], current=2),
-        optovar=[1.0, 1.25, 1.6, 2.0], optovar_current=0)
+                       Objective(100, 1.30, immersion="oil")], current=2,
+                      capped=[False] * 4),
+        # No magnification changer. Most stands have none, and the four
+        # Zeiss Optovar factors that used to be here were one particular
+        # microscope's, offered to everybody as though they were normal.
+        optovar=[], optovar_current=0)
 
 
 class Bridge(QtCore.QObject):
@@ -1565,10 +1569,31 @@ class MainWindow(QtWidgets.QMainWindow):
         return int(self.session.framerate_cap or 40)
 
     def _open_setup(self) -> None:
-        if self.setup is None:
-            return
-        dialog = SetupDialog(self.setup, self.library, self)
+        # Openable with no camera attached. `self.setup` is only built when
+        # one arrives, and this used to return silently without it -- so the
+        # menu item did nothing at all on a machine with nothing plugged in,
+        # which is exactly when somebody sits down to describe their stand.
+        #
+        # The stand is the part worth editing here; the camera half of the
+        # dialog is filled from whichever camera we last saw, and from a
+        # blank profile if there has never been one. `_save` is what keeps a
+        # serial-less profile out of the library.
+        setup = self.setup
+        if setup is None:
+            camera = next(iter(self.library.cameras.values()), None) \
+                or CameraProfile(serial="", name="Camera")
+            scope = (self.library.scope_or_default(camera.last_scope)
+                     or _provisional_scope())
+            setup = Setup(camera=camera, scope=scope,
+                          illumination=self._illumination)
+        dialog = SetupDialog(setup, self.library, self)
         if dialog.exec():
+            if self.setup is None:
+                # Still no camera. The stand was saved to the library by the
+                # dialog; adopting the setup here would leave `self.setup`
+                # set, and the branch that remembers a camera and binds it
+                # to its stand only runs while it is None.
+                return
             self.setup = dialog.result_setup
             self.setup.illumination = self._illumination
             self.objective.set_turret(self.setup.scope.turret)

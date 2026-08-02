@@ -151,7 +151,10 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     fields = {
         "scope": scope.name,
         "objective": obj.label if obj else "",
-        "optovar": f"{scope.optovar_factor:g}",
+        # Empty rather than "1" when there is no changer fitted: a stand
+        # without one has no such setting, and recording a value implies it
+        # was looked at and found to be at unity.
+        "optovar": f"{scope.optovar_factor:g}" if scope.optovar else "",
         "illumination": setup.illumination.key,
         "inverted": "1" if setup.illumination.inverted else "0",
         "relay": cam.relay,

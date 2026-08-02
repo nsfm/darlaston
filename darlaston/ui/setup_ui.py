@@ -24,6 +24,9 @@ from . import theme
 
 _IMMERSION = ["", "oil", "water", "glycerol"]
 
+#: Most turret positions anyone fits. Four and five are usual.
+MAX_SLOTS = 7
+
 
 class ObjectiveRow(QtWidgets.QWidget):
     """One turret position. Empty is a legitimate state -- real turrets have
@@ -62,16 +65,40 @@ class ObjectiveRow(QtWidgets.QWidget):
         self.immersion.addItems(["dry", "oil", "water", "glycerol"])
         self.immersion.setFixedWidth(84)
 
+        # Only meaningful on an empty position, so it is enabled by the
+        # magnification going to zero and not otherwise.
+        self.capped = QtWidgets.QCheckBox("capped")
+        self.capped.setFixedWidth(72)
+        self.capped.setToolTip(
+            "There is a dust cap in this position rather than an open hole.\n\n"
+            "The two look like opposite ends of the scale: an open position "
+            "passes\nthe whole condenser cone straight through and blows "
+            "white, a capped\none is black. Both are simply 'no objective' "
+            "unless you say which.")
+
         for w in (self.mag, self.na):
             w.valueChanged.connect(self.changed)
         self.kind.textChanged.connect(self.changed)
         self.immersion.currentIndexChanged.connect(self.changed)
+        self.capped.toggled.connect(self.changed)
+        self.mag.valueChanged.connect(self._sync_capped)
+        self._sync_capped()
 
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
-        for w in (self.position, self.mag, self.na, self.kind, self.immersion):
+        for w in (self.position, self.mag, self.na, self.kind, self.immersion,
+                  self.capped):
             row.addWidget(w)
+
+    def _sync_capped(self) -> None:
+        empty = self.mag.value() <= 0
+        self.capped.setEnabled(empty)
+        if not empty and self.capped.isChecked():
+            self.capped.setChecked(False)
+
+    def is_capped(self) -> bool:
+        return self.mag.value() <= 0 and self.capped.isChecked()
 
     def value(self) -> Objective | None:
         if self.mag.value() <= 0:
@@ -82,17 +109,20 @@ class ObjectiveRow(QtWidgets.QWidget):
             kind=self.kind.text().strip(),
             immersion=_IMMERSION[self.immersion.currentIndex()])
 
-    def set_value(self, objective: Objective | None) -> None:
+    def set_value(self, objective: Objective | None,
+                  capped: bool = False) -> None:
         """Blocks the children, because blockSignals on the row itself does
         not stop a spin box emitting on its own behalf."""
-        widgets = (self.mag, self.na, self.kind, self.immersion)
+        widgets = (self.mag, self.na, self.kind, self.immersion, self.capped)
         for w in widgets:
             w.blockSignals(True)
         try:
             self._set_value(objective)
+            self.capped.setChecked(bool(capped) and objective is None)
         finally:
             for w in widgets:
                 w.blockSignals(False)
+        self._sync_capped()
 
     def _set_value(self, objective: Objective | None) -> None:
         self.kind.clear()
@@ -184,13 +214,30 @@ class SetupDialog(QtWidgets.QDialog):
         self.scope_name = QtWidgets.QLineEdit(setup.scope.name)
         self.condenser = QtWidgets.QLineEdit(setup.scope.condenser)
         self.condenser.setPlaceholderText("phase turret, darkfield stop")
+        # Rare enough to be off by default. Zeiss call theirs an Optovar,
+        # Leitz, Olympus and Nikon a magnification changer, so the generic
+        # name is the label and the trade name is in the tooltip where
+        # someone looking for it will find it.
+        self.has_changer = QtWidgets.QCheckBox("fitted")
+        self.has_changer.setChecked(bool(setup.scope.optovar))
         self.optovar = QtWidgets.QLineEdit(
             " ".join(f"{v:g}" for v in setup.scope.optovar))
-        self.optovar.setPlaceholderText("1 1.25 1.6 2      (blank if none)")
-        self.optovar.setToolTip(
-            "Intermediate magnification factors, space separated.\n"
-            "Changes magnification without moving the optical axis, which is "
-            "what makes an overview frame cheap.")
+        self.optovar.setPlaceholderText("1 1.25 1.6 2")
+        changer_row = QtWidgets.QHBoxLayout()
+        changer_row.setSpacing(6)
+        changer_row.addWidget(self.has_changer)
+        changer_row.addWidget(self.optovar, 1)
+        hint = ("An intermediate magnification changer, between the "
+                "objective and\nthe tube lens. Zeiss call theirs an Optovar; "
+                "Leitz, Olympus and\nNikon call it a magnification changer. "
+                "Most stands have none.\n\n"
+                "Its factors, space separated. It multiplies into total "
+                "magnification\nexactly as the relay does, and changes "
+                "magnification without moving\nthe optical axis, which is "
+                "what makes an overview frame cheap.")
+        self.has_changer.setToolTip(hint)
+        self.optovar.setToolTip(hint)
+        self.has_changer.toggled.connect(self._sync_changer)
 
         self.condenser_na = QtWidgets.QDoubleSpinBox()
         self.condenser_na.setRange(0.0, 1.6)
@@ -228,21 +275,38 @@ class SetupDialog(QtWidgets.QDialog):
         stand.addRow("Name", self.scope_name)
         stand.addRow("Condenser", self.condenser)
         stand.addRow("Condenser NA", self.condenser_na)
-        stand.addRow("Optovar", self.optovar)
+        stand.addRow("Magnification changer", changer_row)
         stand.addRow("Image handedness", self.rotation_sign)
 
         # --- turret, in physical order
         self.rows: list[ObjectiveRow] = []
         turret_box = QtWidgets.QVBoxLayout()
         turret_box.setSpacing(4)
+        self.slots = QtWidgets.QSpinBox()
+        self.slots.setRange(1, MAX_SLOTS)
+        self.slots.setSuffix(" positions")
+        self.slots.setValue(len(setup.scope.turret.positions) or 4)
+        self.slots.setToolTip(
+            "How many positions the turret holds, including any that are "
+            "empty.\n\nFour and five are usual; six and seven exist. It has "
+            "to be the real\ncount, because stepping and turret detection "
+            "both work in physical\norder -- a five-position turret "
+            "described as four is one position out\nfor half the ring.")
+        self.slots.valueChanged.connect(self._sync_slots)
+
         header = QtWidgets.QLabel(
             "In turret order -- the order matters for stepping and detection")
         header.setProperty("role", "key")
-        turret_box.addWidget(header)
-        positions = list(setup.scope.turret.positions) + [None] * 6
-        for i in range(6):
+        count_row = QtWidgets.QHBoxLayout()
+        count_row.setSpacing(8)
+        count_row.addWidget(self.slots)
+        count_row.addWidget(header, 1)
+        turret_box.addLayout(count_row)
+
+        positions = list(setup.scope.turret.positions) + [None] * MAX_SLOTS
+        for i in range(MAX_SLOTS):
             row = ObjectiveRow(i)
-            row.set_value(positions[i])
+            row.set_value(positions[i], setup.scope.turret.is_capped(i))
             row.changed.connect(self._refresh)
             self.rows.append(row)
             turret_box.addWidget(row)
@@ -275,10 +339,26 @@ class SetupDialog(QtWidgets.QDialog):
 
         for w in (self.camera_name, self.relay, self.scope_name, self.optovar):
             w.textChanged.connect(self._refresh)
+        self._sync_changer()
+        # After self.key exists: both of these refresh the calibration key.
+        self._sync_slots()
         self._reload_picker(setup.scope.id)
         self.picker.currentIndexChanged.connect(self._switch_scope)
         self._refresh()
         self.setStyleSheet(theme.stylesheet())
+
+    def _sync_changer(self) -> None:
+        on = self.has_changer.isChecked()
+        self.optovar.setEnabled(on)
+        if not on:
+            self.optovar.clear()
+        self._refresh()
+
+    def _sync_slots(self) -> None:
+        """Show only the positions this turret actually has."""
+        for i, row in enumerate(self.rows):
+            row.setVisible(i < self.slots.value())
+        self._refresh()
 
     # ---- the collection --------------------------------------------------
 
@@ -349,20 +429,29 @@ class SetupDialog(QtWidgets.QDialog):
             return
         built = self._build()
         self._library.scopes[built.scope.id] = built.scope
-        self._library.cameras[built.camera.serial] = built.camera
+        if built.camera.serial:                 # see _save
+            self._library.cameras[built.camera.serial] = built.camera
         self._library.save()
 
     def _load_scope(self, scope: ScopeProfile) -> None:
         self.scope_name.setText(scope.name)
         self.condenser.setText(scope.condenser)
         self.optovar.setText(" ".join(f"{v:g}" for v in scope.optovar))
+        self.has_changer.blockSignals(True)
+        self.has_changer.setChecked(bool(scope.optovar))
+        self.has_changer.blockSignals(False)
+        self.optovar.setEnabled(bool(scope.optovar))
         self.condenser_na.setValue(scope.condenser_na or 0.0)
         self.rotation_sign.setCurrentIndex(0 if scope.rotation_sign >= 0 else 1)
-        positions = list(scope.turret.positions) + [None] * 6
+        self.slots.blockSignals(True)
+        self.slots.setValue(len(scope.turret.positions) or 4)
+        self.slots.blockSignals(False)
+        positions = list(scope.turret.positions) + [None] * MAX_SLOTS
         for i, row in enumerate(self.rows):
             row.blockSignals(True)
-            row.set_value(positions[i])
+            row.set_value(positions[i], scope.turret.is_capped(i))
             row.blockSignals(False)
+        self._sync_slots()
 
     # ---- live feedback ---------------------------------------------------
 
@@ -378,16 +467,24 @@ class SetupDialog(QtWidgets.QDialog):
             relay=self.relay.text().strip(),
             relay_factor=self.relay_factor.value(),
             pixel_um=self.pixel_um.value())
-        positions = [row.value() for row in self.rows]
-        while positions and positions[-1] is None:
-            positions.pop()                     # trailing blanks are not gaps
+        # Exactly as many positions as the turret was said to hold. This
+        # used to drop trailing empties on the grounds that they were not
+        # gaps, which quietly turned a five-position turret whose last
+        # position is empty into a four-position one -- and stepping and
+        # detection both work in physical order, so from then on half the
+        # ring was one position out.
+        count = self.slots.value()
+        positions = [row.value() for row in self.rows[:count]]
+        capped = [row.is_capped() for row in self.rows[:count]]
         current = min(self._setup.scope.turret.current,
                       max(len(positions) - 1, 0))
         scope = ScopeProfile(
             id=self._setup.scope.id,
             name=self.scope_name.text().strip() or "Microscope",
-            turret=Turret(positions=positions, current=current),
-            optovar=_parse_factors(self.optovar.text()),
+            turret=Turret(positions=positions, current=current,
+                          capped=capped),
+            optovar=(_parse_factors(self.optovar.text())
+                     if self.has_changer.isChecked() else []),
             optovar_current=self._setup.scope.optovar_current,
             condenser=self.condenser.text().strip(),
             condenser_na=(self.condenser_na.value()
@@ -402,14 +499,19 @@ class SetupDialog(QtWidgets.QDialog):
     def _save(self) -> None:
         self.result_setup = self._build()
         if self._library is not None:
-            self._library.cameras[self.result_setup.camera.serial] = \
-                self.result_setup.camera
             self._library.scopes[self.result_setup.scope.id] = \
                 self.result_setup.scope
-            # Remember which stand this camera is on, so a travelling camera
-            # comes back to the right one without being asked.
-            self._library.bind(self.result_setup.camera.serial,
-                               self.result_setup.scope.id)
+            # The serial is the camera's identity, and it is blank when the
+            # dialog was opened with nothing plugged in. Filing that would
+            # put a nameless profile under the key "" and bind the stand to
+            # it, so the stand is saved and the camera half is not.
+            if self.result_setup.camera.serial:
+                self._library.cameras[self.result_setup.camera.serial] = \
+                    self.result_setup.camera
+                # Remember which stand this camera is on, so a travelling
+                # camera comes back to the right one without being asked.
+                self._library.bind(self.result_setup.camera.serial,
+                                   self.result_setup.scope.id)
             self._library.save()
         self.accept()
 
