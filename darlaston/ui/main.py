@@ -302,7 +302,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.assembly.finish_requested.connect(self._finish_stack)
         self.assembly.discard_requested.connect(self._discard_stack)
         self.assembly.wiggle_requested.connect(self._on_wiggle)
-        self.stack_window = FloatingPanel("stack -- assembling", self.view)
+        self.stack_window = FloatingPanel("stack, assembling", self.view)
         self.assembly.close_requested.connect(self.stack_window.hide)
         self.assembly.configure(self.settings)
         self.stack_window.set_relative(0.55, 0.55)
@@ -635,7 +635,7 @@ class MainWindow(QtWidgets.QMainWindow):
         turret = self.setup.scope.turret
         index = event.suggested_index
         if index is None or not (0 <= index < len(turret.positions)):
-            self.strip.set_note("objective changed -- position unclear")
+            self.strip.set_note("objective changed, position unclear")
             return
         objective = turret.positions[index]
         if objective is None:
@@ -671,7 +671,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if len(choices) > 1:
             self.proposal.propose(
-                "Objective changed -- which?",
+                "Objective changed. Which one?",
                 "the turret moved; naming it once teaches which way it counts",
                 choices, others)
         else:
@@ -763,7 +763,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.library.scopes[scope.id] = scope
         self.library.save()
         self.strip.set_note(
-            "turret direction learned -- proposals should be right from now on")
+            "turret direction learned. Proposals should be right from now on")
 
     def _remember_objective(self) -> None:
         """Persist which objective is in the light path.
@@ -985,7 +985,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if result.moved:
             result.path.unlink(missing_ok=True)
             self.stack_trigger.capture_failed()
-            self.strip.set_note("slice discarded -- it moved; hold and it "
+            self.strip.set_note("slice discarded, it moved. Hold still and it "
                                "will retake")
             return
         s = self.stack_session.adopt(result.path, metric=0.0)
@@ -1007,10 +1007,10 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass                       # the preview must never block capture
         if self.mosaic is not None:
-            self.strip.set_note(f"slice {s.index} ✓ -- keep racking; "
+            self.strip.set_note(f"slice {s.index} ✓, keep racking. "
                                "slide on when the field is done")
         else:
-            self.strip.set_note(f"slice {s.index} ✓ -- keep racking")
+            self.strip.set_note(f"slice {s.index} ✓, keep racking")
 
     def _adopt_tile(self, result: CaptureResult) -> None:
         h, w = ((self._last_preview.shape[:2])
@@ -1033,7 +1033,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.stack_window.place((420, 330))
                 self.stack_window.show()
                 self.stack_trigger.arm()
-                self.strip.set_note("stacked mosaic -- rack to stack this "
+                self.strip.set_note("stacked mosaic: rack to stack this "
                                    "field; sliding on seals the tile")
                 return
             self.stack_session = StackSession(self.settings.capture_root,
@@ -1047,7 +1047,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.stack_window.place((420, 330))
             self.stack_window.show()
             self.stack_trigger.arm()
-            self.strip.set_note("stack armed -- rack to the first plane and "
+            self.strip.set_note("stack armed. Rack to the first plane and "
                                "hold")
         else:
             self.stack_trigger.disarm()
@@ -1183,13 +1183,13 @@ class MainWindow(QtWidgets.QMainWindow):
             tile = self.mosaic.adopt(src, anchor, frame)
             shutil.rmtree(done.dir, ignore_errors=True)
             self.slidemap.tile_added(anchor, preview)
-            self.strip.set_note(f"tile {tile.index} sealed -- one exposure")
+            self.strip.set_note(f"tile {tile.index} sealed, one exposure")
         else:
             tile = self.mosaic.adopt_stack(done, anchor, frame)
             self.slidemap.tile_added(anchor, preview, state="merging",
                                      label=f"×{n}")
             self._queue_tile_merge(tile.index, done.dir)
-            self.strip.set_note(f"tile {tile.index} sealed -- {n} slices "
+            self.strip.set_note(f"tile {tile.index} sealed, {n} slices "
                                "merging behind you; keep going")
         self.assembly.reset()
 
@@ -1226,7 +1226,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merging = None
         self.slidemap.set_tile_state(index, "ok" if ok else "failed")
         if not ok:
-            self.strip.set_note(f"tile {index} merge failed -- {note}; "
+            self.strip.set_note(f"tile {index} merge failed: {note}. "
                                "the stitcher will retry it")
         self._next_tile_merge()
 
@@ -1369,7 +1369,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             path = install()
         except Exception as exc:
-            self.strip.set_note(f"could not install thumbnailer -- {exc}")
+            self.strip.set_note(f"could not install thumbnailer: {exc}")
             return
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("Thumbnailer installed")
@@ -1477,7 +1477,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         last = self.mosaic.tiles[-1] if self.mosaic.tiles else None
         if last is not None and self._tile_merging == last.index:
-            self.strip.set_note("that tile is mid-merge -- a moment")
+            self.strip.set_note("that tile is still merging, one moment")
             return
         tile = self.mosaic.undo()
         if tile is not None:

@@ -189,7 +189,7 @@ class ScopeEditor(QtWidgets.QWidget):
             "f = tube / M, which is the focal length written into every "
             "capture.\n\n"
             "160 is the DIN finite standard and what most pre-1990 stands "
-            "use --\nit is engraved on the objective, under the "
+            "use. It is engraved on the objective, under the\n"
             "magnification. An infinity\nstand has no tube length as such, "
             "so put its tube *lens* focal length\nhere instead: 165 Zeiss, "
             "180 Olympus, 200 Nikon and Leica.")
@@ -198,14 +198,14 @@ class ScopeEditor(QtWidgets.QWidget):
         self.condenser_na.setRange(0.0, 1.6)
         self.condenser_na.setDecimals(2)
         self.condenser_na.setSingleStep(0.05)
-        self.condenser_na.setSpecialValueText("-- unknown --")
+        self.condenser_na.setSpecialValueText("unknown")
         self.condenser_na.setToolTip(
             "The condenser's *working* aperture, not the number engraved on "
             "it.\nAn NA 1.4 condenser only reaches 1.4 with oil between it "
             "and the slide;\ndry, air caps it below 1.0, and the iris puts "
             "it anywhere below that.\n\nIt sets how bright each objective "
             "is, because the smaller of the two\napertures gathers the "
-            "light -- and above about NA 0.5 that is the\ncondenser, not the "
+            "light, and above about NA 0.5 that is the\ncondenser, not the "
             "objective. Used only as a first guess; a confirmed\nrotation "
             "teaches the real value.")
 
@@ -238,12 +238,12 @@ class ScopeEditor(QtWidgets.QWidget):
             "How many positions the turret holds, including any that are "
             "empty.\n\nFour and five are usual; six and seven exist. It has "
             "to be the real\ncount, because stepping and turret detection "
-            "both work in physical\norder -- a five-position turret "
+            "both work in physical\norder. A five-position turret "
             "described as four is one position out\nfor half the ring.")
         self.slots.valueChanged.connect(self._sync_slots)
 
         header = QtWidgets.QLabel(
-            "In turret order -- the order matters for stepping and detection")
+            "In turret order. The order matters for stepping and detection")
         header.setProperty("role", "key")
         count_row = QtWidgets.QHBoxLayout()
         count_row.setSpacing(8)
@@ -395,7 +395,7 @@ class CameraEditor(QtWidgets.QWidget):
             "Set it and every capture can record how much slide one pixel "
             "covers,\nwhich is the number a scale bar is drawn from. The "
             "SDK is asked\nfirst when this is left at zero, but it reports "
-            "0 on some models --\nand a zero pitch means no scale bar "
+            "0 on some models,\nand a zero pitch means no scale bar "
             "anywhere, quietly. The IMX183\nis 2.4 um.")
 
         form = QtWidgets.QFormLayout(self)
@@ -421,7 +421,7 @@ class CameraEditor(QtWidgets.QWidget):
             self.relay.setText(camera.relay)
             self.relay_factor.setValue(camera.relay_factor or 1.0)
             self.pixel_um.setValue(camera.pixel_um or 0.0)
-            self.serial.setText(camera.serial or "-- not seen yet --")
+            self.serial.setText(camera.serial or "not seen yet")
         finally:
             for w in widgets:
                 w.blockSignals(False)

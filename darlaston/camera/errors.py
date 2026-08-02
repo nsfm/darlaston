@@ -20,7 +20,7 @@ from __future__ import annotations
 _CODES: dict[int, tuple[str, str]] = {
     0x8000FFFF: ("E_UNEXPECTED",
                  "The camera refused a setting while it was running. This is "
-                 "a bug in darlaston's mode handling -- please report it."),
+                 "a bug in darlaston's mode handling. Please report it."),
     0x80004001: ("E_NOTIMPL",
                  "This camera model does not support that feature."),
     0x80070005: ("E_ACCESSDENIED",
@@ -29,26 +29,26 @@ _CODES: dict[int, tuple[str, str]] = {
     0x8007000E: ("E_OUTOFMEMORY", "The system is out of memory."),
     0x80070057: ("E_INVALIDARG",
                  "The camera rejected an argument. This is a bug in "
-                 "darlaston -- please report it."),
+                 "darlaston. Please report it."),
     0x80004003: ("E_POINTER",
                  "The camera was handed a null pointer. This is a bug in "
-                 "darlaston -- please report it."),
+                 "darlaston. Please report it."),
     0x80004005: ("E_FAIL", "The camera reported a generic failure."),
     0x8001010E: ("E_WRONG_THREAD",
                  "The camera was called from the wrong thread. This is a bug "
-                 "in darlaston -- please report it."),
+                 "in darlaston. Please report it."),
     0x8007001F: ("E_GEN_FAILURE",
                  "The camera stopped responding. This is almost always "
                  "physical: try a different USB 3 port, reseat the cable, or "
                  "avoid a hub. The link can also drop under a long session."),
     0x800700AA: ("E_BUSY",
-                 "The camera is already in use -- another copy of darlaston "
+                 "The camera is already in use. Another copy of darlaston "
                  "or ToupLite may have it open."),
     0x8000000A: ("E_PENDING", "The camera has no data ready yet."),
     0x8001011F: ("E_TIMEOUT",
                  "The camera did not deliver the frame in time. If the "
                  "exposure is long this may just need more patience; if it "
-                 "repeats, the link may have dropped to USB 2.0 -- usually "
+                 "repeats, the link may have dropped to USB 2.0, usually "
                  "the cable."),
     0x80072743: ("E_UNREACH", "The camera is unreachable over the network."),
     0x800704C7: ("E_CANCELLED", "The operation was cancelled."),
@@ -110,7 +110,7 @@ class CameraProblem(Exception):
 
     def __init__(self, heading: str, detail: str = "",
                  steps: tuple[str, ...] = ()) -> None:
-        super().__init__(heading if not detail else f"{heading} -- {detail}")
+        super().__init__(heading if not detail else f"{heading}: {detail}")
         self.heading = heading
         self.detail = detail
         self.steps = tuple(steps)
@@ -127,8 +127,8 @@ class SdkMissing(CameraProblem):
             "Your camera needs a driver made by the company that built "
             "it. This only has to be done once.",
             (
-                "Click Install camera SDK below. darlaston will download "
-                "it and check that it works.",
+                "Click Install the camera driver below. darlaston will "
+                "download it and check that it works.",
                 "Or download it yourself from your camera maker's website "
                 "and unzip it into ~/toup/.",
                 "If you have an ordinary USB microscope camera instead, "
@@ -164,7 +164,7 @@ class NoCameraFound(CameraProblem):
             f"No {what} found",
             "The software is working, but nothing answered on the bus.",
             ("Check that the camera is plugged in.",
-             "Try a different USB port, and a different cable -- a marginal "
+             "Try a different USB port, and a different cable. A marginal "
              "cable does not fail cleanly, it renegotiates to USB 2.0 and "
              "everything simply becomes slow.",
              "Some cameras take a few seconds after being plugged in."))

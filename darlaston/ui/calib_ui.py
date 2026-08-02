@@ -92,7 +92,7 @@ class CalibrationButton(QtWidgets.QPushButton):
         self.setToolTip(
             "Dark, flat, white balance and preview profile for this "
             "configuration.\nClick to open. Missing products are a nag, "
-            "not a gate -- capture anyway\nand the file records what it "
+            "not a gate. Capture anyway\nand the file records what it "
             "did and did not have.")
         self._restyle()
 

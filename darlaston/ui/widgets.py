@@ -657,7 +657,7 @@ class FocusGroup(QtWidgets.QWidget):
         self.stack = _Toggle("stack", "Capture a Z-stack: rack the fine "
                                       "focus, pause, and a slice is taken.\n"
                                       "Rack again for the next. The knob is "
-                                      "the whole interface --\nnothing is "
+                                      "the whole interface,\nnothing is "
                                       "clicked between slices.")
         self.stack.toggled.connect(self._on_stack)
         self.peaking = _Toggle("peak", "Highlight the sharpest edges in the "

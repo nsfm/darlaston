@@ -72,7 +72,7 @@ class TimelapseDialog(QtWidgets.QDialog):
         self.interval.setEnabled(not running)
         self.count.setEnabled(not running)
         if running:
-            self.estimate.setText("Running -- progress is in the status bar.")
+            self.estimate.setText("Running. Progress is in the status bar.")
 
     def _update_estimate(self) -> None:
         if self._timelapse.running:
