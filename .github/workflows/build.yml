@@ -78,14 +78,26 @@ jobs:
         include:
           - os: ubuntu-latest
             label: linux-x86_64
-          # Two macOS runners, not one. PySide6 publishes separate arm64
-          # and x86_64 wheels rather than a universal2 one, so a single
-          # build can only ever serve one architecture. macos-14 and later
-          # are Apple silicon; macos-13 is the last Intel image.
+          # Apple silicon only. PySide6 publishes separate arm64 and
+          # x86_64 wheels rather than a universal2 one, so one build can
+          # only ever serve one architecture, and Intel would need its own
+          # matrix leg on macos-13.
+          #
+          # It is left out because macos-13 is the last Intel image and is
+          # scarce: it queued for over an hour while the other three
+          # finished in six minutes. The release job waits on the whole
+          # matrix, so one slow runner gates every release there will ever
+          # be -- and Nate owns the Intel Mac and can build it in one
+          # command when it is worth having:
+          #
+          #     pyinstaller --noconfirm --distpath dist/pyi \
+          #         --workpath build/pyi packaging/darlaston.spec
+          #     python packaging/bundle.py --label macos-x86_64
+          #
+          # Nothing platform-specific was dropped, only the runner. Put the
+          # leg back if Intel users turn up and the queue improves.
           - os: macos-14
             label: macos-arm64
-          - os: macos-13
-            label: macos-x86_64
           - os: windows-latest
             label: windows-x86_64
 

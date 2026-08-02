@@ -79,8 +79,8 @@ def main() -> int:
 
     print("### Downloads\n")
     print("- **Linux**: the `.AppImage`. `chmod +x` it and run it.")
-    print("- **macOS**: the `.dmg` for your processor -- `arm64` for Apple "
-          "silicon, `x86_64` for Intel.")
+    print("- **macOS**: the `arm64` `.dmg`, for Apple silicon. Intel Macs "
+          "are not built here yet -- open an issue if you have one.")
     print("- **Windows**: the `.zip`. Unpack it and run `darlaston.exe`.")
     print()
     print("These builds are unsigned, so macOS and Windows will warn about "
