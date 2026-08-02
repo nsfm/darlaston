@@ -78,26 +78,24 @@ jobs:
         include:
           - os: ubuntu-latest
             label: linux-x86_64
-          # Apple silicon only. PySide6 publishes separate arm64 and
-          # x86_64 wheels rather than a universal2 one, so one build can
-          # only ever serve one architecture, and Intel would need its own
-          # matrix leg on macos-13.
+          # Both Macs, from one runner. PySide6 publishes separate arm64
+          # and x86_64 wheels rather than a universal2 one, so one build
+          # serves one architecture -- but Apple silicon runs x86_64 under
+          # Rosetta, and actions/setup-python hands over a universal2
+          # interpreter. Forced to its x86_64 half it reports x86_64, pip
+          # fetches x86_64 wheels, and PyInstaller produces a Mach-O
+          # x86_64 bundle. Verified end to end, including `file` on the
+          # result and running its self-test.
           #
-          # It is left out because macos-13 is the last Intel image and is
-          # scarce: it queued for over an hour while the other three
-          # finished in six minutes. The release job waits on the whole
-          # matrix, so one slow runner gates every release there will ever
-          # be -- and Nate owns the Intel Mac and can build it in one
-          # command when it is worth having:
-          #
-          #     pyinstaller --noconfirm --distpath dist/pyi \
-          #         --workpath build/pyi packaging/darlaston.spec
-          #     python packaging/bundle.py --label macos-x86_64
-          #
-          # Nothing platform-specific was dropped, only the runner. Put the
-          # leg back if Intel users turn up and the queue improves.
+          # This exists because macos-13, the last Intel image, is scarce:
+          # it queued over an hour while the other three finished in six
+          # minutes, and the release job waits on the whole matrix, so one
+          # slow runner would gate every release there will ever be.
           - os: macos-14
             label: macos-arm64
+          - os: macos-14
+            label: macos-x86_64
+            rosetta: true
           - os: windows-latest
             label: windows-x86_64
 
@@ -113,6 +111,24 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Everything after this step runs x86_64 without knowing it. A shim
+      # on PATH is what keeps the rest of the job identical across all
+      # four platforms: `arch` cannot be expressed as a PATH entry, so it
+      # is wrapped in a two-line script instead of threaded through every
+      # `run:` as a prefix.
+      - name: An x86_64 interpreter, under Rosetta
+        if: matrix.rosetta
+        run: |
+          arch -x86_64 python -c "import platform; print(platform.machine())"
+          arch -x86_64 python -m venv .venv-x64
+          mkdir -p .shim
+          for tool in python pyinstaller; do
+            printf '#!/bin/sh\nexec arch -x86_64 "%s/.venv-x64/bin/%s" "$@"\n' \
+              "$PWD" "$tool" > ".shim/$tool"
+            chmod +x ".shim/$tool"
+          done
+          echo "$PWD/.shim" >> "$GITHUB_PATH"
+
       - name: System libraries Qt needs
         if: runner.os == 'Linux'
         run: |
@@ -127,12 +143,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[package]"
 
-      - name: Version
-        id: version
+      - name: What we are building, and for what
         shell: bash
         run: |
-          python -c "from darlaston import __version__ as v; print(v)"
-          echo "value=$(python -c 'from darlaston import __version__ as v; print(v)')" >> "$GITHUB_OUTPUT"
+          python -c "import platform, sys; print(sys.version.split()[0], platform.machine())"
+          python -c "from darlaston import __version__ as v; print('darlaston', v)"
 
       - name: Build
         run: pyinstaller --noconfirm --distpath dist/pyi --workpath build/pyi packaging/darlaston.spec
