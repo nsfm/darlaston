@@ -454,7 +454,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # particular shot is *of*, and they change more often than anything
         # above them. Everything higher up is instrument state.
         self.subject = SubjectField()
-        col.addLayout(_group("subject", self.subject))
+        col.addLayout(_group("subject", self.subject, self.subject.toolTip()))
 
         self.objective = ObjectiveStepper()
         self.objective.changed.connect(self._on_objective_stepped)
@@ -1760,11 +1760,16 @@ def _fill(panel, widget) -> None:
     lay.addWidget(widget)
 
 
-def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout):
+def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout,
+           hint: str | None = None):
     col = QtWidgets.QVBoxLayout()
     col.setSpacing(7)
     label = QtWidgets.QLabel(title.upper())
     label.setProperty("role", "label")
+    if hint:
+        # On the header as well as the content: the header is the part
+        # someone points at when they are asking what a section is for.
+        label.setToolTip(hint)
     col.addWidget(label)
     col.addLayout(first) if isinstance(first, QtWidgets.QLayout) else col.addWidget(first)
     return col

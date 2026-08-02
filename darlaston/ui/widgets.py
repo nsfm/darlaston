@@ -438,12 +438,6 @@ class Histogram(QtWidgets.QWidget):
         self._screen: np.ndarray | None = None
         self._shift: tuple[int, int] | None = None
         self.setFixedHeight(96)
-        self.setToolTip(
-            "Brightness of the preview, counted per level and plotted on a "
-            "log scale.\n\n"
-            "clipped -- share of the frame at maximum, where highlight "
-            "detail is gone for good. Under-exposure needs no number: the "
-            "plot piles against the left wall and says so itself.")
 
     def set_data(self, hist: np.ndarray, clipped: float,
                  per_channel: tuple[float, float, float] | None = None) -> None:

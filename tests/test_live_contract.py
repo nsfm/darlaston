@@ -864,3 +864,34 @@ def test_asking_for_a_matching_title_bar_is_harmless_off_windows(qapp):
     if not sys.platform.startswith("win"):
         assert changed is False
     w.close()
+
+
+def test_the_subject_section_explains_itself_and_the_histogram_does_not(qapp):
+    """The subject fields feed EXIF, which is not visible from the rail, so
+    the section says so. The histogram is self-evident and its tooltip only
+    got in the way of reading it."""
+    from PySide6 import QtWidgets
+
+    from darlaston.ui.capture_ui import SubjectField
+    from darlaston.ui.main import _group
+    from darlaston.ui.widgets import Histogram
+
+    field = SubjectField()
+    assert field.edit.placeholderText() == "specimen"
+    assert field.slide.placeholderText() == "slide details"
+
+    hint = field.toolTip()
+    assert "EXIF" in hint
+
+    # The header carries it too: that is the part someone points at when
+    # they are asking what a section is for.
+    layout = _group("subject", field, hint)
+    header = layout.itemAt(0).widget()
+    assert header.text() == "SUBJECT"
+    assert header.toolTip() == hint
+
+    # And a group with no hint gets no tooltip, rather than an empty one
+    # that swallows the pointer.
+    assert _group("optics", QtWidgets.QLabel()).itemAt(0).widget().toolTip() == ""
+
+    assert Histogram().toolTip() == ""

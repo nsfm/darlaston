@@ -197,8 +197,12 @@ class SubjectField(QtWidgets.QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+        # Plain nouns rather than an example. A placeholder is read as a
+        # hint about what goes in the box, and "dopamine arrangement" only
+        # reads that way to someone who already knows what one is.
+        self.setToolTip("Records these details in each capture's EXIF data.")
         self.edit = QtWidgets.QLineEdit()
-        self.edit.setPlaceholderText("dopamine arrangement")
+        self.edit.setPlaceholderText("specimen")
         self.edit.setClearButtonEnabled(True)
         self.edit.textChanged.connect(self.changed)
         self.edit.setStyleSheet(
@@ -208,7 +212,7 @@ class SubjectField(QtWidgets.QWidget):
             f"QLineEdit:focus {{ border-color: {theme.BRASS}; }}")
 
         self.slide = QtWidgets.QLineEdit()
-        self.slide.setPlaceholderText("slide -- mountant, coverslip, source")
+        self.slide.setPlaceholderText("slide details")
         self.slide.setStyleSheet(self.edit.styleSheet())
 
         col = QtWidgets.QVBoxLayout(self)
