@@ -44,8 +44,9 @@ work with the stock SDK. The last four need their own vendor library —
 unpack it where you would put ToupTek's and darlaston finds it.
 
 **Install:** unpack your vendor's Linux SDK under `~/toup/sdk-*/`, or
-point `TOUPCAM_SDK` at its root. The SDK is never bundled; see
-[DISCOVERY.md](DISCOVERY.md) §4c for why.
+point `TOUPCAM_SDK` at its root. The SDK is never bundled: it ships with
+no licence or copyright notice of any kind, which is too ambiguous to
+redistribute under, so darlaston loads it at runtime instead.
 
 Two traps worth knowing, both handled:
 

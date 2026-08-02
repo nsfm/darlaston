@@ -5,7 +5,7 @@
       the number from pixel pitch and total magnification, and putting it on
       the picture costs almost nothing. Nice to have rather than urgent --
       see the note on what this program is for.
-- [ ] **Flyby: the orchestrated version.** Design notes in `FLYBY.md`,
+- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`,
       deliberately not started. A stacked mosaic is a four-dimensional
       recording -- x, y, zoom and focal plane -- and every move through it
       can be perfectly smooth because it is synthesised rather than
@@ -51,7 +51,7 @@
       guess rather than a mistake, but a matrix measured from a colour target
       would be better than assuming sRGB primaries.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture
-      at unity gain. Needs calibration to be verifiable. DESIGN.md §4.
+      at unity gain. Needs calibration to be verifiable.
 - [ ] **Tracker on real glass.** The confidence gate (0.10) and the hold-on-
       blank behaviour are tuned against the mock; darkfield and phase will
       stress both differently. Also worth measuring whether static overlays
@@ -276,7 +276,7 @@
       still interesting.
 - [ ] **Z motorisation.** 0.8 MOD gear ring on the fine focus, NEMA 17 +
       TMC2209 + RP2040, ~$35. Optional accelerator only; the unmodified-scope
-      workflow must be complete without it. DISCOVERY.md §9b.
+      workflow must be complete without it.
 - [ ] Setup editor, so the provisional scope in `ui/main.py` can go away.
 - [ ] Session resumability, needed once mosaics reach 40 tiles. The
       _budgeting_ half is done: free space is on the status bar permanently,

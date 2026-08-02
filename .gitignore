@@ -1,5 +1,5 @@
-# ToupTek SDK — proprietary, never vendored. See DISCOVERY.md §4c.
-# Users install it themselves; we dlopen at runtime.
+# ToupTek SDK: ships with no licence or copyright notice, so it is
+# never vendored. Users install it themselves; we dlopen at runtime.
 sdk/
 toupcamsdk*
 lib*.so
