@@ -175,7 +175,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python packaging/smoke.py --packaged
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: darlaston-${{ matrix.label }}
           path: dist/release/*
