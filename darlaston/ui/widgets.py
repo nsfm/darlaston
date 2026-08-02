@@ -433,8 +433,12 @@ class Histogram(QtWidgets.QWidget):
         self._pixels: np.ndarray | None = None
         self._rows: np.ndarray | None = None
         self._tile: np.ndarray | None = None
-        self._prev: np.ndarray | None = None
-        self._motion: np.ndarray | None = None
+        # Zeroed, not None. The widget is shown and painted before the
+        # camera delivers anything, so the first paint of the session runs
+        # with no frame behind it -- and these were only being built in
+        # set_data, which had not run yet.
+        self._prev = np.zeros(256, np.float32)
+        self._motion = np.zeros(256, np.float32)
         self._screen: np.ndarray | None = None
         self._shift: tuple[int, int] | None = None
         self.setFixedHeight(96)

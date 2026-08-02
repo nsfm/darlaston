@@ -895,3 +895,30 @@ def test_the_subject_section_explains_itself_and_the_histogram_does_not(qapp):
     assert _group("optics", QtWidgets.QLabel()).itemAt(0).widget().toolTip() == ""
 
     assert Histogram().toolTip() == ""
+
+
+def test_every_painted_widget_survives_its_first_paint(qapp):
+    """The window is shown before the camera delivers anything, so the first
+    paint of a session runs with no frame behind it.
+
+    The histogram did not: its movement reading was built in set_data and
+    left as None until then, so every paint before the first frame raised
+    AttributeError inside paintEvent -- which Qt reports and swallows,
+    leaving a stuck painter and an empty widget. No test caught it because
+    they all set data before rendering, which is the one thing the real
+    program cannot do.
+    """
+    from PySide6 import QtGui
+
+    from darlaston.ui.widgets import (CoverageMeter, FocusGroup,
+                                      FocusTraceView, Histogram, LiveView,
+                                      ValueBar)
+
+    fresh = [Histogram(), FocusTraceView(), CoverageMeter(), LiveView(),
+             FocusGroup(), ValueBar("exposure")]
+    for widget in fresh:
+        widget.resize(320, max(96, widget.height()))
+        image = QtGui.QImage(widget.size(),
+                             QtGui.QImage.Format.Format_RGB888)
+        # render() propagates what paintEvent raises; grab() does not.
+        widget.render(image)
