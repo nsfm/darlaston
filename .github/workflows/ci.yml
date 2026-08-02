@@ -26,7 +26,7 @@ jobs:
         python: ["3.11", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -58,7 +58,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # setuptools-scm is not in use, but a shallow clone still hides
           # tags, and the release job below reads them.
