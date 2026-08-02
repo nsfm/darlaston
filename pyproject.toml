@@ -80,7 +80,7 @@ packages = [
 # Without these an installed copy has no words at all: a symbolic
 # key has no readable fallback, so the interface would render
 # `calib.flat.action.collect` at somebody.
-"darlaston.i18n" = ["locale/*.po"]
+"darlaston.i18n" = ["locale/*/*.po"]
 
 # The version comes from git tags and is never hand-edited. Between
 # releases that produces something like 0.2.0.dev7+g1a2b3c4, which is

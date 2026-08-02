@@ -112,8 +112,11 @@ def test_the_machine_preference_is_read_the_way_gettext_reads_it(monkeypatch,
                                                                  tmp_path):
     from darlaston.i18n.catalogue import set_language
 
-    (tmp_path / "en.po").write_text(HEADER.replace("xx", "en"))
-    (tmp_path / "de.po").write_text(HEADER.replace("xx", "de"))
+    for lang in ("en", "de"):
+        folder = tmp_path / lang
+        folder.mkdir()
+        (folder / "words.po").write_text(HEADER.replace("xx", lang)
+                                         + 'msgid "a.b"\nmsgstr "x"\n')
 
     monkeypatch.delenv("LANGUAGE", raising=False)
     monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
@@ -130,6 +133,19 @@ def test_the_machine_preference_is_read_the_way_gettext_reads_it(monkeypatch,
     # LANGUAGE wins, and carries a list.
     monkeypatch.setenv("LANGUAGE", "fi:de")
     assert set_language(directory=tmp_path).language == "de"
+
+
+def test_a_key_defined_twice_is_refused(tmp_path):
+    """Last-one-wins would mean the entry you got depended on the order the
+    directory happened to list, and the two definitions would differ."""
+    folder = tmp_path / "en"
+    folder.mkdir()
+    (folder / "one.po").write_text(HEADER.replace("xx", "en")
+                                   + 'msgid "a.b"\nmsgstr "first"\n')
+    (folder / "two.po").write_text(HEADER.replace("xx", "en")
+                                   + 'msgid "a.b"\nmsgstr "second"\n')
+    with pytest.raises(CatalogueError, match="a.b"):
+        Catalogue.load("en", tmp_path)
 
 
 def test_every_key_the_code_names_exists_in_the_catalogue():

@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera.base import CameraState
 from ..camera.session import FRAMERATES
+from ..i18n import _
 from . import icons, theme
 
 
@@ -81,10 +82,10 @@ class ToolBar(QtWidgets.QFrame):
         self.setProperty("role", "bar")
         self.setFixedHeight(36)
 
-        self.wordmark = QtWidgets.QPushButton("darlaston")
+        self.wordmark = QtWidgets.QPushButton(_("shell.wordmark.label"))
         self.wordmark.setProperty("role", "wordmark")
         self.wordmark.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.wordmark.setToolTip("About darlaston")
+        self.wordmark.setToolTip(_("shell.wordmark.tooltip"))
         self.wordmark.clicked.connect(self.about)
 
         divider = QtWidgets.QFrame()
@@ -129,7 +130,7 @@ class StatusBar(QtWidgets.QFrame):
             f"background: {theme.PANEL}; border-top: 1px solid {theme.LINE};")
 
         self.dot = Dot()
-        self.state = QtWidgets.QLabel("--")
+        self.state = QtWidgets.QLabel(_("shell.state.idle"))
         self.state.setProperty("role", "sub")
         self.context = QtWidgets.QLabel("")
         self.context.setProperty("role", "sub")
@@ -146,10 +147,7 @@ class StatusBar(QtWidgets.QFrame):
         self.preview.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.preview.setMinimumContentsLength(18)
-        self.preview.setToolTip(
-            "Live preview resolution. Captures are always full resolution;\n"
-            "this only trades preview detail for frame rate, and every\n"
-            "per-pixel stage of the live loop scales with it.")
+        self.preview.setToolTip(_("shell.preview.tooltip"))
         self.preview.setStyleSheet(
             f"QComboBox {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
             f" margin: 1px; padding: 1px 6px; color: {theme.DIM};"
@@ -164,14 +162,11 @@ class StatusBar(QtWidgets.QFrame):
         # quality against load, and the pair a person reaches for together.
         self.rate = QtWidgets.QComboBox()
         self.rate.setProperty("role", "sub")
-        self.rate.setToolTip(
-            "How many frames a second to ask the camera for.\n"
-            "Frames we cannot analyse in time are still pulled over USB with\n"
-            "the driver holding the interpreter, so asking for fewer beats\n"
-            "discarding more. Watch the drop percentage to the right.")
+        self.rate.setToolTip(_("shell.rate.tooltip"))
         self.rate.setStyleSheet(self.preview.styleSheet())
         for fps in FRAMERATES:
-            self.rate.addItem("uncapped" if fps == 0 else f"{fps} fps", fps)
+            self.rate.addItem(_("shell.rate.uncapped") if fps == 0
+                              else _("shell.rate.fps", fps=fps), fps)
 
         self.numbers = QtWidgets.QLabel("")
         self.numbers.setProperty("role", "sub")
@@ -191,10 +186,8 @@ class StatusBar(QtWidgets.QFrame):
         # visible on the picture -- but this one changes every file
         # written and is discoverable nowhere else. Off is the unusual
         # state, so the chip appears only then.
-        self.wb_off = Chip("no white balance", active=True)
-        self.wb_off.setToolTip(
-            "Files are being written with the sensor's own channels, "
-            "untouched.\nTurn it back on in Capture > Write white balance.")
+        self.wb_off = Chip(_("shell.wb_off.label"), active=True)
+        self.wb_off.setToolTip(_("shell.wb_off.tooltip"))
         self.wb_off.hide()
 
         row.addWidget(self.dot)
@@ -225,7 +218,11 @@ class StatusBar(QtWidgets.QFrame):
             self.disk.setToolTip("")
             return
         gb = free_bytes / 1e9
-        text = f"{gb:.0f} GB free" if gb >= 10 else f"{gb:.1f} GB free"
+        # One decimal only when it is running out, where the difference
+        # between 1.2 and 1.8 GB is the difference between one more tile
+        # and none.
+        text = (_("shell.disk.free", gb=f"{gb:.0f}") if gb >= 10
+                else _("shell.disk.free", gb=f"{gb:.1f}"))
         colour = ""
         if gb < self.DISK_CRITICAL_GB:
             colour = f"color: {theme.BAD};"
@@ -233,10 +230,8 @@ class StatusBar(QtWidgets.QFrame):
             colour = f"color: {theme.BRASS};"
         self.disk.setText(text)
         self.disk.setStyleSheet(colour)
-        self.disk.setToolTip(
-            f"Room left on the volume holding {root or 'your captures'}.\n"
-            "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
-            if root else "Room left where captures are written.")
+        self.disk.setToolTip(_("shell.disk.tooltip", root=root) if root
+                             else _("shell.disk.tooltip.unknown"))
 
     def set_white_balance(self, on: bool) -> None:
         """Say so when files are going out unbalanced."""
@@ -267,7 +262,8 @@ class StatusBar(QtWidgets.QFrame):
         self.dot.set_state(status.state)
         bits = [status.message.lower()]
         if status.state is CameraState.ERROR and status.next_retry_in:
-            bits.append(f"retrying in {status.next_retry_in:.0f}s")
+            bits.append(_("shell.state.retrying",
+                              seconds=f"{status.next_retry_in:.0f}"))
         self._base = "   ".join(bits)
         if not self._note:
             self.state.setText(self._base)
@@ -291,7 +287,9 @@ class StatusBar(QtWidgets.QFrame):
             self.preview.clear()
             for r in info.resolutions:
                 mp = r.width * r.height / 1e6
-                self.preview.addItem(f"{r.width}×{r.height}  {mp:.1f} MP",
+                self.preview.addItem(
+                    _("shell.preview.resolution", w=r.width, h=r.height,
+                      mp=f"{mp:.1f}"),
                                      r.index)
             self.preview.blockSignals(False)
 
@@ -307,8 +305,9 @@ class StatusBar(QtWidgets.QFrame):
     def set_live(self, signals) -> None:
         st = signals.stats
         total = max(st["delivered"] + st["dropped"], 1)
-        self._live = (f"{st['analysed_fps']:.0f} fps   "
-                      f"dropped {st['dropped']} ({st['dropped'] / total * 100:.0f}%)")
+        self._live = _("shell.numbers.live",
+                       fps=f"{st['analysed_fps']:.0f}", dropped=st["dropped"],
+                       percent=f"{st['dropped'] / total * 100:.0f}")
         self._render_numbers()
 
     def _render_numbers(self) -> None:
@@ -355,7 +354,7 @@ class WaitingPage(QtWidgets.QWidget):
         self.setStyleSheet(f"background:{theme.SUNK};")
 
         self.pulse = _Pulse()
-        self.heading = QtWidgets.QLabel("Waiting for a camera")
+        self.heading = QtWidgets.QLabel(_("shell.waiting.heading"))
         self.heading.setProperty("role", "heading")
         self.body = QtWidgets.QLabel("")
         self.body.setProperty("role", "body")
@@ -380,15 +379,15 @@ class WaitingPage(QtWidgets.QWidget):
         _wraps(self.steps)
         self.steps.hide()
 
-        self.synthetic = QtWidgets.QPushButton("Use a synthetic camera")
+        self.synthetic = QtWidgets.QPushButton(_("shell.waiting.synthetic"))
         self.synthetic.clicked.connect(self.use_synthetic)
         # Shown only for the failure it fixes. A button offering to
         # download a 242 MB vendor archive should not be sitting there
         # while the camera is merely unplugged.
-        self.install_sdk = QtWidgets.QPushButton("Install the camera driver")
+        self.install_sdk = QtWidgets.QPushButton(_("shell.waiting.install"))
         self.install_sdk.clicked.connect(self.install_sdk_requested)
         self.install_sdk.hide()
-        self.copy_btn = QtWidgets.QPushButton("Copy this message")
+        self.copy_btn = QtWidgets.QPushButton(_("shell.waiting.copy"))
         self.copy_btn.setProperty("role", "seg")
         self.copy_btn.clicked.connect(self._copy)
         self.copy_btn.hide()
@@ -437,14 +436,14 @@ class WaitingPage(QtWidgets.QWidget):
         Someone asking for help should be able to paste what they saw,
         rather than retyping it or photographing their screen."""
         QtWidgets.QApplication.clipboard().setText(self._last)
-        self.copy_btn.setText("Copied")
+        self.copy_btn.setText(_("shell.waiting.copied"))
         QtCore.QTimer.singleShot(
-            1500, lambda: self.copy_btn.setText("Copy this message"))
+            1500, lambda: self.copy_btn.setText(_("shell.waiting.copy")))
 
     def update_status(self, status) -> None:
         faulted = status.state is CameraState.ERROR
         self.heading.setProperty("role", "fault" if faulted else "heading")
-        self.heading.setText(status.message or "Waiting for a camera")
+        self.heading.setText(status.message or _("shell.waiting.heading"))
         self.heading.style().unpolish(self.heading)
         self.heading.style().polish(self.heading)
 
@@ -460,7 +459,8 @@ class WaitingPage(QtWidgets.QWidget):
                 f"<td>{step}</td></tr>"
                 for i, step in enumerate(steps, 1))
             self.steps.setText(
-                f"<div style='margin-top:6px'><b>What to do</b>"
+                f"<div style='margin-top:6px'>"
+                f"<b>{_('shell.waiting.what_to_do')}</b>"
                 f"<table style='margin-top:4px'>{items}</table></div>")
             self.steps.show()
         else:
@@ -549,7 +549,7 @@ class ObjectiveStepper(QtWidgets.QWidget):
             b.setIconSize(QtCore.QSize(12, 12))
         for b in (self.prev, self.next):
             b.setProperty("role", "step")
-        self.label = QtWidgets.QLabel("--")
+        self.label = QtWidgets.QLabel(_("objective.none"))
         self.label.setProperty("role", "value")
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
@@ -595,24 +595,20 @@ class ObjectiveStepper(QtWidgets.QWidget):
         positions = getattr(self._turret, "positions", None) or []
         hint = ""
         if obj:
-            text = obj.label + ("  ?" if self._uncertain else "")
+            text = obj.label + (_("objective.uncertain")
+                                if self._uncertain else "")
         elif positions and not any(positions):
             # A turret nobody has described yet, which is not the same thing
             # as being parked on an empty detent of one that was -- and "--"
             # said both. A new stand now starts empty rather than being given
             # four invented objectives, so this is the first thing a stranger
             # sees here and it should say what to do about it.
-            text = "no objectives yet"
-            hint = ("Nothing has been put in this turret. Setup > Microscopes "
-                    "is where\nthe objectives and how many positions there "
-                    "are get described.")
+            text = _("objective.unconfigured")
+            hint = _("objective.unconfigured.tooltip")
         else:
-            text = "--"
+            text = _("objective.none")
         self.label.setText(text)
         self.label.setStyleSheet(
             f"color: {theme.BRASS};" if self._uncertain else "")
         self.label.setToolTip(
-            "A turret rotation was detected and never answered, so this may "
-            "no longer be\nthe objective in the light path. Step it, or "
-            "answer the next prompt, to be sure."
-            if self._uncertain else hint)
+            _("objective.uncertain.tooltip") if self._uncertain else hint)

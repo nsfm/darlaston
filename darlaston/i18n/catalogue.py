@@ -64,10 +64,39 @@ class Catalogue:
 
     @classmethod
     def load(cls, language: str, directory: Path | None = None) -> "Catalogue":
-        path = (directory or LOCALE_DIR) / f"{language}.po"
-        if not path.exists():
-            raise CatalogueError(f"no catalogue for {language!r} at {path}")
-        return cls.parse(path.read_text(encoding="utf-8"), language, str(path))
+        """Every `.po` under `locale/<language>/`, merged.
+
+        One file per area rather than one enormous one. At nearly three
+        hundred entries a single catalogue is hard to navigate and
+        impossible for two people to edit at once, and translators are
+        used to working a file at a time.
+
+        A key defined twice is an error rather than a last-one-wins,
+        because the two definitions would differ and which one you got
+        would depend on the order the directory listed.
+        """
+        folder = (directory or LOCALE_DIR) / language
+        if not folder.is_dir():
+            raise CatalogueError(f"no catalogue for {language!r} at {folder}")
+        singular: dict[str, str] = {}
+        plurals: dict[str, list[str]] = {}
+        header: dict[str, str] = {}
+        seen: dict[str, str] = {}
+        for path in sorted(folder.glob("*.po")):
+            part = cls.parse(path.read_text(encoding="utf-8"), language,
+                             str(path))
+            for key in part.keys():
+                if key in seen:
+                    raise CatalogueError(
+                        f"{key!r} is defined in both {seen[key]} and "
+                        f"{path.name}")
+                seen[key] = path.name
+            singular.update(part._singular)
+            plurals.update(part._plurals)
+            header.update(part.header)
+        if not seen:
+            raise CatalogueError(f"the {language} catalogue is empty")
+        return cls(language, singular, plurals, header)
 
     @classmethod
     def parse(cls, text: str, language: str, where: str = "<string>"
@@ -211,7 +240,8 @@ def _plural_rule(header: dict[str, str], language: str):
 
 def available_languages(directory: Path | None = None) -> list[str]:
     where = directory or LOCALE_DIR
-    return sorted(p.stem for p in where.glob("*.po"))
+    return sorted(p.name for p in where.iterdir()
+                  if p.is_dir() and any(p.glob("*.po")))
 
 
 def _preferred() -> list[str]:

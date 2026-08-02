@@ -1,0 +1,114 @@
+# The window chrome: title bar, status bar, the waiting screens, and the
+# objective stepper.
+
+#. The wordmark in the title bar, which opens the About window.
+msgid "shell.wordmark.label"
+msgstr "darlaston"
+
+msgid "shell.wordmark.tooltip"
+msgstr "About darlaston"
+
+#. Shown in the status bar before anything has happened.
+msgid "shell.state.idle"
+msgstr "idle"
+
+#. {seconds} until the next attempt to open the camera.
+msgid "shell.state.retrying"
+msgstr "retrying in {seconds}s"
+
+#. Preview resolution, in the status bar.
+msgid "shell.preview.tooltip"
+msgstr ""
+"Live preview resolution. Captures are always full resolution;\n"
+"this only trades preview detail for frame rate, and every\n"
+"per-pixel stage of the live loop scales with it."
+
+#. One entry in the resolution list: pixel dimensions and megapixels.
+msgid "shell.preview.resolution"
+msgstr "{w}×{h}  {mp} MP"
+
+#. Frame rate, beside resolution.
+msgid "shell.rate.tooltip"
+msgstr ""
+"How many frames a second to ask the camera for.\n"
+"Frames we cannot analyse in time are still pulled over USB with\n"
+"the driver holding the interpreter, so asking for fewer beats\n"
+"discarding more. Watch the drop percentage to the right."
+
+msgid "shell.rate.uncapped"
+msgstr "uncapped"
+
+msgid "shell.rate.fps"
+msgstr "{fps} fps"
+
+#. The live counters: frames analysed, and how many were dropped.
+msgid "shell.numbers.live"
+msgstr "{fps} fps   dropped {dropped} ({percent}%)"
+
+#. Free space where captures are written. {gb} is already rounded.
+msgid "shell.disk.free"
+msgstr "{gb} GB free"
+
+#. {root} is the folder captures go to.
+msgid "shell.disk.tooltip"
+msgstr ""
+"Room left on the volume holding {root}.\n"
+"A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
+
+msgid "shell.disk.tooltip.unknown"
+msgstr "Room left where captures are written."
+
+#. Shown only when white balance is off, because that is the unusual state.
+msgid "shell.wb_off.label"
+msgstr "no white balance"
+
+msgid "shell.wb_off.tooltip"
+msgstr ""
+"Files are being written with the sensor's own channels, untouched.\n"
+"Turn it back on in Capture > Write white balance."
+
+#. The screen shown while there is no camera.
+msgid "shell.waiting.heading"
+msgstr "Waiting for a camera"
+
+#. Heads the numbered instructions on a failure screen.
+msgid "shell.waiting.what_to_do"
+msgstr "What to do"
+
+#. Must match error.sdk_missing.step.install, which tells people to click it.
+msgid "shell.waiting.install"
+msgstr "Install the camera driver"
+
+msgid "shell.waiting.synthetic"
+msgstr "Use a synthetic camera"
+
+msgid "shell.waiting.copy"
+msgstr "Copy this message"
+
+#. Shown for a moment after the message is put on the clipboard.
+msgid "shell.waiting.copied"
+msgstr "Copied"
+
+#. The objective stepper in the rail. Three states that used to be two:
+#. a turret nobody has described yet reads differently from being parked
+#. on an empty position of one that was.
+msgid "objective.none"
+msgstr "--"
+
+msgid "objective.unconfigured"
+msgstr "no objectives yet"
+
+msgid "objective.unconfigured.tooltip"
+msgstr ""
+"Nothing has been put in this turret. Setup > Microscopes is where\n"
+"the objectives and how many positions there are get described."
+
+#. Appended to the objective when a rotation was detected but never answered.
+msgid "objective.uncertain"
+msgstr "  ?"
+
+msgid "objective.uncertain.tooltip"
+msgstr ""
+"A turret rotation was detected and never answered, so this may no longer "
+"be\nthe objective in the light path. Step it, or answer the next prompt, "
+"to be sure."

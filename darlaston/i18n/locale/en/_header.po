@@ -1,0 +1,20 @@
+# darlaston, English.
+#
+# This is the source catalogue: the keys are written against it and it is
+# always loaded, because a symbolic key has no readable fallback. Editing
+# the English here is safe and invalidates nothing -- that is the whole
+# reason the identifiers are keys rather than sentences.
+#
+# Keys read area.thing.role:
+#   area   where in the program it appears -- setup, calib, capture, error
+#   thing  the control or concept it belongs to
+#   role   what it is -- label, tooltip, action, detail, placeholder, step
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: darlaston\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
