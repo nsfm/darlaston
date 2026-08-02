@@ -18,7 +18,16 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests only. A superseded PR build is genuinely wasted work, but
+  # a build on main or a tag is the thing being released, and cancelling it
+  # because something else landed a minute later is how a tag ends up with
+  # no artifacts attached to it.
+  #
+  # Not theoretical: macos-13 is the last Intel image and is scarce enough
+  # to sit queued for longer than the other three take to finish, so every
+  # push killed it before it started. Four runs, four cancellations, and
+  # the Intel build was never once the thing that failed.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: write        # only used by the release job, on a tag
