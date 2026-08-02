@@ -59,6 +59,7 @@ darlaston = "darlaston.ui.main:main"
 packages = [
     "darlaston",
     "darlaston.calib",
+    "darlaston.i18n",
     "darlaston.camera",
     "darlaston.capture",
     "darlaston.live",
@@ -76,6 +77,10 @@ packages = [
 # except us.
 [tool.setuptools.package-data]
 "darlaston.ui" = ["fonts/*.ttf", "fonts/LICENSE.txt", "icons/*.svg"]
+# Without these an installed copy has no words at all: a symbolic
+# key has no readable fallback, so the interface would render
+# `calib.flat.action.collect` at somebody.
+"darlaston.i18n" = ["locale/*.po"]
 
 # The version comes from git tags and is never hand-edited. Between
 # releases that produces something like 0.2.0.dev7+g1a2b3c4, which is

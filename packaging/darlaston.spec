@@ -27,7 +27,9 @@ WINDOWS = sys.platform.startswith("win")
 # and then raises FileNotFoundError building its own stylesheet, because
 # theme.stylesheet() asks icons.path_for for the combo-box chevron before
 # a window ever opens.
-datas = collect_data_files("darlaston", includes=["ui/fonts/*", "ui/icons/*"])
+datas = collect_data_files(
+    "darlaston",
+    includes=["ui/fonts/*", "ui/icons/*", "i18n/locale/*.po"])
 
 hiddenimports = [
     # Reached only through __import__(module) in camera/toupcam.py, so

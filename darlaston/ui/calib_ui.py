@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtWidgets
 
+from ..i18n import _
 from . import theme
 
 
@@ -68,7 +69,7 @@ class CalibrationButton(QtWidgets.QPushButton):
              ("white_balance", "wb"), ("preview_lut", "profile"))
 
     def __init__(self) -> None:
-        super().__init__("calibration")
+        super().__init__(_("calib.button.label"))
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self._missing: list[str] = []
         self._busy = False
@@ -84,16 +85,13 @@ class CalibrationButton(QtWidgets.QPushButton):
         # Which ones are missing is the panel's job; this is the summary.
         have = len(self.ORDER) - len(self._missing)
         if busy:
-            self.setText("calibration   working…")
+            self.setText(_("calib.button.working"))
         elif not self._missing:
-            self.setText("calibration   complete")
+            self.setText(_("calib.button.complete"))
         else:
-            self.setText(f"calibration   {have} of {len(self.ORDER)}")
-        self.setToolTip(
-            "Dark, flat, white balance and preview profile for this "
-            "configuration.\nClick to open. Missing products are a nag, "
-            "not a gate. Capture anyway\nand the file records what it "
-            "did and did not have.")
+            self.setText(_("calib.button.progress", have=have,
+                           total=len(self.ORDER)))
+        self.setToolTip(_("calib.button.tooltip"))
         self._restyle()
 
     def _restyle(self) -> None:
@@ -117,26 +115,20 @@ class CalibrationPanel(QtWidgets.QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.dark = _Row("dark", "Shoot",
-                         "Cap the lens or switch the lamp off, then shoot.\n"
-                         "Averaged over several frames; ages after about eight "
-                         "hours because this sensor has no cooling.")
-        self.flat = _Row("flat", "Collect",
-                         "Set the light and the optics the way you will shoot, "
-                         "then collect.\nMove to blank glass and hold still; "
-                         "four frames at distinct stage\npositions median away "
-                         "slide debris. Each one freezes the preview for\nabout "
-                         "a second, and a flat is only valid at the "
-                         "illumination it\nwas shot under.")
+        self.dark = _Row(_("calib.dark.label"), _("calib.dark.action"),
+                         _("calib.dark.tooltip"))
+        self.flat = _Row(_("calib.flat.label"), _("calib.flat.action.collect"),
+                         _("calib.flat.tooltip"))
         self._collecting = False
-        self.wb = _Row("white balance", "--",
-                       "Measured from the flat. A featureless illuminated "
-                       "field is neutral by definition.")
+        #: What the flat row's button will do if pressed. Tracked rather
+        #: than read back off the label: comparing against display text
+        #: works exactly until the first translation.
+        self._flat_does = "collect"
+        self.wb = _Row(_("calib.wb.label"), _("calib.wb.action"),
+                       _("calib.wb.tooltip"))
         self.wb.button.setEnabled(False)
-        self.lut = _Row("preview profile", "Profile",
-                        "Measures what the ISP does to the sensor data, so the "
-                        "histogram can report real headroom.\nTakes an "
-                        "exposure ramp, so it needs a few seconds.")
+        self.lut = _Row(_("calib.lut.label"), _("calib.lut.action"),
+                        _("calib.lut.tooltip"))
 
         self.dark.act.connect(self.capture_dark)
         self.flat.act.connect(self._on_flat)
@@ -165,9 +157,9 @@ class CalibrationPanel(QtWidgets.QWidget):
 
     def _on_flat(self) -> None:
         """One row, three jobs: start collecting, stop, or build."""
-        if self._collecting:
+        if self._flat_does == "stop":
             self.collect_flat.emit(False)
-        elif self.flat.button.text() == "Build":
+        elif self._flat_does == "build":
             self.build_flat.emit()
         else:
             self.collect_flat.emit(True)
@@ -180,23 +172,36 @@ class CalibrationPanel(QtWidgets.QWidget):
         # Three states, because collecting is a mode with a cost: while it
         # runs the preview freezes for a second at a time, so it has to be
         # visible that it is running and stoppable without finishing.
+        counts = {"banked": banked, "wanted": wanted}
         if have_flat:
-            action, detail, actionable = "Build", "", False
+            does, detail, actionable = "build", "", False
         elif collecting:
-            action = "Stop"
-            detail = f"{banked}/{wanted}  move to blank glass"
+            does = "stop"
+            detail = _("calib.flat.detail.collecting", **counts)
             actionable = True
         elif banked >= 2:
-            action = "Build"
-            detail = f"{banked}/{wanted}" + ("  3+ rejects debris"
-                                             if banked < 3 else "")
+            does = "build"
+            # Both spelled out, for the same reason as the actions below.
+            detail = (_("calib.flat.detail.count", **counts) if banked >= 3
+                      else _("calib.flat.detail.debris", **counts))
             actionable = live
         else:
-            action, detail, actionable = "Collect", f"{banked}/{wanted}", live
-        self.flat.button.setText(action)
+            does = "collect"
+            detail = _("calib.flat.detail.count", **counts)
+            actionable = live
+        self._flat_does = does
+        # Spelled out rather than built from `does`. A key assembled at
+        # runtime is invisible to the check that every named key exists,
+        # and that check is the only thing standing between a typo and a
+        # window with `calib.flat.action.buidl` written on it.
+        self.flat.button.setText({
+            "collect": _("calib.flat.action.collect"),
+            "stop": _("calib.flat.action.stop"),
+            "build": _("calib.flat.action.build"),
+        }[does])
         self.flat.set_state(have_flat, detail, actionable=actionable)
         self.wb.set_state(status.get("white_balance", False),
-                          "from flat", actionable=False)
+                          _("calib.wb.detail"), actionable=False)
         self.lut.set_state(status.get("preview_lut", False), actionable=live)
 
     def set_progress(self, progress) -> None:
