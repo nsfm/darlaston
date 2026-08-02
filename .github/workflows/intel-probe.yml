@@ -1,20 +1,15 @@
 name: intel probe
 
-# Throwaway experiment, run by hand: can an Apple silicon runner produce an
-# Intel build, so the scarce macos-13 image is not needed?
+# Round two. Round one established: Rosetta runs on macos-14-arm64, and
+# actions/setup-python with architecture x64 hands over a *universal2*
+# binary -- which defaults to arm64 when run, so pip fetched arm64 wheels
+# and nothing was cross-anything.
 #
-# PyInstaller does not cross-compile -- it bundles the interpreter and the
-# native extensions of whatever is running it. But Apple silicon can *run*
-# x86_64 through Rosetta, so an x86_64 Python driving an x86_64 PyInstaller
-# would produce an x86_64 bundle without ever touching an Intel machine.
+# A universal2 binary can be forced to its other half. `arch -x86_64
+# python` should report x86_64, pull x86_64 wheels, and drive an x86_64
+# PyInstaller to an x86_64 bundle -- no Intel runner anywhere.
 #
-# Three things have to hold, and this job answers all three separately
-# rather than failing as one lump:
-#   1. Rosetta is present on the runner image
-#   2. an x86_64 Python 3.12 can be obtained there
-#   3. the x86_64 wheels for PySide6, OpenCV and numpy install and import
-#
-# Deleted once it has answered. It is here to be read in the run log.
+# This runs the whole thing, and `file` on the result is the verdict.
 
 on:
   workflow_dispatch:
@@ -22,54 +17,52 @@ on:
 jobs:
   probe:
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Is this actually Apple silicon
-        run: |
-          uname -m
-          sysctl -n machdep.cpu.brand_string || true
-
-      - name: Is Rosetta there
-        continue-on-error: true
-        run: |
-          if /usr/bin/pgrep -q oahd; then
-            echo "rosetta daemon is running"
-          else
-            echo "no rosetta daemon; trying to install"
-            sudo softwareupdate --install-rosetta --agree-to-license || \
-              echo "could not install rosetta"
-          fi
-          echo "--- can we run an x86_64 process? ---"
-          arch -x86_64 /usr/bin/uname -m || echo "arch -x86_64 FAILED"
-
-      - name: Can setup-python give us an x86_64 interpreter
-        id: xpy
-        continue-on-error: true
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           architecture: x64
 
-      - name: What did we get
-        continue-on-error: true
+      - name: Which half are we running
         run: |
-          echo "setup-python outcome: ${{ steps.xpy.outcome }}"
-          which python || true
-          python -c "import platform, sys; print('python', sys.version.split()[0], platform.machine())" || true
-          file "$(which python)" || true
+          echo "native:  $(python -c 'import platform; print(platform.machine())')"
+          echo "rosetta: $(arch -x86_64 python -c 'import platform; print(platform.machine())')"
 
-      - name: Do the x86_64 wheels install and import
-        continue-on-error: true
+      - name: Build an x86_64 environment under Rosetta
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install "numpy>=1.24" "opencv-python-headless>=4.8" "PySide6>=6.5"
-          python - <<'PY'
-          import platform
-          import cv2, numpy
+          arch -x86_64 python -m venv .venv-x64
+          arch -x86_64 ./.venv-x64/bin/python -c \
+            "import platform; print('venv reports', platform.machine())"
+          arch -x86_64 ./.venv-x64/bin/python -m pip install --upgrade pip
+          arch -x86_64 ./.venv-x64/bin/python -m pip install -e ".[package]"
+
+      - name: What did pip actually fetch
+        run: |
+          arch -x86_64 ./.venv-x64/bin/python - <<'PY'
+          import platform, cv2, numpy
           from PySide6 import QtCore
           print("machine:", platform.machine())
           print("numpy", numpy.__version__, "cv2", cv2.__version__,
                 "Qt", QtCore.qVersion())
+          print("cv2 from:", cv2.__file__)
           PY
+          file .venv-x64/lib/python3.12/site-packages/cv2/*.so | head -2 || true
+
+      - name: Build
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+        run: |
+          arch -x86_64 ./.venv-x64/bin/pyinstaller --noconfirm \
+            --distpath dist/pyi --workpath build/pyi packaging/darlaston.spec
+
+      - name: Is the result actually Intel
+        run: |
+          BIN=dist/pyi/darlaston.app/Contents/MacOS/darlaston
+          file "$BIN"
+          echo "--- and does it run, under Rosetta? ---"
+          QT_QPA_PLATFORM=offscreen "$BIN" --selftest
