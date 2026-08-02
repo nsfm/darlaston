@@ -48,7 +48,13 @@ def load_fonts() -> dict[str, str]:
     # refuse politely instead of taking the process down.
     from PySide6 import QtWidgets
     if QtWidgets.QApplication.instance() is None:
-        return {"mono": "monospace", "sans": "sans-serif"}
+        # Every role, including display. Returning a short dict here made
+        # this an ordering trap rather than a fallback: app_icon() reads
+        # families["display"], so it raised KeyError when it happened to
+        # run before anything had built a QApplication, and passed in any
+        # order where something had.
+        return {"mono": "monospace", "sans": "sans-serif",
+                "display": "sans-serif"}
     wanted = {
         "mono": ["IBMPlexMono-Regular.ttf", "IBMPlexMono-Medium.ttf"],
         "sans": ["IBMPlexSans-Regular.ttf", "IBMPlexSans-SemiBold.ttf"],
@@ -118,6 +124,12 @@ def app_icon() -> QtGui.QIcon:
     instead of a folder of PNGs that drift from the wordmark the moment
     anybody touches either.
     """
+    # Same refusal as load_fonts, for the same reason: QFontDatabase does
+    # not raise without a QApplication, it aborts the process. Drawing the
+    # mark needs font metrics, so this cannot be attempted early.
+    if QtWidgets.QApplication.instance() is None:
+        return QtGui.QIcon()
+
     fam = load_fonts()
     icon = QtGui.QIcon()
     for size in ICON_SIZES:

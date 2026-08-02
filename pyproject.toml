@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -41,6 +41,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
+# Building the double-clickable artifacts. Not needed to run
+# darlaston, and deliberately not a runtime dependency.
+package = ["pytest>=7.4", "pyinstaller>=6.10"]
 
 [project.urls]
 Homepage = "https://github.com/nsfm/darlaston"
@@ -74,8 +77,16 @@ packages = [
 [tool.setuptools.package-data]
 "darlaston.ui" = ["fonts/*.ttf", "fonts/LICENSE.txt", "icons/*.svg"]
 
-[tool.setuptools.dynamic]
-version = { attr = "darlaston.__version__" }
+# The version comes from git tags and is never hand-edited. Between
+# releases that produces something like 0.2.0.dev7+g1a2b3c4, which is
+# unique per commit, sorts correctly, and cannot be forgotten. What the
+# *next* tag should be is worked out from the commit history by
+# packaging/version.py -- see its docstring for the trailer convention.
+[tool.setuptools_scm]
+version_file = "darlaston/_version.py"
+# Before the first tag exists, describe builds as leading to 0.1.0 rather
+# than to setuptools-scm's default guess of 0.1.dev1.
+fallback_version = "0.1.0.dev0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

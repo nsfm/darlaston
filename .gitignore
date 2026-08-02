@@ -21,6 +21,9 @@ calibration/
 *.jpg
 *.xmp
 
+# Written by setuptools-scm at build time, from the git tags.
+darlaston/_version.py
+
 # Python
 .venv/
 venv/

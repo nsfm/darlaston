@@ -10,4 +10,16 @@ Licence version 3 or later (see LICENSE), with an additional permission
 under section 7 for linking against camera and hardware-control
 libraries -- see LICENSE.EXCEPTION.
 """
-__version__ = "0.1.0.dev0"
+try:
+    # Written at build time by setuptools-scm, from the git tags. Absent in
+    # a bare source tree that was never built, which is the normal state of
+    # a fresh clone, so it is not an error.
+    from ._version import __version__
+except ImportError:                                  # pragma: no cover
+    try:
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _installed
+
+        __version__ = _installed("darlaston")
+    except PackageNotFoundError:
+        __version__ = "0.0.0+unknown"
