@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # The runtime dependencies are deliberately three and are pinned only by
+  # a floor, so this mostly watches the dev and packaging extras. Weekly,
+  # because a capture program does not need to chase releases.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
