@@ -14,6 +14,7 @@ from __future__ import annotations
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..cpu import THREAD_BUDGET, usable_cores
+from ..i18n import N_, _
 from . import theme
 from .framed import FramedDialog
 from .widgets import UI_METER
@@ -30,7 +31,9 @@ class PerfPanel(QtWidgets.QWidget):
         self.summary.setWordWrap(True)
 
         self.table = QtWidgets.QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["feature", "ms", "% of frame"])
+        self.table.setHorizontalHeaderLabels(
+            [_("perf.table.heading.feature"), _("perf.table.heading.ms"),
+             _("perf.table.heading.share")])
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -83,12 +86,14 @@ class PerfPanel(QtWidgets.QWidget):
         dropped = stats.get("dropped", 0)
         drop_pct = 100.0 * dropped / max(delivered, 1)
         driver = getattr(self, "_driver_dropped", None)
-        theirs = ("" if not driver else
-                  f" &nbsp;·&nbsp; {driver} dropped by the driver")
+        theirs = ("" if not driver
+                  else _("perf.summary.detail.driver", count=driver))
+        # Every number is rounded here, so the catalogue carries words and
+        # not format specs.
         self.summary.setText(
-            f"<b>{total:.1f} ms</b> per frame of a {self._budget_ms:.0f} ms "
-            f"budget &nbsp;·&nbsp; {fps:.0f} fps &nbsp;·&nbsp; "
-            f"{drop_pct:.0f}% of frames dropped{theirs}")
+            _("perf.summary.detail", total=f"{total:.1f}",
+              budget=f"{self._budget_ms:.0f}", fps=f"{fps:.0f}",
+              dropped=f"{drop_pct:.0f}", driver=theirs))
 
         self.table.setRowCount(len(rows))
         for r, (name, ms) in enumerate(rows):
@@ -108,42 +113,30 @@ class PerfPanel(QtWidgets.QWidget):
                 self.table.setItem(r, c, item)
 
         if total > self._budget_ms:
-            worst = rows[0][0] if rows else "something"
+            worst = rows[0][0] if rows else _("perf.hint.detail.unnamed")
             # The frame rate is named first because it measured as the
             # larger lever by far: on a two-core machine, capping 40 to 15
             # took the app from 185% of a core to 80%, which no single
             # feature here can match. It also reaches the work this table
             # cannot see, since a frame the camera never sends costs nothing
             # to pull over USB and nothing to demosaic either.
-            self.hint.setText(
-                f"Over budget, so frames are being dropped to keep up. "
-                f"Lowering the frame rate in the status bar is the biggest "
-                f"single thing you can do, and it saves work this table "
-                f"does not even show. After that, <b>{worst}</b> is the "
-                f"largest cost here and turning it off is the cheapest "
-                f"test of whether it is the problem.")
+            self.hint.setText(_("perf.hint.detail.over", worst=worst))
         elif total > 0.7 * self._budget_ms:
-            self.hint.setText(
-                "Close to the budget. This will not hold on a slower "
-                "machine.")
+            self.hint.setText(_("perf.hint.detail.close"))
         else:
-            self.hint.setText(
-                "Comfortable. Costs are smoothed over about a second, so "
-                "switch a feature on and watch its row settle.")
+            self.hint.setText(_("perf.hint.detail.comfortable"))
 
 
 #: The preview scaling choices: value, label, and one line saying what it
 #: does for you. The reasoning behind each -- what was measured, what was
 #: rejected and why -- belongs in the source and in TODO.md, not in front
-#: of somebody who only wants a smoother preview.
+#: of somebody who only wants a smoother preview. The label and the line
+#: are catalogue keys, because this table is built at import time.
 PREVIEW_CHOICES = (
-    ("full", "Full",
-     "Highest preview quality; may affect framerate."),
-    ("fast", "Fast",
-     "Improves preview performance; slight loss of quality."),
-    ("reduced", "Soft",
-     "Improves preview performance; smoother than 'Fast' for certain "
-     "scenes."),
+    ("full", N_("perf.preview.full.label"), N_("perf.preview.full.detail")),
+    ("fast", N_("perf.preview.fast.label"), N_("perf.preview.fast.detail")),
+    ("reduced", N_("perf.preview.reduced.label"),
+     N_("perf.preview.reduced.detail")),
 )
 
 
@@ -162,45 +155,47 @@ class PerformanceDialog(FramedDialog):
 
     def __init__(self, settings, on_change, parent=None) -> None:
         super().__init__(parent, width=520)
-        self.setWindowTitle("Performance")
+        self.setWindowTitle(_("perf.title"))
         self._settings = settings
         self._on_change = on_change
 
         col = self.content
         col.setSpacing(10)
 
-        col.addWidget(_heading("Preview quality"))
+        col.addWidget(_heading(_("perf.preview.heading")))
         # The one thing worth saying up front: nothing here reaches the
         # files. Without it, "quality" beside a camera reads as a threat.
-        col.addWidget(_note("Does not affect captured images."))
+        col.addWidget(_note(_("perf.preview.note.captures")))
         self._quality = QtWidgets.QButtonGroup(self)
         for value, label, why in PREVIEW_CHOICES:
-            button = QtWidgets.QRadioButton(label)
+            button = QtWidgets.QRadioButton(_(label))
             button.setChecked(settings.preview_quality == value)
             self._quality.addButton(button)
             button.setProperty("value", value)
             col.addWidget(button)
-            col.addWidget(_note(why))
+            col.addWidget(_note(_(why)))
         self._quality.buttonToggled.connect(self._quality_changed)
 
         col.addSpacing(4)
-        col.addWidget(_heading("Process threads"))
+        col.addWidget(_heading(_("perf.threads.heading")))
         row = QtWidgets.QHBoxLayout()
         self.threads = QtWidgets.QComboBox()
         cores = usable_cores()
-        self.threads.addItem(f"Automatic ({THREAD_BUDGET})", 0)
+        self.threads.addItem(
+            _("perf.threads.option.automatic", n=THREAD_BUDGET), 0)
         for n in (1, 2, 4, 8, 16, 32):
             if n <= cores and n != THREAD_BUDGET:
+                # A bare number, so there is nothing here to translate.
                 self.threads.addItem(f"{n}", n)
         if cores not in (1, 2, 4, 8, 16, 32):
-            self.threads.addItem(f"All ({cores})", cores)
+            self.threads.addItem(_("perf.threads.option.all", n=cores), cores)
         at = self.threads.findData(settings.cpu_threads)
         self.threads.setCurrentIndex(at if at >= 0 else 0)
         self.threads.currentIndexChanged.connect(self._threads_changed)
         row.addWidget(self.threads)
         row.addStretch(1)
         col.addLayout(row)
-        col.addWidget(_note("More threads is not always faster."))
+        col.addWidget(_note(_("perf.threads.note.diminishing")))
 
         col.addStretch(1)
         buttons = QtWidgets.QDialogButtonBox(

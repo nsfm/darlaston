@@ -1,0 +1,123 @@
+# The shutter, the subject fields, and where captures land.
+
+#. ---- the shutter --------------------------------------------------------
+#. The largest control in the window. It reports its stage rather than
+#. appearing to hang, because a capture is seconds and not milliseconds.
+
+msgid "capture.shutter.action.capture"
+msgstr "Capture"
+
+#. {n} exposures averaged into one file. The count rides on the button so a
+#. sixteen-frame capture is never a surprise at the moment of pressing.
+msgid "capture.shutter.action.average"
+msgstr "Capture  ×{n}"
+
+#. The `state` role is what the button says while it is working, which is
+#. not an action any more: pressing it is not what happens next.
+msgid "capture.shutter.state.exposing"
+msgstr "Exposing…"
+
+#. {progress} is the frame within a burst, as "3/16". Kept as a number
+#. rather than a sentence: it sits on a button 46 px tall.
+msgid "capture.shutter.state.exposing.burst"
+msgstr "Exposing {progress}…"
+
+msgid "capture.shutter.state.calibrating"
+msgstr "Calibrating…"
+
+msgid "capture.shutter.state.writing"
+msgstr "Writing…"
+
+#. A capture state with no words of its own. {state} is the identifier the
+#. capture reported. Every state the capture actually sends has an entry
+#. above; showing the identifier is better than inventing a word for one
+#. that was added and not translated.
+msgid "capture.shutter.state.other"
+msgstr "{state}…"
+
+#. ---- averaging ----------------------------------------------------------
+
+msgid "capture.average.tooltip"
+msgstr ""
+"Average several exposures into one file.\n"
+"Noise falls as the square root: ×16 is two stops cleaner.\n"
+"Hold still for the whole burst. Motion between frames ghosts the average."
+
+msgid "capture.average.action.single"
+msgstr "single frame"
+
+#. {n} is the burst length: 4 or 16.
+msgid "capture.average.action.many"
+msgstr "average ×{n}"
+
+#. ---- what is on the slide -----------------------------------------------
+
+msgid "capture.subject.tooltip"
+msgstr "Records these details in each capture's EXIF data."
+
+#. Plain nouns rather than an example: a placeholder is read as a hint about
+#. what goes in the box.
+msgid "capture.subject.placeholder"
+msgstr "specimen"
+
+msgid "capture.slide.placeholder"
+msgstr "slide details"
+
+#. ---- where captures go and what they are called -------------------------
+
+msgid "capture.files.title"
+msgstr "Files"
+
+msgid "capture.files.action.browse"
+msgstr "Browse…"
+
+#. The caption on the folder picker the Browse button opens.
+msgid "capture.files.browse.title"
+msgstr "Capture folder"
+
+msgid "capture.files.root.label"
+msgstr "Capture folder"
+
+msgid "capture.files.folder.label"
+msgstr "Subfolder"
+
+msgid "capture.files.filename.label"
+msgstr "File name"
+
+msgid "capture.files.format.label"
+msgstr "Write"
+
+msgid "capture.files.format.both.label"
+msgstr "Raw and JPEG"
+
+msgid "capture.files.format.raw.label"
+msgstr "Raw only"
+
+msgid "capture.files.format.jpeg.label"
+msgstr "JPEG only"
+
+msgid "capture.files.format.tooltip"
+msgstr ""
+"The JPEG is developed from the levels and white balance the raw file "
+"itself declares, so opening the raw later agrees with it.\n"
+"Mosaic tiles and stack slices always keep their raw whatever this says: "
+"the stitcher and the merge read them back."
+
+msgid "capture.files.keep_slices.label"
+msgstr "Keep individual Z-stack slices after stacking"
+
+msgid "capture.files.keep_slices.tooltip"
+msgstr "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
+
+#. Section headers above the token list and the worked example. Upper case
+#. is how they are set; the code does not raise them.
+msgid "capture.files.tokens.heading"
+msgstr "AVAILABLE TOKENS"
+
+msgid "capture.files.example.heading"
+msgstr "EXAMPLE"
+
+#. Shown in place of the example path when the pattern will not resolve.
+#. {reason} is the failure, which is not translated.
+msgid "capture.files.preview.invalid"
+msgstr "invalid pattern: {reason}"

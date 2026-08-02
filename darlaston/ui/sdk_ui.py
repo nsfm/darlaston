@@ -17,6 +17,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera import sdk_install
+from ..i18n import _
 from . import theme
 
 
@@ -28,21 +29,22 @@ class SdkDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Install camera SDK")
+        self.setWindowTitle(_("sdk.title"))
         self.setStyleSheet(theme.stylesheet())
         self._worker: threading.Thread | None = None
 
-        head = QtWidgets.QLabel(
-            "Your camera needs a driver made by the company that built "
-            "it, which darlaston cannot include. Pick your camera's brand "
-            "and darlaston will download the driver and check that it "
-            "works.")
+        head = QtWidgets.QLabel(_("sdk.heading"))
         head.setWordWrap(True)
 
         self.picker = QtWidgets.QComboBox()
         for source in sdk_install.sources():
-            suffix = ("" if source.automatic else "  (manual download)")
-            self.picker.addItem(f"{source.label}{suffix}", source.brand)
+            # The brand's own name is data and never translated; only the
+            # note beside it is. Both branches spelled out, so the key is a
+            # literal the consistency check can see.
+            self.picker.addItem(
+                source.label if source.automatic
+                else _("sdk.brand.option.manual", label=source.label),
+                source.brand)
         self.picker.currentIndexChanged.connect(self._describe)
 
         self.detail = QtWidgets.QLabel("")
@@ -63,7 +65,7 @@ class SdkDialog(QtWidgets.QDialog):
         self.buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Close)
         self.go = self.buttons.addButton(
-            "Download and install",
+            _("sdk.action.download"),
             QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole)
         self.go.clicked.connect(self._start)
         self.buttons.rejected.connect(self.reject)
@@ -71,7 +73,7 @@ class SdkDialog(QtWidgets.QDialog):
         col = QtWidgets.QVBoxLayout(self)
         col.addWidget(head)
         col.addSpacing(8)
-        col.addWidget(QtWidgets.QLabel("Camera brand"))
+        col.addWidget(QtWidgets.QLabel(_("sdk.brand.label")))
         col.addWidget(self.picker)
         col.addWidget(self.detail)
         col.addWidget(self.bar)
@@ -95,26 +97,21 @@ class SdkDialog(QtWidgets.QDialog):
         where = sdk_install.INSTALL_ROOT / source.brand
         lines = []
         if already:
-            lines.append("<b>Already installed.</b> Downloading again "
-                         "will replace it.")
+            lines.append(_("sdk.detail.already"))
         if source.automatic:
-            lines.append(
-                f"About <b>{source.approx_mb} MB</b>, downloaded from "
-                f"{source.url.split('/')[2]} and saved in "
-                f"<code>{where}</code>.")
+            lines.append(_("sdk.detail.automatic", size=source.approx_mb,
+                           host=source.url.split("/")[2], where=where))
         else:
-            lines.append(
-                f"{source.label} does not offer a direct download link. "
-                f"Get the Linux driver from "
-                f"<a href='{source.page}'>their website</a>, then unzip it "
-                f"into <code>{where}</code>.")
+            lines.append(_("sdk.detail.manual", label=source.label,
+                           page=source.page, where=where))
         if source.note:
             lines.append(source.note)
         self.detail.setText("<br><br>".join(lines))
         # A brand we cannot fetch gets a button that still does
         # something, rather than a greyed-out one that reads as broken.
-        self.go.setText("Download and install" if source.automatic
-                        else "Open download page")
+        # Both keys spelled out, so the consistency check can see them.
+        self.go.setText(_("sdk.action.download") if source.automatic
+                        else _("sdk.action.page"))
         self.go.setEnabled(self._worker is None)
 
     # ---- the work --------------------------------------------------------
@@ -127,23 +124,20 @@ class SdkDialog(QtWidgets.QDialog):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl(source.page))
             where = sdk_install.INSTALL_ROOT / source.brand
             where.mkdir(parents=True, exist_ok=True)
-            self.status.setText(
-                f"Opened their website. Unzip the Linux driver into "
-                f"{where}, which has been created for you.")
+            self.status.setText(_("sdk.status.opened", where=where))
             return
         self.go.setEnabled(False)
         self.picker.setEnabled(False)
         self.bar.setRange(0, 0)
         self.bar.show()
-        self.status.setText(f"Contacting {source.url.split('/')[2]}…")
+        self.status.setText(
+            _("sdk.status.contacting", host=source.url.split("/")[2]))
 
         def work():
             try:
                 path = sdk_install.download(
                     source, on_progress=lambda a, b: self.progress.emit(a, b))
-                self.finished_with.emit(
-                    path, "Installed. Unplug the camera and plug it back "
-                          "in, and darlaston will find it.")
+                self.finished_with.emit(path, _("sdk.status.installed"))
             except Exception as exc:
                 self.finished_with.emit(None, str(exc))
 
@@ -156,12 +150,17 @@ class SdkDialog(QtWidgets.QDialog):
         if total:
             self.bar.setRange(0, total)
             self.bar.setValue(done)
-            self.bar.setFormat(
-                f"%p%  ({done / 1e6:.0f} of {total / 1e6:.0f} MB)")
+            # Megabytes are rounded here, so the catalogue carries words and
+            # not format specs. `%p%` is Qt's own percentage placeholder and
+            # passes through the substitution untouched.
+            self.bar.setFormat(_("sdk.progress.detail",
+                                 done=f"{done / 1e6:.0f}",
+                                 total=f"{total / 1e6:.0f}"))
         else:
             # No Content-Length: keep it indeterminate rather than
             # inventing a percentage.
-            self.bar.setFormat(f"{done / 1e6:.0f} MB")
+            self.bar.setFormat(_("sdk.progress.detail.unsized",
+                                 done=f"{done / 1e6:.0f}"))
 
     @QtCore.Slot(object, str)
     def _on_done(self, path, message: str) -> None:
@@ -171,5 +170,5 @@ class SdkDialog(QtWidgets.QDialog):
         self.picker.setEnabled(True)
         self._describe()
         if path is not None:
-            self.go.setText("Done")
+            self.go.setText(_("sdk.action.done"))
             self.go.setEnabled(False)

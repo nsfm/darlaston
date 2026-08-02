@@ -1,0 +1,103 @@
+# What the live loop is spending its time on, and how much of the machine
+# it is allowed to use.
+
+#. ---- the cost table -----------------------------------------------------
+#. The budget is the honest denominator: at 40 fps a frame is 25 ms, and a
+#. stage costing 8 ms is not "8 ms", it is a third of everything.
+
+msgid "perf.table.heading.feature"
+msgstr "feature"
+
+#. Milliseconds. The SI symbol, which is the same in every language.
+msgid "perf.table.heading.ms"
+msgstr "ms"
+
+msgid "perf.table.heading.share"
+msgstr "% of frame"
+
+#. The line above the table. {total} and {budget} are milliseconds, {fps}
+#. frames per second, {dropped} a percentage, all already rounded. {driver}
+#. is the clause below, or empty when the camera cannot report. The bold and
+#. the non-breaking spaces around the middle dots are layout.
+msgid "perf.summary.detail"
+msgstr ""
+"<b>{total} ms</b> per frame of a {budget} ms budget &nbsp;·&nbsp; {fps} "
+"fps &nbsp;·&nbsp; {dropped}% of frames dropped{driver}"
+
+#. Frames the driver threw away before we ever saw them. Kept apart from our
+#. own count because they are opposite faults with opposite fixes: ours
+#. wants less work per frame, theirs wants a lower rate or another USB port.
+msgid "perf.summary.detail.driver"
+msgstr " &nbsp;·&nbsp; {count} dropped by the driver"
+
+#. {worst} is the name of the most expensive stage, which comes from the
+#. loop and is not translated. The frame rate is named first because it
+#. measured as the larger lever by far.
+msgid "perf.hint.detail.over"
+msgstr ""
+"Over budget, so frames are being dropped to keep up. Lowering the frame "
+"rate in the status bar is the biggest single thing you can do, and it "
+"saves work this table does not even show. After that, <b>{worst}</b> is "
+"the largest cost here and turning it off is the cheapest test of whether "
+"it is the problem."
+
+#. Stands in for the stage's name when the table is over budget with nothing
+#. in it, which should not happen but reads better than a blank.
+msgid "perf.hint.detail.unnamed"
+msgstr "something"
+
+msgid "perf.hint.detail.close"
+msgstr "Close to the budget. This will not hold on a slower machine."
+
+msgid "perf.hint.detail.comfortable"
+msgstr ""
+"Comfortable. Costs are smoothed over about a second, so switch a feature "
+"on and watch its row settle."
+
+#. ---- the preferences dialog ---------------------------------------------
+
+msgid "perf.title"
+msgstr "Performance"
+
+#. Section headers are raised to upper case by the code, so they are written
+#. here in ordinary case.
+msgid "perf.preview.heading"
+msgstr "Preview quality"
+
+#. Said up front, because "quality" beside a camera reads as a threat.
+msgid "perf.preview.note.captures"
+msgstr "Does not affect captured images."
+
+msgid "perf.preview.full.label"
+msgstr "Full"
+
+msgid "perf.preview.full.detail"
+msgstr "Highest preview quality; may affect framerate."
+
+msgid "perf.preview.fast.label"
+msgstr "Fast"
+
+msgid "perf.preview.fast.detail"
+msgstr "Improves preview performance; slight loss of quality."
+
+msgid "perf.preview.reduced.label"
+msgstr "Soft"
+
+#. 'Fast' names the option above and has to match whatever it was called.
+msgid "perf.preview.reduced.detail"
+msgstr ""
+"Improves preview performance; smoother than 'Fast' for certain scenes."
+
+msgid "perf.threads.heading"
+msgstr "Process threads"
+
+#. {n} is the thread count that was measured for this machine.
+msgid "perf.threads.option.automatic"
+msgstr "Automatic ({n})"
+
+#. {n} is every core the process is allowed to use.
+msgid "perf.threads.option.all"
+msgstr "All ({n})"
+
+msgid "perf.threads.note.diminishing"
+msgstr "More threads is not always faster."

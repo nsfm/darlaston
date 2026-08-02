@@ -1,0 +1,112 @@
+# Watching a stack assemble, and the controls that live with it.
+
+#. ---- the panel's buttons ------------------------------------------------
+
+#. Switches the composite for the depth view. Lower case: it sits in a row
+#. of small controls under the picture.
+msgid "stack.view.action.depth"
+msgstr "depth"
+
+msgid "stack.view.tooltip"
+msgstr ""
+"Tint each region by the slice that won it: the depth data,\n"
+"showing itself while it is still being collected."
+
+#. The doubled ampersand is Qt's escape for a literal one. A single & would
+#. disappear and underline the letter after it instead.
+msgid "stack.finish.action"
+msgstr "Finish && merge"
+
+msgid "stack.finish.tooltip"
+msgstr "Stop capturing and merge the slices into one all-in-focus image."
+
+msgid "stack.discard.action"
+msgstr "Discard"
+
+msgid "stack.discard.tooltip"
+msgstr "Delete this stack, slices and all."
+
+msgid "stack.close.action"
+msgstr "Close"
+
+msgid "stack.render.action"
+msgstr "Render depth"
+
+msgid "stack.render.tooltip"
+msgstr ""
+"Everything the depth map can make: a looping wobble, a focus\n"
+"pull, a lit turntable, a stereo pair, an anaglyph, a Magic\n"
+"Eye, a Darlaston Inferred Contrast relief and a printable\n"
+"mesh, all written beside the stack."
+
+msgid "stack.options.tooltip"
+msgstr "Merge options: how the stack becomes one image."
+
+#. ---- merge options ------------------------------------------------------
+#. Three knobs, each a statement about the subject that the merge cannot
+#. make alone. The headings are raised to upper case by the code, so they
+#. are written here in ordinary case.
+
+msgid "stack.smoothing.heading"
+msgstr "Glow smoothing"
+
+#. The glow ring is the halo a bright edge leaves in the out-of-focus
+#. slices, which the merge can smooth away at the cost of fine detail.
+msgid "stack.smoothing.off.label"
+msgstr "off: sharpest, keeps glow rings"
+
+msgid "stack.smoothing.light.label"
+msgstr "light: same detail, less ring"
+
+msgid "stack.smoothing.normal.label"
+msgstr "normal"
+
+msgid "stack.smoothing.strong.label"
+msgstr "strong: smoothest glow, softer detail"
+
+msgid "stack.feather.heading"
+msgstr "Seam feather"
+
+msgid "stack.feather.subtle.label"
+msgstr "subtle (1 px)"
+
+msgid "stack.feather.normal.label"
+msgstr "normal (2 px)"
+
+msgid "stack.feather.wide.label"
+msgstr "wide (4 px)"
+
+msgid "stack.output.heading"
+msgstr "Output"
+
+#. DNG is a file format and bayer is the sensor's colour filter pattern;
+#. both stay as they are.
+msgid "stack.output.bayer.label"
+msgstr "raw bayer DNG (small)"
+
+msgid "stack.output.linear.label"
+msgstr "linear RGB DNG (3× size)"
+
+msgid "stack.wiggle.heading"
+msgstr "Wigglegram depth"
+
+#. Which way the wobble reads: racking the focus down should carry the eye
+#. into the subject, and on some setups it comes out the other way round.
+msgid "stack.wiggle.normal.label"
+msgstr "racking down goes deeper"
+
+msgid "stack.wiggle.inverted.label"
+msgstr "inverted: my stacks rock backwards"
+
+#. ---- the running composite ----------------------------------------------
+
+#. Shown in the middle of the empty panel, before the first slice arrives.
+msgid "stack.canvas.detail.empty"
+msgstr "rack, pause. The first slice starts it"
+
+#. The count in the corner of the composite. The box is 68 px wide, so this
+#. has to stay short.
+msgid "stack.canvas.detail.slices"
+msgid_plural "stack.canvas.detail.slices"
+msgstr[0] "{count} slice"
+msgstr[1] "{count} slices"

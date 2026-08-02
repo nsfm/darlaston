@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..i18n import N_, _
 from ..session.settings import TOKENS, Settings, pictures_dir
 from . import theme
 from .framed import FramedDialog
@@ -24,20 +25,32 @@ class ShutterButton(QtWidgets.QPushButton):
     its stage rather than appearing to hang.
     """
 
-    LABELS = {"idle": "Capture", "exposing": "Exposing…", "writing": "Writing…"}
+    #: What the capture reports -> the words for it. Keys rather than words,
+    #: because the states arrive from the capture thread as identifiers and
+    #: are resolved here.
+    LABELS = {"idle": N_("capture.shutter.action.capture"),
+              "exposing": N_("capture.shutter.state.exposing"),
+              "calibrating": N_("capture.shutter.state.calibrating"),
+              "writing": N_("capture.shutter.state.writing")}
 
     def _label(self, state: str) -> str:
-        # Burst states arrive as "exposing 3/16" -- show them as they are,
-        # because a sixteen-frame average with a mute progress readout looks
-        # exactly like a hang.
-        base = (ShutterButton.LABELS.get(state)
-                or state[:1].upper() + state[1:] + "…")
-        if state == "idle" and self._average > 1:
-            return f"{base}  ×{self._average}"
-        return base
+        # Burst states arrive as "exposing 3/16". The count is shown, because
+        # a sixteen-frame average with a mute progress readout looks exactly
+        # like a hang -- but it is split off the identifier first, so the
+        # words in front of it still come from the catalogue. `_sep` rather
+        # than `_`, which is the catalogue lookup and must not be shadowed.
+        name, _sep, progress = state.partition(" ")
+        if name == "exposing" and progress:
+            return _("capture.shutter.state.exposing.burst", progress=progress)
+        key = ShutterButton.LABELS.get(name)
+        if key is None:
+            return _("capture.shutter.state.other", state=state)
+        if name == "idle" and self._average > 1:
+            return _("capture.shutter.action.average", n=self._average)
+        return _(key)
 
     def __init__(self) -> None:
-        super().__init__("Capture")
+        super().__init__(_("capture.shutter.action.capture"))
         self._state = "idle"
         self._average = 1
         self.setMinimumHeight(46)
@@ -113,23 +126,23 @@ class ShutterBar(QtWidgets.QWidget):
         self.arrow.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.arrow.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.arrow.setToolTip(
-            "Average several exposures into one file.\n"
-            "Noise falls as the square root: ×16 is two stops cleaner.\n"
-            "Hold still for the whole burst. Motion between frames ghosts "
-            "the average.")
+        self.arrow.setToolTip(_("capture.average.tooltip"))
 
         self._menu = QtWidgets.QMenu(self)
         self._actions = {}
         group = QtGui.QActionGroup(self._menu)
         group.setExclusive(True)
         for n in self.CHOICES:
-            act = self._menu.addAction("single frame" if n == 1
-                                       else f"average ×{n}")
+            # Both spelled out rather than one key with a count, because
+            # "single frame" is not the {n}=1 form of "average ×{n}" in
+            # English and need not be in any other language either.
+            act = self._menu.addAction(
+                _("capture.average.action.single") if n == 1
+                else _("capture.average.action.many", n=n))
             act.setCheckable(True)
             act.setChecked(n == 1)
             group.addAction(act)
-            act.triggered.connect(lambda _=False, n=n: self._choose(n))
+            act.triggered.connect(lambda checked=False, n=n: self._choose(n))
             self._actions[n] = act
         self.arrow.setMenu(self._menu)
 
@@ -200,9 +213,9 @@ class SubjectField(QtWidgets.QWidget):
         # Plain nouns rather than an example. A placeholder is read as a
         # hint about what goes in the box, and "dopamine arrangement" only
         # reads that way to someone who already knows what one is.
-        self.setToolTip("Records these details in each capture's EXIF data.")
+        self.setToolTip(_("capture.subject.tooltip"))
         self.edit = QtWidgets.QLineEdit()
-        self.edit.setPlaceholderText("specimen")
+        self.edit.setPlaceholderText(_("capture.subject.placeholder"))
         self.edit.setClearButtonEnabled(True)
         self.edit.textChanged.connect(self.changed)
         self.edit.setStyleSheet(
@@ -212,7 +225,7 @@ class SubjectField(QtWidgets.QWidget):
             f"QLineEdit:focus {{ border-color: {theme.BRASS}; }}")
 
         self.slide = QtWidgets.QLineEdit()
-        self.slide.setPlaceholderText("slide details")
+        self.slide.setPlaceholderText(_("capture.slide.placeholder"))
         self.slide.setStyleSheet(self.edit.styleSheet())
 
         col = QtWidgets.QVBoxLayout(self)
@@ -239,12 +252,12 @@ class SettingsDialog(FramedDialog):
 
     def __init__(self, settings: Settings, setup=None, parent=None) -> None:
         super().__init__(parent, width=560)
-        self.setWindowTitle("Files")
+        self.setWindowTitle(_("capture.files.title"))
         self._settings = settings
         self._setup = setup
 
         self.root = QtWidgets.QLineEdit(settings.capture_root)
-        browse = QtWidgets.QPushButton("Browse…")
+        browse = QtWidgets.QPushButton(_("capture.files.action.browse"))
         browse.clicked.connect(self._browse)
         root_row = QtWidgets.QHBoxLayout()
         root_row.addWidget(self.root, 1)
@@ -253,33 +266,28 @@ class SettingsDialog(FramedDialog):
         self.folder = QtWidgets.QLineEdit(settings.folder_pattern)
         self.filename = QtWidgets.QLineEdit(settings.filename_pattern)
         self.keep_slices = QtWidgets.QCheckBox(
-            "Keep individual Z-stack slices after stacking")
+            _("capture.files.keep_slices.label"))
         self.keep_slices.setChecked(settings.keep_slices)
-        self.keep_slices.setToolTip(
-            "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames.")
+        self.keep_slices.setToolTip(_("capture.files.keep_slices.tooltip"))
 
         # No ordinary camera ships set to raw only, and until recently this
         # program could not write a photograph at all -- every output was a
         # negative you needed a raw developer to open.
         self.image_format = QtWidgets.QComboBox()
-        for value, label in (("both", "Raw and JPEG"),
-                             ("raw", "Raw only"),
-                             ("jpeg", "JPEG only")):
+        for value, label in (("both", _("capture.files.format.both.label")),
+                             ("raw", _("capture.files.format.raw.label")),
+                             ("jpeg", _("capture.files.format.jpeg.label"))):
             self.image_format.addItem(label, value)
         at = self.image_format.findData(settings.image_format)
         self.image_format.setCurrentIndex(at if at >= 0 else 0)
-        self.image_format.setToolTip(
-            "The JPEG is developed from the levels and white balance the raw "
-            "file itself declares, so opening the raw later agrees with it.\n"
-            "Mosaic tiles and stack slices always keep their raw whatever "
-            "this says: the stitcher and the merge read them back.")
+        self.image_format.setToolTip(_("capture.files.format.tooltip"))
 
         form = QtWidgets.QFormLayout()
         form.setSpacing(9)
-        form.addRow("Capture folder", root_row)
-        form.addRow("Subfolder", self.folder)
-        form.addRow("File name", self.filename)
-        form.addRow("Write", self.image_format)
+        form.addRow(_("capture.files.root.label"), root_row)
+        form.addRow(_("capture.files.folder.label"), self.folder)
+        form.addRow(_("capture.files.filename.label"), self.filename)
+        form.addRow(_("capture.files.format.label"), self.image_format)
         form.addRow("", self.keep_slices)
 
         self.preview = QtWidgets.QLabel()
@@ -299,9 +307,9 @@ class SettingsDialog(FramedDialog):
         col = self.content
         col.setSpacing(14)
         col.addLayout(form)
-        col.addWidget(_label("AVAILABLE TOKENS"))
+        col.addWidget(_label(_("capture.files.tokens.heading")))
         col.addWidget(tokens)
-        col.addWidget(_label("EXAMPLE"))
+        col.addWidget(_label(_("capture.files.example.heading")))
         col.addWidget(self.preview)
         col.addStretch(1)
         col.addWidget(buttons)
@@ -314,7 +322,7 @@ class SettingsDialog(FramedDialog):
     def _browse(self) -> None:
         start = self.root.text() or str(pictures_dir())
         chosen = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "Capture folder", start)
+            self, _("capture.files.browse.title"), start)
         if chosen:
             self.root.setText(chosen)
 
@@ -326,7 +334,8 @@ class SettingsDialog(FramedDialog):
             path = probe.resolve(setup=self._setup, seq=7, subject="dopamine")
             self.preview.setText(str(path))
         except Exception as exc:
-            self.preview.setText(f"invalid pattern: {exc}")
+            self.preview.setText(
+                _("capture.files.preview.invalid", reason=exc))
 
     def _save(self) -> None:
         self._settings.capture_root = self.root.text()

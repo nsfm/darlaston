@@ -116,13 +116,17 @@ def test_no_microscopy_false_friends_in_the_render_list():
     """In microscopy an artefact is a spurious feature introduced by
     preparation -- the wrong word for a list of pictures you are inviting
     somebody to trust."""
+    from darlaston.i18n import _
     from darlaston.ui import darkroom_ui
 
     assert hasattr(darkroom_ui, "RENDERS")
     assert not hasattr(darkroom_ui, "ARTIFACTS")
+    # The table holds catalogue keys, so the words have to be looked up:
+    # checking the keys would pass no matter what the list said.
     for _key, label, hint, _on in darkroom_ui.RENDERS:
-        assert "artifact" not in (label + hint).lower()
-        assert "artefact" not in (label + hint).lower()
+        words = (_(label) + _(hint)).lower()
+        assert "artifact" not in words
+        assert "artefact" not in words
 
 
 def test_measure_from_can_be_turned_off_and_back_on(win):

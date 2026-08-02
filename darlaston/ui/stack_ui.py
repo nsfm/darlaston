@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..i18n import N_, _, n_
 from . import theme
 
 #: Width of the running composite. Small enough that folding a slice in is
@@ -45,29 +46,23 @@ class StackAssembly(QtWidgets.QWidget):
 
         self.canvas = _AssemblyCanvas(self)
 
-        self.view_toggle = QtWidgets.QPushButton("depth")
+        self.view_toggle = QtWidgets.QPushButton(_("stack.view.action.depth"))
         self.view_toggle.setCheckable(True)
-        self.view_toggle.setToolTip(
-            "Tint each region by the slice that won it: the depth data,\n"
-            "showing itself while it is still being collected.")
-        self.finish = QtWidgets.QPushButton("Finish && merge")
-        self.finish.setToolTip("Stop capturing and merge the slices into "
-                               "one all-in-focus image.")
-        self.discard = QtWidgets.QPushButton("Discard")
-        self.discard.setToolTip("Delete this stack, slices and all.")
-        self.close_btn = QtWidgets.QPushButton("Close")
+        self.view_toggle.setToolTip(_("stack.view.tooltip"))
+        self.finish = QtWidgets.QPushButton(_("stack.finish.action"))
+        self.finish.setToolTip(_("stack.finish.tooltip"))
+        self.discard = QtWidgets.QPushButton(_("stack.discard.action"))
+        self.discard.setToolTip(_("stack.discard.tooltip"))
+        self.close_btn = QtWidgets.QPushButton(_("stack.close.action"))
         self.close_btn.hide()
-        self.wiggle_btn = QtWidgets.QPushButton("Render depth")
-        self.wiggle_btn.setToolTip(
-            "Everything the depth map can make: a looping wobble, a focus\n"
-            "pull, a lit turntable, a stereo pair, an anaglyph, a Magic\n"
-            "Eye, a Darlaston Inferred Contrast relief and a printable\n"
-            "mesh, all written beside the stack.")
+        self.wiggle_btn = QtWidgets.QPushButton(_("stack.render.action"))
+        self.wiggle_btn.setToolTip(_("stack.render.tooltip"))
         self.wiggle_btn.hide()
         self.options = QtWidgets.QToolButton()
+        # A cog, so there is nothing here to translate. The tooltip carries
+        # the words.
         self.options.setText("⚙")
-        self.options.setToolTip("Merge options: how the stack becomes "
-                                "one image.")
+        self.options.setToolTip(_("stack.options.tooltip"))
         self.options.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         self.options.setProperty("role", "seg")
@@ -127,41 +122,44 @@ class StackAssembly(QtWidgets.QWidget):
         menu = QtWidgets.QMenu(self.options)
         menu.setStyleSheet(self.window().styleSheet())
 
-        def group(title, field, choices):
+        def group(heading, field, choices):
             # A disabled item as the header -- our stylesheet renders
             # QMenu sections as bare separators, which is too cryptic for
-            # three anonymous groups.
+            # three anonymous groups. The heading and every choice arrive
+            # as catalogue keys and are looked up here.
             if menu.actions():
                 menu.addSeparator()
-            head = menu.addAction(title.upper())
+            head = menu.addAction(_(heading).upper())
             head.setEnabled(False)
             acts = QtGui.QActionGroup(menu)
             current = getattr(settings, field)
             for label, value in choices:
-                act = menu.addAction(label)
+                act = menu.addAction(_(label))
                 act.setCheckable(True)
                 act.setChecked(value == current)
                 acts.addAction(act)
 
-                def pick(_=False, f=field, v=value):
+                # `checked` rather than `_`, which is the catalogue lookup.
+                def pick(checked=False, f=field, v=value):
                     setattr(settings, f, v)
                     settings.save()
                 act.triggered.connect(pick)
 
-        group("Glow smoothing", "stack_smoothing",
-              [("off: sharpest, keeps glow rings", "off"),
-               ("light: same detail, less ring", "light"),
-               ("normal", "normal"),
-               ("strong: smoothest glow, softer detail", "strong")])
-        group("Seam feather", "stack_feather",
-              [("subtle (1 px)", 1.0), ("normal (2 px)", 2.0),
-               ("wide (4 px)", 4.0)])
-        group("Output", "stack_output",
-              [("raw bayer DNG (small)", "bayer"),
-               ("linear RGB DNG (3× size)", "linear")])
-        group("Wigglegram depth", "wiggle_invert",
-              [("racking down goes deeper", False),
-               ("inverted: my stacks rock backwards", True)])
+        group(N_("stack.smoothing.heading"), "stack_smoothing",
+              [(N_("stack.smoothing.off.label"), "off"),
+               (N_("stack.smoothing.light.label"), "light"),
+               (N_("stack.smoothing.normal.label"), "normal"),
+               (N_("stack.smoothing.strong.label"), "strong")])
+        group(N_("stack.feather.heading"), "stack_feather",
+              [(N_("stack.feather.subtle.label"), 1.0),
+               (N_("stack.feather.normal.label"), 2.0),
+               (N_("stack.feather.wide.label"), 4.0)])
+        group(N_("stack.output.heading"), "stack_output",
+              [(N_("stack.output.bayer.label"), "bayer"),
+               (N_("stack.output.linear.label"), "linear")])
+        group(N_("stack.wiggle.heading"), "wiggle_invert",
+              [(N_("stack.wiggle.normal.label"), False),
+               (N_("stack.wiggle.inverted.label"), True)])
         self.options.setMenu(menu)
 
     def set_merging(self, done: int | None, total: int | None,
@@ -287,7 +285,7 @@ class _AssemblyCanvas(QtWidgets.QWidget):
         if o._image is None:
             p.setPen(QtGui.QColor(theme.DIM))
             p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
-                       "rack, pause. The first slice starts it")
+                       _("stack.canvas.detail.empty"))
             p.end()
             return
         scaled = o._image.size().scaled(
@@ -305,5 +303,5 @@ class _AssemblyCanvas(QtWidgets.QWidget):
                    QtGui.QColor(0, 0, 0, 150))
         p.drawText(QtCore.QRect(x + 10, y + 6, 68, 18),
                    QtCore.Qt.AlignmentFlag.AlignVCenter,
-                   f"{o._count} slice{'s' if o._count != 1 else ''}")
+                   n_("stack.canvas.detail.slices", o._count))
         p.end()

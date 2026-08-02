@@ -1,0 +1,76 @@
+# Installing a camera vendor's SDK from inside the application. The screen
+# a first-time user actually hits, so it says what will be downloaded and
+# from where before anything happens.
+
+msgid "sdk.title"
+msgstr "Install camera SDK"
+
+msgid "sdk.heading"
+msgstr ""
+"Your camera needs a driver made by the company that built it, which "
+"darlaston cannot include. Pick your camera's brand and darlaston will "
+"download the driver and check that it works."
+
+msgid "sdk.brand.label"
+msgstr "Camera brand"
+
+#. One brand in the picker, when we have no verified direct link for it.
+#. {label} is the brand's own name and is never translated.
+msgid "sdk.brand.option.manual"
+msgstr "{label}  (manual download)"
+
+msgid "sdk.action.download"
+msgstr "Download and install"
+
+msgid "sdk.action.page"
+msgstr "Open download page"
+
+msgid "sdk.action.done"
+msgstr "Done"
+
+#. The bold is layout and has to survive translation.
+msgid "sdk.detail.already"
+msgstr "<b>Already installed.</b> Downloading again will replace it."
+
+#. What the download will cost and where it lands. {size} is megabytes,
+#. {host} the site it comes from, {where} the directory it is unpacked into.
+#. The markup is layout: <code> sets the path apart from the sentence.
+msgid "sdk.detail.automatic"
+msgstr ""
+"About <b>{size} MB</b>, downloaded from {host} and saved in "
+"<code>{where}</code>."
+
+#. A brand with no verified direct link. {label} is the brand's own name,
+#. {page} the address of their download page, {where} the directory the
+#. archive has to be unzipped into. The link markup has to survive.
+msgid "sdk.detail.manual"
+msgstr ""
+"{label} does not offer a direct download link. Get the Linux driver from "
+"<a href='{page}'>their website</a>, then unzip it into <code>{where}</code>."
+
+#. {where} is the directory, which has already been created by the time this
+#. is shown.
+msgid "sdk.status.opened"
+msgstr ""
+"Opened their website. Unzip the Linux driver into {where}, which has been "
+"created for you."
+
+#. {host} is the site the archive comes from.
+msgid "sdk.status.contacting"
+msgstr "Contacting {host}…"
+
+msgid "sdk.status.installed"
+msgstr ""
+"Installed. Unplug the camera and plug it back in, and darlaston will find "
+"it."
+
+#. The download bar. `%p%` is Qt's own placeholder for the percentage and
+#. must be left exactly as it is. {done} and {total} are megabytes, already
+#. rounded.
+msgid "sdk.progress.detail"
+msgstr "%p%  ({done} of {total} MB)"
+
+#. The server sent no length, so there is no percentage to show, only how
+#. much has arrived.
+msgid "sdk.progress.detail.unsized"
+msgstr "{done} MB"

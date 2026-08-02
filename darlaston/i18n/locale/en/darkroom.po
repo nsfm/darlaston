@@ -1,0 +1,172 @@
+# The darkroom: what happens to captures after the microscope is done.
+
+#. ---- depth renders ------------------------------------------------------
+#. One finished stack, and everything its depth map can be turned into. Each
+#. render has a name for the checkbox and one line saying what you get. In
+#. microscopy an artefact is a spurious feature introduced by preparation,
+#. so that word is kept out of a list of pictures somebody is being invited
+#. to trust.
+
+msgid "darkroom.render.title"
+msgstr "Render depth"
+
+#. {name} is the stack's folder. The bold and the line break are layout and
+#. have to survive translation.
+msgid "darkroom.render.heading"
+msgstr ""
+"<b>{name}</b><br>Everything here is synthesised from the stack's depth map."
+
+msgid "darkroom.render.action.render"
+msgstr "Render"
+
+msgid "darkroom.render.wiggle.label"
+msgstr "Wigglegram"
+
+#. wiggle.webm and .webp are filenames and stay as they are.
+msgid "darkroom.render.wiggle.detail"
+msgstr "a looping wobble, wiggle.webm and .webp"
+
+msgid "darkroom.render.stereo.label"
+msgstr "Stereo pair and anaglyph"
+
+msgid "darkroom.render.stereo.detail"
+msgstr "crossed-eye pair, plus red/cyan"
+
+#. Named for Darlaston, who arranged diatoms with a bristle. DIC is
+#. differential interference contrast, a real technique this only imitates.
+msgid "darkroom.render.dic.label"
+msgstr "Darlaston Inferred Contrast"
+
+msgid "darkroom.render.dic.detail"
+msgstr "relief shaded from depth, looks like DIC but is not"
+
+msgid "darkroom.render.mesh.label"
+msgstr "Printable mesh"
+
+#. model.ply is a filename and stays as it is.
+msgid "darkroom.render.mesh.detail"
+msgstr "model.ply, watertight, colour per vertex"
+
+msgid "darkroom.render.sirds.label"
+msgstr "Autostereogram"
+
+msgid "darkroom.render.sirds.detail"
+msgstr "a Magic Eye of the subject"
+
+msgid "darkroom.render.pull.label"
+msgstr "Focus pull"
+
+msgid "darkroom.render.pull.detail"
+msgstr "the focal plane drifting through, on video"
+
+msgid "darkroom.render.turntable.label"
+msgstr "Turntable"
+
+msgid "darkroom.render.turntable.detail"
+msgstr "the surface lit from an orbiting light"
+
+#. ---- plates -------------------------------------------------------------
+#. Finished captures arranged onto one printable sheet.
+
+msgid "darkroom.plate.title"
+msgstr "Make a plate"
+
+msgid "darkroom.plate.list.label"
+msgstr "Captures, in the order they appear:"
+
+msgid "darkroom.plate.action.add"
+msgstr "Add…"
+
+msgid "darkroom.plate.action.remove"
+msgstr "Remove"
+
+msgid "darkroom.plate.action.make"
+msgstr "Make plate…"
+
+#. The caption on the folder picker the Add button opens.
+msgid "darkroom.plate.add.title"
+msgstr "Stack, mosaic or capture folder"
+
+#. The caption on the save dialog for the finished sheet.
+msgid "darkroom.plate.save.title"
+msgstr "Save plate"
+
+#. The heading printed across the top of the sheet.
+msgid "darkroom.plate.caption.label"
+msgstr "Title"
+
+msgid "darkroom.plate.caption.placeholder"
+msgstr "Plate I, arrangement, 25×/0.65"
+
+msgid "darkroom.plate.footer.label"
+msgstr "Footer"
+
+msgid "darkroom.plate.footer.placeholder"
+msgstr "collection, date, mountant…"
+
+msgid "darkroom.plate.columns.label"
+msgstr "Columns"
+
+msgid "darkroom.plate.note.scale"
+msgstr ""
+"Each cell gets a scale bar computed from the optics recorded in that file. "
+"Files captured without a pixel pitch set get no bar rather than a guessed "
+"one."
+
+#. ---- arrangements -------------------------------------------------------
+#. Cutting the specimens out of one capture and laying them out again.
+
+msgid "darkroom.arrange.title"
+msgstr "Arrange specimens"
+
+#. {name} is the capture's folder. Darlaston arranged diatoms by hand with a
+#. bristle, which is what this imitates.
+msgid "darkroom.arrange.heading"
+msgstr ""
+"<b>{name}</b><br>Cuts each frustule out and lays them out, the way "
+"Darlaston did with a bristle."
+
+msgid "darkroom.arrange.action.arrange"
+msgstr "Arrange…"
+
+#. The caption on the save dialog for the finished arrangement.
+msgid "darkroom.arrange.save.title"
+msgstr "Save arrangement"
+
+msgid "darkroom.arrange.style.label"
+msgstr "Pattern"
+
+#. One line of the pattern menu: {name} is the pattern, {detail} what it
+#. looks like. The `option` role is a chooser entry assembled from parts.
+msgid "darkroom.arrange.style.option"
+msgstr "{name}: {detail}"
+
+msgid "darkroom.arrange.rosette.label"
+msgstr "Rosette"
+
+msgid "darkroom.arrange.rosette.detail"
+msgstr "radiating from a centre, sizes balanced"
+
+msgid "darkroom.arrange.spiral.label"
+msgstr "Spiral"
+
+msgid "darkroom.arrange.spiral.detail"
+msgstr "winding outward"
+
+msgid "darkroom.arrange.rows.label"
+msgstr "Rows"
+
+msgid "darkroom.arrange.rows.detail"
+msgstr "a taxonomic plate, graded by size"
+
+msgid "darkroom.arrange.caption.label"
+msgstr "Title"
+
+msgid "darkroom.arrange.caption.placeholder"
+msgstr "An arrangement"
+
+#. A frustule is a diatom's silica shell: what the arranger cuts out.
+msgid "darkroom.arrange.note.isolation"
+msgstr ""
+"Only specimens it can isolate are used. A crowded field where valves "
+"overlap may yield few or none. That is reported rather than guessed at."

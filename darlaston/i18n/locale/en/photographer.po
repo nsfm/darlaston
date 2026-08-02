@@ -1,0 +1,95 @@
+# Who took the photograph: the one piece of a capture's provenance the
+# application cannot infer.
+
+msgid "photographer.title"
+msgstr "Photographer"
+
+msgid "photographer.name.label"
+msgstr "Name"
+
+msgid "photographer.name.placeholder"
+msgstr "your name, as you want it credited"
+
+msgid "photographer.licence.label"
+msgstr "Licence"
+
+msgid "photographer.notice.label"
+msgstr "Notice"
+
+#. An unset copyright notice is worse than none, because it looks like a
+#. claim that the work is unowned. So a blank field writes no tag at all,
+#. and the placeholder says so.
+msgid "photographer.notice.placeholder"
+msgstr "left empty, no copyright tag is written at all"
+
+#. ---- licences -----------------------------------------------------------
+#. Offered because most microscopy that gets shared is shared under one of
+#. these, and typing a licence string from memory is how you get it wrong.
+#. Each has a name for the menu and the terms the notice ends with. The
+#. Creative Commons names and version numbers are the licences' own and must
+#. not be translated; the words around them may be.
+
+#. No licence chosen. Lower case, because it is an absence rather than a
+#. name.
+msgid "photographer.licence.none.label"
+msgstr "none"
+
+#. The whole notice. {year} and {name} are the year and the photographer,
+#. {terms} the licence's own words from below. A notice is matched back to
+#. its licence by what it ends with, so {terms} has to stay last.
+msgid "photographer.notice.detail"
+msgstr "{year} {name}. {terms}"
+
+#. Stands in for the photographer while the name field is still empty.
+msgid "photographer.notice.detail.noname"
+msgstr "your name"
+
+msgid "photographer.licence.reserved.label"
+msgstr "All rights reserved"
+
+msgid "photographer.licence.reserved.terms"
+msgstr "All rights reserved."
+
+msgid "photographer.licence.cc_by.label"
+msgstr "CC BY 4.0"
+
+msgid "photographer.licence.cc_by.terms"
+msgstr "CC BY 4.0."
+
+msgid "photographer.licence.cc_by_sa.label"
+msgstr "CC BY-SA 4.0"
+
+msgid "photographer.licence.cc_by_sa.terms"
+msgstr "CC BY-SA 4.0."
+
+msgid "photographer.licence.cc_by_nc.label"
+msgstr "CC BY-NC 4.0"
+
+msgid "photographer.licence.cc_by_nc.terms"
+msgstr "CC BY-NC 4.0."
+
+msgid "photographer.licence.cc0.label"
+msgstr "CC0 / public domain"
+
+msgid "photographer.licence.cc0.terms"
+msgstr "CC0 1.0, public domain."
+
+#. ---- what will be written -----------------------------------------------
+
+#. {lines} is the artist and copyright lines below, one per line.
+msgid "photographer.summary.detail"
+msgstr "Written into every capture from now on.\n{lines}"
+
+#. Artist is the name of the EXIF tag this goes into, so it is probably
+#. better left in English. {name} is the photographer.
+msgid "photographer.summary.detail.artist"
+msgstr "Artist: {name}"
+
+#. Copyright is likewise an EXIF tag name. {notice} is the whole notice.
+msgid "photographer.summary.detail.copyright"
+msgstr "Copyright: {notice}"
+
+msgid "photographer.summary.detail.empty"
+msgstr ""
+"Nothing set, so captures carry no attribution, which is fine until you "
+"share one."

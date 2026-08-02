@@ -1,0 +1,62 @@
+# Starting and stopping a timelapse. A session you set up and walk away
+# from, so the cost is priced before it happens rather than found at dawn.
+
+msgid "timelapse.title"
+msgstr "Timelapse"
+
+msgid "timelapse.interval.label"
+msgstr "Every"
+
+msgid "timelapse.count.label"
+msgstr "Frames"
+
+#. Shown in place of the number when the count is zero.
+msgid "timelapse.count.detail.unlimited"
+msgstr "until stopped"
+
+msgid "timelapse.count.tooltip"
+msgstr "Zero runs until you stop it."
+
+msgid "timelapse.action.start"
+msgstr "Start"
+
+msgid "timelapse.action.stop"
+msgstr "Stop"
+
+#. Between asking it to stop and the last frame being written.
+msgid "timelapse.action.stopping"
+msgstr "Stopping…"
+
+msgid "timelapse.action.close"
+msgstr "Close"
+
+msgid "timelapse.estimate.detail.running"
+msgstr "Running. Progress is in the status bar."
+
+#. {size} is gigabytes, already rounded to one decimal.
+msgid "timelapse.estimate.detail.hourly"
+msgstr "About {size} GB per hour until stopped."
+
+#. {size} is gigabytes, {span} how long the run will take, both already
+#. worded and rounded.
+msgid "timelapse.estimate.detail"
+msgstr "About {size} GB over {span}."
+
+#. The same, for a run longer than a dark frame stays valid. This sensor has
+#. no cooling, so a dark master ages after about eight hours and frames shot
+#. after that are corrected against a stale one.
+msgid "timelapse.estimate.detail.long"
+msgstr ""
+"About {size} GB over {span}.  Longer than a dark master lives, so reshoot "
+"it midway or expect later frames uncalibrated."
+
+#. How long a run takes. {count} is a number that is already rounded and may
+#. be fractional, as "1.5", which is why there is no plural form to pick.
+msgid "timelapse.span.hours"
+msgstr "{count} hours"
+
+msgid "timelapse.span.minutes"
+msgstr "{count} minutes"
+
+msgid "timelapse.span.seconds"
+msgstr "{count} seconds"
