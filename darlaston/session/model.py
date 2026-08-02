@@ -183,6 +183,11 @@ class CameraProfile:
         return self.name or self.model or self.serial[:12]
 
 
+#: The mock camera's serial begins with this. Nothing that starts with it
+#: is a device anybody owns, so nothing that starts with it is filed.
+SYNTHETIC_SERIAL_PREFIX = "MOCK-"
+
+
 def scope_id(name: str, existing: set[str] | None = None) -> str:
     """A stable id from a name, unique within the library.
 
@@ -394,8 +399,26 @@ class Library:
                                            last_scope=scope_id)
             self.save()
 
+    def remove_camera(self, serial: str) -> None:
+        """Forget a camera. For the webcam that is not a microscope camera.
+
+        Every device that appears gets filed, because the alternative is
+        asking, and a stub the user can correct beats a question they have
+        to answer before they can work. Filing everything means being able
+        to unfile as well.
+        """
+        self.cameras.pop(serial, None)
+        self.save()
+
     def remember_camera(self, serial: str, model: str) -> CameraProfile:
         """First sight of a camera gets a provisional name the user can change."""
+        if serial.startswith(SYNTHETIC_SERIAL_PREFIX):
+            # The synthetic camera is a test fixture, not a device somebody
+            # owns. Filing it put "MockCam (synthetic)" in the library and
+            # then offered it as the camera to describe when nothing real
+            # was plugged in.
+            return CameraProfile(serial=serial, name=model or "Camera",
+                                 model=model)
         if serial not in self.cameras:
             self.cameras[serial] = CameraProfile(
                 serial=serial, name=model or "Camera", model=model)

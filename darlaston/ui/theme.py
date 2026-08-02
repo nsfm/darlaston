@@ -375,6 +375,17 @@ def stylesheet() -> str:
     }}
     QMenu::item {{ padding: 5px 22px 5px 12px; border-radius: 2px; }}
     QMenu::item:selected {{ background: {LINE}; color: {BRASS}; }}
+
+    /* Lists of things you own -- microscopes, cameras. Without these the
+       selection is the platform's own blue, which is the one colour in the
+       window that belongs to somebody else's design language. */
+    QListWidget {{
+        background: {SUNK}; border: 1px solid {LINE}; border-radius: 3px;
+        padding: 3px;
+    }}
+    QListWidget::item {{ padding: 5px 8px; border-radius: 2px; }}
+    QListWidget::item:hover {{ color: {INK}; }}
+    QListWidget::item:selected {{ background: {LINE}; color: {BRASS}; }}
     QMenu::separator {{ height: 1px; background: {LINE}; margin: 4px 6px; }}
 
     QPushButton[role="menu"] {{

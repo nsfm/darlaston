@@ -31,8 +31,8 @@ def test_three_menus_on_one_axis(win):
 
 def test_setup_holds_what_outlives_the_session(win):
     assert entries(win, "Setup") == [
-        "Microscope…", "Photographer…", "Files…", "Performance…",
-        "Install camera SDK…", "Install DNG thumbnailer…"]
+        "Microscopes…", "Cameras…", "Photographer…", "Files…",
+        "Performance…", "Install camera SDK…", "Install DNG thumbnailer…"]
 
 
 def test_capture_holds_only_what_needs_a_camera(win):

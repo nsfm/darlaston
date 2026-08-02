@@ -41,7 +41,7 @@ from .calib_ui import CalibrationButton, CalibrationPanel
 from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .perf_ui import PerfPanel, PerformanceDialog
-from .setup_ui import SetupDialog
+from .setup_ui import CameraDialog, MicroscopeDialog
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
                     WaitingPage)
@@ -184,7 +184,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # test is whether it survives a restart unchanged and whether you
         # can set it before ever seeing a slide.
         setup = self.toolbar.add_menu("Setup")
-        setup.addAction("Microscope…", self._open_setup)
+        setup.addAction("Microscopes…", self._open_microscopes)
+        setup.addAction("Cameras…", self._open_cameras)
         # Attribution is the one part of a file's provenance the instrument
         # cannot supply. It used to have a menu to itself to keep it
         # visible, which does not work -- an entry is invisible until the
@@ -1568,46 +1569,51 @@ class MainWindow(QtWidgets.QMainWindow):
         """The frame cap the loop is currently trying to hit."""
         return int(self.session.framerate_cap or 40)
 
-    def _open_setup(self) -> None:
-        # Openable with no camera attached. `self.setup` is only built when
-        # one arrives, and this used to return silently without it -- so the
-        # menu item did nothing at all on a machine with nothing plugged in,
-        # which is exactly when somebody sits down to describe their stand.
-        #
-        # The stand is the part worth editing here; the camera half of the
-        # dialog is filled from whichever camera we last saw, and from a
-        # blank profile if there has never been one. `_save` is what keeps a
-        # serial-less profile out of the library.
-        setup = self.setup
-        if setup is None:
-            camera = next(iter(self.library.cameras.values()), None) \
-                or CameraProfile(serial="", name="Camera")
-            scope = (self.library.scope_or_default(camera.last_scope)
-                     or _provisional_scope())
-            setup = Setup(camera=camera, scope=scope,
-                          illumination=self._illumination)
-        dialog = SetupDialog(setup, self.library, self)
-        if dialog.exec():
-            if self.setup is None:
-                # Still no camera. The stand was saved to the library by the
-                # dialog; adopting the setup here would leave `self.setup`
-                # set, and the branch that remembers a camera and binds it
-                # to its stand only runs while it is None.
-                return
-            self.setup = dialog.result_setup
-            self.setup.illumination = self._illumination
-            self.objective.set_turret(self.setup.scope.turret)
-            self._push_turret()
-            self.strip.update_status(self.session.status, self.setup)
-            # The optical stack changed, so anything banked for the old one is
-            # no longer a flat for this one.
-            self.opportunist.set_key(flat_key(self.setup,
-                                              self.subject.slide_note))
-            self._refresh_calibration()
-            # And the map's scale changed with it: positions in old-objective
-            # pixels no longer measure anything on the new one.
-            self.slidemap.clear()
+    def _open_microscopes(self) -> None:
+        """The stand library. Openable with no camera attached.
 
+        `self.setup` is only built when a camera arrives, and this used to
+        return silently without one -- so the menu item did nothing at all
+        on a machine with nothing plugged in, which is exactly when somebody
+        sits down to describe their stand.
+        """
+        current = self.setup.scope.id if self.setup else None
+        dialog = MicroscopeDialog(self.library, current, self)
+        if not dialog.exec():
+            return
+        scope = dialog.selected
+        if self.setup is None or scope is None:
+            # No camera yet, so there is no live setup to re-point. The
+            # library has the edits; the camera-arrival path picks them up.
+            return
+        self.setup.scope = scope
+        self.objective.set_turret(scope.turret)
+        self._push_turret()
+        self.strip.update_status(self.session.status, self.setup)
+        # The optical stack changed, so anything banked for the old one is
+        # no longer a flat for this one.
+        self.opportunist.set_key(flat_key(self.setup, self.subject.slide_note))
+        self._refresh_calibration()
+        # And the map's scale changed with it: positions in old-objective
+        # pixels no longer measure anything on the new one.
+        self.slidemap.clear()
+
+    def _open_cameras(self) -> None:
+        """The camera library.
+
+        Every camera that has ever been plugged in is here, whether or not
+        it is plugged in now, so the one on the microscope can be described
+        while it is sitting on the bench.
+        """
+        current = self.setup.camera.serial if self.setup else None
+        dialog = CameraDialog(self.library, current, self)
+        if not dialog.exec() or self.setup is None:
+            return
+        updated = self.library.cameras.get(self.setup.camera.serial)
+        if updated is not None:
+            self.setup.camera = updated
+            self.strip.update_status(self.session.status, self.setup)
+            self._refresh_calibration()
 
     def _open_photographer(self) -> None:
         PhotographerDialog(self.settings, self).exec()
