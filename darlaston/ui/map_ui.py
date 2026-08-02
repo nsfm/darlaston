@@ -17,6 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..capture.mosaic import overlap_fraction
 from ..live.pipeline import LiveSignals
 from ..live.tracker import SlideMap
+from ..i18n import _, n_
 from . import theme
 
 #: Fields-to-widget conversion never zooms a single field bigger than this
@@ -233,37 +234,27 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.canvas.pin_clicked.connect(self._on_pin_clicked)
         self._mosaic_on = False
 
-        self.pin_btn = QtWidgets.QPushButton("Pin")
+        self.pin_btn = QtWidgets.QPushButton(_("map.pin.action"))
         self.pin_btn.setProperty("role", "seg")
-        self.pin_btn.setToolTip(
-            "Mark the current position as a point of interest.\n"
-            "Click a pin on the map to navigate back to it.")
+        self.pin_btn.setToolTip(_("map.pin.tooltip"))
         self.pin_btn.clicked.connect(self._on_pin)
         self.pin_btn.setEnabled(False)
 
-        self.clear_btn = QtWidgets.QPushButton("Clear")
+        self.clear_btn = QtWidgets.QPushButton(_("map.clear.action"))
         self.clear_btn.setProperty("role", "seg")
-        self.clear_btn.setToolTip(
-            "Forget the map and all pins, and restart tracking from here.\n"
-            "Do this after changing objective: magnification changes the "
-            "scale\nand the old map no longer measures anything.")
+        self.clear_btn.setToolTip(_("map.clear.tooltip"))
         self.clear_btn.clicked.connect(self.clear)
 
-        self.mosaic_btn = QtWidgets.QPushButton("Mosaic")
+        self.mosaic_btn = QtWidgets.QPushButton(_("map.mosaic.action"))
         self.mosaic_btn.setCheckable(True)
         self.mosaic_btn.setProperty("role", "seg")
-        self.mosaic_btn.setToolTip(
-            "Start a mosaic: every capture becomes a tile in a session "
-            "folder,\nplaced on the map at its tracked position. Steer for "
-            "15–25% overlap\nbetween neighbours. The readout says how much "
-            "you have.")
+        self.mosaic_btn.setToolTip(_("map.mosaic.tooltip"))
         self.mosaic_btn.clicked.connect(
             lambda on: self.mosaic_requested.emit(bool(on)))
 
-        self.undo_btn = QtWidgets.QPushButton("Undo")
+        self.undo_btn = QtWidgets.QPushButton(_("map.undo.action"))
         self.undo_btn.setProperty("role", "seg")
-        self.undo_btn.setToolTip("Delete the last tile, file and record. "
-                                 "For the one that was mid-crank.")
+        self.undo_btn.setToolTip(_("map.undo.tooltip"))
         self.undo_btn.clicked.connect(self.undo_tile)
         self.undo_btn.hide()
 
@@ -340,15 +331,16 @@ class SlideMapPanel(QtWidgets.QWidget):
             return None
         n = len(self.model.tiles)
         if n == 0:
-            return "mosaic, first tile when ready", theme.BRASS
+            return _("map.mosaic.first"), theme.BRASS
         if self._pos is None or self._frame[0] <= 0:
-            return f"mosaic · {n} tiles", theme.DIM
+            return n_("map.mosaic.tiles", n), theme.DIM
         best = max((overlap_fraction(self._pos, t.pos, self._frame)
                     for t in self.model.tiles), default=0.0)
         if best <= 0.005:
-            return (f"mosaic · {n} tiles · no overlap, back up", theme.BAD)
+            return n_("map.mosaic.no_overlap", n), theme.BAD
         colour = theme.GOOD if 0.12 <= best <= 0.35 else theme.BRASS
-        return f"mosaic · {n} tiles · overlap {best * 100:.0f}%", colour
+        return (n_("map.mosaic.overlap", n, percent=f"{best * 100:.0f}"),
+                colour)
 
     def _update_status(self) -> None:
         mosaic = self._mosaic_status()
@@ -361,16 +353,17 @@ class SlideMapPanel(QtWidgets.QWidget):
         if guide is not None:
             fields, compass = guide
             if fields < 0.15:
-                text, colour = "at the pin", theme.GOOD
+                text, colour = _("map.guide.arrived"), theme.GOOD
             else:
-                text = f"pin {self.model.target} · {fields:.1f} fields {compass}"
+                text = _("map.guide.distance", pin=self.model.target,
+                         fields=f"{fields:.1f}", compass=compass)
                 colour = theme.BRASS
         elif self._pos is None:
-            text, colour = "waiting for detail to track", theme.DIM
+            text, colour = _("map.state.waiting"), theme.DIM
         elif not self._tracking:
             # Held, not lost: the position resumes when structure returns,
             # but anything cranked over blank glass is not measured.
-            text, colour = "holding -- nothing to track", theme.DIM
+            text, colour = _("map.state.holding"), theme.DIM
         else:
             n = len(self.model.snapshots)
             text = f"tracking · {n} field{'s' if n != 1 else ''} mapped"

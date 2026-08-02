@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..i18n import _
 from . import theme
 
 #: How long a proposal stands before it withdraws itself. Long enough to
@@ -55,7 +56,7 @@ class ProposalBar(QtWidgets.QWidget):
         # stepping from a stale position. One unanswered rotation used to
         # poison every rotation after it.
         self.other = QtWidgets.QToolButton()
-        self.other.setText("Other ▾")
+        self.other.setText(_("proposal.other"))
         self.other.setFixedHeight(24)
         self.other.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.other.setPopupMode(
@@ -71,7 +72,7 @@ class ProposalBar(QtWidgets.QWidget):
 
         # Says something different from ignoring the bar: this one asserts
         # that nothing moved, so the recorded objective is still right.
-        self.no = QtWidgets.QPushButton("Didn't switch")
+        self.no = QtWidgets.QPushButton(_("proposal.no"))
         self.no.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.no.setFixedHeight(24)
         self.no.setStyleSheet(self._style(theme.DIM))
@@ -119,7 +120,7 @@ class ProposalBar(QtWidgets.QWidget):
         for label, payload in (others or []):
             act = self._other_menu.addAction(label)
             act.triggered.connect(
-                lambda _=False, p=payload: self._choose(p))
+                lambda _checked=False, p=payload: self._choose(p))
         self.other.setVisible(bool(others))
         for b in self._buttons:
             self._row.removeWidget(b)
@@ -133,7 +134,7 @@ class ProposalBar(QtWidgets.QWidget):
             b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             b.setFixedHeight(24)
             b.setStyleSheet(self._style(theme.BRASS))
-            b.clicked.connect(lambda _=False, p=payload: self._choose(p))
+            b.clicked.connect(lambda _checked=False, p=payload: self._choose(p))
             self._buttons.append(b)
             self._row.addWidget(b)
         self.answered_explicitly = False

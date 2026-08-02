@@ -103,15 +103,21 @@ class ToolBar(QtWidgets.QFrame):
         self._row.addSpacing(4)
         self._row.addStretch(1)
 
-    def add_menu(self, title: str) -> QtWidgets.QMenu:
+    def add_menu(self, name: str, title: str) -> QtWidgets.QMenu:
         """A popup rather than a plain button, so these can nest as more
-        arrives without every name having to change."""
+        arrives without every name having to change.
+
+        `name` identifies the menu and `title` is what it says. They used
+        to be one string, which made the registry key change with the
+        language -- so `menus["Setup"]` would have found nothing the
+        moment anything was translated.
+        """
         button = QtWidgets.QPushButton(title)
         button.setProperty("role", "menu")
         button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         menu = QtWidgets.QMenu(button)
         button.setMenu(menu)
-        self.menus[title] = menu
+        self.menus[name] = menu
         self._row.insertWidget(self._row.count() - 1, button)
         return menu
 

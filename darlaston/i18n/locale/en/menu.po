@@ -1,0 +1,101 @@
+# The menu bar. One axis: before a session, during it, or after it.
+#
+# The three menu names are labels only. Each menu is registered under a
+# separate identifier, so translating these cannot break the lookup.
+
+msgid "app.title"
+msgstr "darlaston"
+
+msgid "menu.setup"
+msgstr "Setup"
+
+msgid "menu.capture"
+msgstr "Capture"
+
+msgid "menu.darkroom"
+msgstr "Darkroom"
+
+#. Setup: what outlives the session.
+msgid "menu.setup.microscopes"
+msgstr "Microscopes…"
+
+msgid "menu.setup.cameras"
+msgstr "Cameras…"
+
+msgid "menu.setup.photographer"
+msgstr "Photographer…"
+
+msgid "menu.setup.files"
+msgstr "Files…"
+
+msgid "menu.setup.performance"
+msgstr "Performance…"
+
+msgid "menu.setup.install_sdk"
+msgstr "Install camera SDK…"
+
+msgid "menu.setup.install_thumbnailer"
+msgstr "Install DNG thumbnailer…"
+
+#. Capture: what needs a camera.
+msgid "menu.capture.timelapse"
+msgstr "Timelapse…"
+
+msgid "menu.capture.guides"
+msgstr "Framing guides"
+
+msgid "menu.capture.guides.none"
+msgstr "None"
+
+msgid "menu.capture.guides.thirds"
+msgstr "Rule of thirds"
+
+msgid "menu.capture.guides.grid"
+msgstr "Fine grid"
+
+msgid "menu.capture.guides.cross"
+msgstr "Center cross"
+
+msgid "menu.capture.guides.cross.tooltip"
+msgstr ""
+"Independent of the grid: centring a specimen and composing a frame are "
+"different jobs."
+
+msgid "menu.capture.white_balance"
+msgstr "Write white balance"
+
+msgid "menu.capture.white_balance.tooltip"
+msgstr ""
+"Off writes a neutral file: the sensor's own channels, untouched.\n"
+"Use for polarised interference colour, fluorescence or stained\n"
+"sections, where no part of the field is neutral by nature."
+
+msgid "menu.capture.calibration"
+msgstr "Calibration"
+
+msgid "menu.capture.slide_map"
+msgstr "Slide map"
+
+msgid "menu.capture.performance"
+msgstr "Performance monitor"
+
+msgid "menu.capture.performance.tooltip"
+msgstr ""
+"What each feature costs per frame, so the expensive ones can be found "
+"rather than guessed at."
+
+#. Darkroom: acts on files already on disk, never touches the camera.
+msgid "menu.darkroom.stitch"
+msgstr "Stitch mosaic…"
+
+msgid "menu.darkroom.flythrough"
+msgstr "Fly through a mosaic…"
+
+msgid "menu.darkroom.depth"
+msgstr "Render from depth…"
+
+msgid "menu.darkroom.plate"
+msgstr "Make a plate…"
+
+msgid "menu.darkroom.arrange"
+msgstr "Arrange specimens…"
