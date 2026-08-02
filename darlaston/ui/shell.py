@@ -349,6 +349,7 @@ class WaitingPage(QtWidgets.QWidget):
     use_synthetic = QtCore.Signal()
     install_sdk_requested = QtCore.Signal()
 
+
     def __init__(self) -> None:
         super().__init__()
         self.setStyleSheet(f"background:{theme.SUNK};")
@@ -379,12 +380,12 @@ class WaitingPage(QtWidgets.QWidget):
         _wraps(self.steps)
         self.steps.hide()
 
-        self.synthetic = QtWidgets.QPushButton("Use the synthetic camera instead")
+        self.synthetic = QtWidgets.QPushButton("Use a synthetic camera")
         self.synthetic.clicked.connect(self.use_synthetic)
         # Shown only for the failure it fixes. A button offering to
         # download a 242 MB vendor archive should not be sitting there
         # while the camera is merely unplugged.
-        self.install_sdk = QtWidgets.QPushButton("Install camera SDK…")
+        self.install_sdk = QtWidgets.QPushButton("Install the camera driver")
         self.install_sdk.clicked.connect(self.install_sdk_requested)
         self.install_sdk.hide()
         self.copy_btn = QtWidgets.QPushButton("Copy this message")
@@ -406,17 +407,27 @@ class WaitingPage(QtWidgets.QWidget):
         col.setSpacing(16)
         col.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         for w in (self.pulse, self.heading, self.body, self.steps,
-                  self.advice, row):
+                  self.advice):
             col.addWidget(w, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
         holder = QtWidgets.QWidget()
         holder.setStyleSheet("background: transparent;")
-        holder.setMaximumWidth(440)
+        holder.setMaximumWidth(_WRAP_W)
         holder.setLayout(col)
 
+        # The buttons sit *outside* the prose column, because they are wider
+        # than it: with no SDK installed there are three side by side
+        # needing 535 px against the 440 the text is wrapped to, and they
+        # were clipped at both ends. Widening the column instead fixed the
+        # buttons and broke the instructions -- the layout then handed the
+        # steps label 159 px of the 180 its text needs, and quietly dropped
+        # the last line. So the text keeps the width it was written for and
+        # only the buttons get more.
         outer = QtWidgets.QVBoxLayout(self)
+        outer.setSpacing(16)
         outer.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(holder, 0, QtCore.Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(row, 0, QtCore.Qt.AlignmentFlag.AlignCenter)
 
     _last = ""
 

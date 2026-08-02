@@ -38,7 +38,7 @@ class PhotographerDialog(FramedDialog):
         self.name.setPlaceholderText("your name, as you want it credited")
 
         self.licence = QtWidgets.QComboBox()
-        self.licence.addItem("-- none --", "")
+        self.licence.addItem("none", "")
         for label, template in LICENCES:
             self.licence.addItem(label, template)
 

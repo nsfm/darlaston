@@ -90,7 +90,7 @@ def test_the_photographer_remembers_which_licence_it_wrote(qapp, tmp_path):
     # A hand-written notice is not claimed by any of them.
     s3 = Settings(capture_root=str(tmp_path), copyright="ask me first")
     d3 = PhotographerDialog(s3)
-    assert d3.licence.currentText() == "-- none --"
+    assert d3.licence.currentText() == "none"
     d3.deleteLater()
 
 

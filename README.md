@@ -17,7 +17,7 @@ Named for **Herbert William Hutton Darlaston** of Birmingham (1867-1949), who mo
 
 The only free software for Linux that drives these ToupTek cameras is ToupLite, and it quietly discards most of what the hardware can do. On a real darkfield capture, **90.6 % of all pixels occupy just four luma levels**; at 12 bits that same tonal region gets 64. The faint outer glow around diatoms is not dim in those files. It is gone. By providing RAW capture capabilities, _darlaston_ returns power to the user.
 
-## Licence
+## License
 
 This software is provided freely to use, share, and modify under the GPLv3. See [LICENSE](LICENSE).
 
@@ -25,8 +25,8 @@ This software is provided freely to use, share, and modify under the GPLv3. See 
 
 ### On the ToupTek SDK
 
-The SDK ships with no licence or copyright notice of any kind. That's too ambiguous for us to include the SDK with this tool, so users must install the SDK themselves from [ToupTek's download centre](https://www.touptekphotonics.com/download/?category=SDK).
+The SDK ships with no license or copyright notice. That's too ambiguous for us to include the SDK with this tool, so users must install the SDK themselves from [ToupTek's download centre](https://www.touptekphotonics.com/download/?category=SDK).
 
 ## Acknowledgements
 
-[pyuscope](https://github.com/JohnDMcMaster/pyuscope) and [gst-plugin-toupcam](https://github.com/JohnDMcMaster/gst-plugin-toupcam) by John McMaster solve the adjacent problem - motorized scanning of feature-rich flat subjects - and share the camera layer.
+[pyuscope](https://github.com/JohnDMcMaster/pyuscope) and [gst-plugin-toupcam](https://github.com/JohnDMcMaster/gst-plugin-toupcam) by John McMaster provided a helpful ToupTek SDK reference.

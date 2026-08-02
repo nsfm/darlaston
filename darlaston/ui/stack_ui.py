@@ -48,13 +48,13 @@ class StackAssembly(QtWidgets.QWidget):
         self.view_toggle = QtWidgets.QPushButton("depth")
         self.view_toggle.setCheckable(True)
         self.view_toggle.setToolTip(
-            "Tint each region by the slice that won it -- the depth data,\n"
+            "Tint each region by the slice that won it: the depth data,\n"
             "showing itself while it is still being collected.")
         self.finish = QtWidgets.QPushButton("Finish && merge")
         self.finish.setToolTip("Stop capturing and merge the slices into "
                                "one all-in-focus image.")
         self.discard = QtWidgets.QPushButton("Discard")
-        self.discard.setToolTip("Delete this stack -- slices and all.")
+        self.discard.setToolTip("Delete this stack, slices and all.")
         self.close_btn = QtWidgets.QPushButton("Close")
         self.close_btn.hide()
         self.wiggle_btn = QtWidgets.QPushButton("Render depth")
@@ -62,11 +62,11 @@ class StackAssembly(QtWidgets.QWidget):
             "Everything the depth map can make: a looping wobble, a focus\n"
             "pull, a lit turntable, a stereo pair, an anaglyph, a Magic\n"
             "Eye, a Darlaston Inferred Contrast relief and a printable\n"
-            "mesh -- all written beside the stack.")
+            "mesh, all written beside the stack.")
         self.wiggle_btn.hide()
         self.options = QtWidgets.QToolButton()
         self.options.setText("⚙")
-        self.options.setToolTip("Merge options -- how the stack becomes "
+        self.options.setToolTip("Merge options: how the stack becomes "
                                 "one image.")
         self.options.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -149,10 +149,10 @@ class StackAssembly(QtWidgets.QWidget):
                 act.triggered.connect(pick)
 
         group("Glow smoothing", "stack_smoothing",
-              [("off -- sharpest, keeps glow rings", "off"),
-               ("light -- same detail, less ring", "light"),
+              [("off: sharpest, keeps glow rings", "off"),
+               ("light: same detail, less ring", "light"),
                ("normal", "normal"),
-               ("strong -- smoothest glow, softer detail", "strong")])
+               ("strong: smoothest glow, softer detail", "strong")])
         group("Seam feather", "stack_feather",
               [("subtle (1 px)", 1.0), ("normal (2 px)", 2.0),
                ("wide (4 px)", 4.0)])
@@ -161,7 +161,7 @@ class StackAssembly(QtWidgets.QWidget):
                ("linear RGB DNG (3× size)", "linear")])
         group("Wigglegram depth", "wiggle_invert",
               [("racking down goes deeper", False),
-               ("inverted -- my stacks rock backwards", True)])
+               ("inverted: my stacks rock backwards", True)])
         self.options.setMenu(menu)
 
     def set_merging(self, done: int | None, total: int | None,
@@ -287,7 +287,7 @@ class _AssemblyCanvas(QtWidgets.QWidget):
         if o._image is None:
             p.setPen(QtGui.QColor(theme.DIM))
             p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
-                       "rack, pause -- the first slice starts it")
+                       "rack, pause. The first slice starts it")
             p.end()
             return
         scaled = o._image.size().scaled(
