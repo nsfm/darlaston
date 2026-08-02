@@ -23,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from version import TAG, TRAILER, commits_since        # noqa: E402
 
+#: Most subjects listed under one heading.
+MOST = 25
+
 
 def _subject(message: str) -> str:
     return message.strip().splitlines()[0].strip()
@@ -56,13 +59,21 @@ def main() -> int:
         buckets[_level(message)].append(subject)
 
     print(f"## darlaston {this or 'unreleased'}\n")
-    headings = (("major", "Breaking"), ("minor", "New"), ("patch", "Fixed and changed"))
+    headings = (("major", "Breaking"), ("minor", "New"),
+                ("patch", "Fixed and changed"))
     for key, heading in headings:
         if not buckets[key]:
             continue
         print(f"### {heading}\n")
-        for subject in buckets[key]:
+        # Capped, because the first release covers the whole history and a
+        # hundred-odd subjects is a wall rather than a summary. What is cut
+        # is said out loud: a list that silently stops is worse than a
+        # short one.
+        shown = buckets[key][:MOST]
+        for subject in shown:
             print(f"- {subject}")
+        if len(buckets[key]) > len(shown):
+            print(f"- ...and {len(buckets[key]) - len(shown)} more")
         print()
 
     print("### Downloads\n")

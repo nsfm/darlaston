@@ -3,8 +3,10 @@ name: artifacts
 # Builds something a microscopist can actually run, on all three platforms.
 #
 # `pip install` is a developer distribution and the users are not
-# developers, so every push produces a downloadable build and every tag
-# produces a release. The builds are also *smoke tested* on the machine
+# developers, so every push produces a downloadable build, and every push
+# to main that any commit asked for a version becomes a release with a tag
+# of its own. Nobody types a version: packaging/version.py reads a `Bump:`
+# trailer out of the commit bodies. The builds are also *smoke tested* on the machine
 # that made them: an artifact that was never started is a file, not a
 # program, and the failure modes here (a missing Qt plugin, a data file
 # left out of the bundle) all look like a clean build and a dead launch.
@@ -12,7 +14,6 @@ name: artifacts
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -30,12 +31,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: write        # only used by the release job, on a tag
+  contents: write        # the release job pushes a tag and a release
 
 jobs:
+  # What this push is going to be called, decided before anything is built
+  # so the artifacts carry the real version in their filenames rather than
+  # a development one. The tag itself is only created at the end, once
+  # every platform has built and started -- a tag that exists for a release
+  # that failed is worse than no tag.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: pick
+        # Exit 2 means "nothing here is worth releasing", which is a
+        # decision and not a failure, so it must not fail the job.
+        run: |
+          set +e
+          TAG=$(python packaging/version.py --explain)
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -eq 0 ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "releasing as $TAG"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "no release from this push"
+          fi
+
   build:
     name: ${{ matrix.label }}
+    needs: version
     runs-on: ${{ matrix.os }}
+    env:
+      # Empty on a pull request, where setuptools-scm's own development
+      # version is the honest answer.
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.version.outputs.version }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -119,10 +158,13 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
+  # Rolling: every push to main that any commit asked for a version becomes
+  # a release, tag and all. Nobody types a version -- see
+  # packaging/version.py for the `Bump:` trailer that decides it.
   release:
     name: release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, build]
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -136,6 +178,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: incoming
+      - name: Tag it
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          # Idempotent: a re-run of a workflow whose tag already exists
+          # should attach to it rather than fall over.
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
       - name: Notes
         run: |
           python packaging/notes.py | tee NOTES.md
@@ -143,7 +197,7 @@ jobs:
           ls -lh incoming/*/*
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
           files: incoming/*/*
           body_path: NOTES.md
-          draft: true          # a human looks before strangers download it
           fail_on_unmatched_files: true

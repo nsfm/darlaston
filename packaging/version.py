@@ -21,12 +21,13 @@ the changelog's needs ahead of the reader's. A trailer sits at the bottom
 of the body, is invisible in `git log --oneline`, and is a format git
 itself already understands.
 
-Anything with no trailer counts as a patch, so the default is the safe
-one and forgetting costs a smaller number rather than a wrong one.
+Anything with no trailer counts as a patch, so the default is the safe one
+and forgetting costs a smaller number rather than a wrong one. `Bump: none`
+says this commit is not worth a release at all -- if every commit since the
+last tag says that, there is nothing to cut.
 
-Before the first tag exists everything is measured from 0.0.0, which makes
-the first release 0.0.1 unless a commit asks for more. Pass --initial to
-override that for the first cut.
+Nobody types a version. The first release is FIRST_RELEASE below, and every
+one after it is the previous tag plus whatever the commits asked for.
 """
 from __future__ import annotations
 
@@ -36,10 +37,16 @@ import subprocess
 import sys
 
 #: Ordered weakest to strongest; the strongest trailer in the range wins.
-LEVELS = ("patch", "minor", "major")
+#: "none" is weaker than everything: one commit worth releasing carries the
+#: whole range, and a range of nothing but "none" is not a release.
+LEVELS = ("none", "patch", "minor", "major")
+
+#: What the first ever release is called. Baked in rather than asked for:
+#: a version nobody types is a version nobody has to agree on.
+FIRST_RELEASE = "0.1.0"
 
 #: Matched on its own line, case-insensitively, the way git reads trailers.
-TRAILER = re.compile(r"^\s*bump:\s*(major|minor|patch)\s*$",
+TRAILER = re.compile(r"^\s*bump:\s*(major|minor|patch|none|skip)\s*$",
                      re.IGNORECASE | re.MULTILINE)
 
 #: A release tag. Anything else in the tag namespace is ignored, so a tag
@@ -71,11 +78,20 @@ def commits_since(tag: str | None) -> list[str]:
 
 
 def level_for(messages: list[str]) -> str:
-    """The strongest bump any of these commits asked for."""
+    """The strongest bump any of these commits asked for.
+
+    A commit with no trailer is a patch, so a range is only "none" when
+    every commit in it says so explicitly.
+    """
     best = 0
     for message in messages:
-        for found in TRAILER.findall(message):
-            best = max(best, LEVELS.index(found.lower()))
+        found = TRAILER.findall(message)
+        asked = max((LEVELS.index("patch" if f.lower() == "skip"
+                                  else f.lower()) for f in found),
+                    default=LEVELS.index("patch"))
+        if found and all(f.lower() in ("none", "skip") for f in found):
+            asked = LEVELS.index("none")
+        best = max(best, asked)
     return LEVELS[best]
 
 
@@ -88,25 +104,29 @@ def bump(version: tuple[int, int, int], level: str) -> tuple[int, int, int]:
     return major, minor, patch + 1
 
 
-def next_version(initial: str | None = None) -> tuple[str, str, int]:
-    """(tag, why, how many commits it covers)."""
+def next_version(initial: str | None = None) -> tuple[str | None, str, int]:
+    """(tag, why, how many commits it covers). Tag is None if there is
+    nothing worth releasing."""
     tag = latest_tag()
     messages = commits_since(tag)
     if not messages:
-        return (tag or "v0.0.0"), "nothing new since the last release", 0
+        return None, "nothing new since the last release", 0
     level = level_for(messages)
-    if tag is None and initial:
-        return f"v{initial.lstrip('v')}", "first release", len(messages)
-    current = (0, 0, 0) if tag is None else tuple(
-        int(g) for g in TAG.match(tag).groups())
+    if level == "none":
+        return None, "nothing since the last release asked for a version", \
+            len(messages)
+    if tag is None:
+        return (f"v{(initial or FIRST_RELEASE).lstrip('v')}",
+                "first release", len(messages))
+    current = tuple(int(g) for g in TAG.match(tag).groups())
     return ("v%d.%d.%d" % bump(current, level),
-            f"{level} bump over {tag or 'nothing'}", len(messages))
+            f"{level} bump over {tag}", len(messages))
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--initial", metavar="X.Y.Z",
-                    help="version to use when no release tag exists yet")
+                    help=f"override the first release, normally {FIRST_RELEASE}")
     ap.add_argument("--explain", action="store_true",
                     help="say why, on stderr, as well as printing the tag")
     args = ap.parse_args()
@@ -119,6 +139,8 @@ def main() -> int:
 
     if args.explain:
         print(f"{why}, covering {count} commit(s)", file=sys.stderr)
+    if tag is None:
+        return 2                      # nothing to release; not an error
     print(tag)
     return 0
 
