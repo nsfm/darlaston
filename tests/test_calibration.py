@@ -187,3 +187,97 @@ def test_coverage_is_not_complete_while_structure_is_still_appearing():
         cov.update(np.maximum(f, 0.1))
     assert cov.fraction >= 0.999, "the left half should read as fully passed"
     assert not cov.complete, "claimed complete while half the frame was unseen"
+
+
+def _field(count, radius, seed=7, shading=True):
+    """A lit field with `count` specimens on it."""
+    import cv2
+    import numpy as np
+
+    h, w = 1216, 1824
+    rng = np.random.default_rng(seed)
+    field = np.full((h, w), 170.0)
+    if shading:                        # real optics are brighter in the middle
+        yy, xx = np.mgrid[0:h, 0:w]
+        field *= 1.0 - 0.22 * ((xx - w / 2) ** 2 / (w / 2) ** 2
+                               + (yy - h / 2) ** 2 / (h / 2) ** 2)
+    yy, xx = np.ogrid[:h, :w]
+    for _ in range(count):
+        cx = rng.integers(100, w - 100)
+        cy = rng.integers(100, h - 100)
+        field[(xx - cx) ** 2 + (yy - cy) ** 2 < radius * radius] *= 0.45
+    return np.clip(cv2.GaussianBlur(field, (0, 0), 2.0), 0, 255).astype("uint8")
+
+
+def test_a_few_specimens_are_not_an_empty_field():
+    """The frame-wide mean dilutes sparse structure into nothing, and a
+    mounted arrangement is mostly empty ground with specimens on it.
+
+    Measured before the patch test existed: four obvious diatoms covering
+    0.9% of the frame averaged out to 0.0084 against a 0.012 limit and were
+    declared empty slide. A flat banked from that stamps the specimen's
+    inverse onto every frame it ever corrects.
+    """
+    from darlaston.live.blank import BlankDetector
+
+    detector = BlankDetector()
+    assert detector.looks_blank(_field(0, 0)), "empty glass is empty"
+    # Dust and debris are on every real slide and must not veto a flat.
+    assert detector.looks_blank(_field(6, 4)), "dust is not a specimen"
+
+    for count, radius in ((1, 30), (2, 35), (4, 40), (8, 45), (20, 50)):
+        assert not detector.looks_blank(_field(count, radius)), (
+            f"{count} specimens of radius {radius} read as empty slide")
+
+
+def test_a_rejected_grab_still_costs_its_turn():
+    """The grab is what stalls the preview, and it has already happened by
+    the time the bank has an opinion about the frame.
+
+    Charging the interval only on success meant a rejected frame left the
+    clock untouched, so the next frame qualified again -- park on ground the
+    bank already holds and it grabs back to back for ever.
+    """
+    import threading
+    import time
+    import types
+
+    import numpy as np
+
+    from darlaston.calib.opportunist import Opportunist
+
+    grabs = []
+
+    class Grab:
+        def copy(self):
+            return np.zeros((8, 8), np.uint16)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class Backend:
+        def grab_raw(self):
+            grabs.append(time.time())
+            return Grab()
+
+    opportunist = Opportunist(types.SimpleNamespace(backend=Backend()))
+    opportunist.enabled = True
+    # A bank that refuses everything, which is what parking on ground it
+    # already holds looks like.
+    opportunist.bank.offer = lambda _raw: False
+
+    signals = types.SimpleNamespace(xy_offset=(0.0, 0.0), looks_blank=True,
+                                    settled=True)
+    for _ in range(40):
+        opportunist.observe(signals)
+        time.sleep(0.005)
+    for thread in threading.enumerate():
+        if thread.name == "bank-flat":
+            thread.join(timeout=5)
+
+    assert len(grabs) <= 1, (
+        f"{len(grabs)} raw grabs in 0.2 s; each one stalls the preview for "
+        f"over a second")

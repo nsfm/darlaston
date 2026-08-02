@@ -95,6 +95,16 @@ class Opportunist:
             backend = self._session.backend
             if backend is None:
                 return
+            # Charged against the interval whatever the bank decides. The
+            # grab is what costs -- it stalls the preview for over a second
+            # -- and that has already happened by the time the bank has an
+            # opinion. Only marking successes meant a rejected frame left
+            # the clock untouched, so the very next frame qualified again:
+            # park on a field the bank has already seen and the preview
+            # grabs back to back for ever, at well under one frame a
+            # second, with nothing in the performance monitor to show for
+            # it because the stall is in the camera and not in the loop.
+            self._last = time.time()
             with backend.grab_raw() as frame:
                 raw = frame.copy()
             # Position is checked inside the bank, so a frame taken on a patch
