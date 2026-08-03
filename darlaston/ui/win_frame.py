@@ -19,7 +19,9 @@ taking it means owning six things:
      hit testing claims those areas, so Qt never sees a click there.
   5. Maximised padding: Windows grows the window rect by the resize
      border on every side when maximised, and content near the edge goes
-     off screen.
+     off screen. An auto-hiding taskbar needs a further pixel on its own
+     edge, or it can no longer see the pointer arrive and stops
+     revealing itself.
   6. Per-monitor DPI, since the border thickness changes with it and
      changes again when the window is dragged to another screen.
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 
 # ---- what the geometry can decide ------------------------------------------
 
@@ -116,6 +119,38 @@ def hit_region(x: int, y: int, frame: Frame) -> str:
     return CLIENT
 
 
+def maximised_insets(border: int, autohide: frozenset = frozenset()
+                     ) -> tuple[int, int, int, int]:
+    """How far to pull the client area in when maximised, per edge.
+
+    Two separate reasons, and they add up on an edge that has both:
+
+    **The frame.** Windows grows the window rect by the resize border on
+    every side when it maximises, expecting a frame to absorb the
+    overhang. With no frame it runs off the screen, taking the top of the
+    toolbar with it.
+
+    **An auto-hiding taskbar.** It reveals itself when the pointer
+    reaches its screen edge, and it cannot see the pointer through a
+    window that covers that edge. One pixel is enough to leave it: the
+    taskbar's own detection strip is thinner than that, and a single
+    line of desktop at one edge of a maximised window is not something
+    anybody notices. Nothing at all, and the taskbar simply stops
+    working while this program is open, which reads as Windows being
+    broken rather than us.
+    """
+    left = top = right = bottom = border
+    if LEFT in autohide:
+        left += 1
+    if TOP in autohide:
+        top += 1
+    if RIGHT in autohide:
+        right += 1
+    if BOTTOM in autohide:
+        bottom += 1
+    return left, top, right, bottom
+
+
 # ---- the Win32 half --------------------------------------------------------
 
 #: Hit-test results. HTMAXBUTTON is the one that matters most: Windows 11
@@ -141,6 +176,16 @@ WM_DPICHANGED = 0x02E0
 #: unless it is asked for back.
 _DWMWA_CORNER = 33
 _DWMWCP_ROUND = 2
+
+#: SHAppBarMessage. ABM_GETAUTOHIDEBAREX asks which window, if any, is the
+#: auto-hiding appbar on one edge of one monitor -- the "EX" form is the
+#: one that takes a monitor, which matters on a second screen that has no
+#: taskbar of its own.
+ABM_GETSTATE = 0x00000004
+ABM_GETAUTOHIDEBAREX = 0x0000000B
+ABS_AUTOHIDE = 0x00000001
+#: ABE_LEFT, TOP, RIGHT, BOTTOM, in the order Windows numbers them.
+_ABE = (LEFT, TOP, RIGHT, BOTTOM)
 
 SM_CXSIZEFRAME = 32
 SM_CYSIZEFRAME = 33
@@ -175,12 +220,18 @@ def supported() -> bool:
 
 # ---- talking to Windows ----------------------------------------------------
 
+@lru_cache(maxsize=1)
 def _structs():
-    """The Win32 types this needs, built lazily.
+    """The Win32 types this needs, built lazily and once.
 
     Lazily because ctypes.wintypes does not import on anything but
     Windows, and this module is read on every platform for the geometry
     above.
+
+    Once because ctypes gives every call a *distinct* class: a RECT built
+    here is not the RECT built by the next call, and casting a pointer
+    between the two is a type error rather than the no-op it looks like.
+    Caching makes the identity stable as well as saving the work.
     """
     import ctypes
     from ctypes import wintypes
@@ -201,7 +252,18 @@ def _structs():
     class POINT(ctypes.Structure):
         _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
 
-    return ctypes, wintypes, RECT, NCCALCSIZE_PARAMS, MARGINS, POINT
+    class APPBARDATA(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                    ("uCallbackMessage", wintypes.UINT),
+                    ("uEdge", wintypes.UINT), ("rc", RECT),
+                    ("lParam", ctypes.c_ssize_t)]
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT),
+                    ("rcWork", RECT), ("dwFlags", wintypes.DWORD)]
+
+    return (ctypes, wintypes, RECT, NCCALCSIZE_PARAMS, MARGINS, POINT,
+            APPBARDATA, MONITORINFO)
 
 
 class NativeFrame:
@@ -238,7 +300,7 @@ class NativeFrame:
         if not supported():
             return False
         try:
-            ctypes, wintypes, RECT, _NC, MARGINS, _P = _structs()
+            ctypes, _w, _R, _NC, MARGINS, _P, _A, _M = _structs()
             self.hwnd = int(self.window.winId())
             if not self.hwnd:
                 return False
@@ -286,6 +348,43 @@ class NativeFrame:
             return self._button_input(message, wparam)
         return False, 0
 
+    def _autohide_edges(self) -> frozenset:
+        """Which edges of this window's monitor carry an auto-hiding bar.
+
+        Asked per monitor, not globally: a second screen usually has no
+        taskbar at all, and pulling a pixel off a window there for one
+        that lives on the first screen would be a stripe of desktop
+        nobody could explain.
+        """
+        try:
+            ctypes, _w, _R, _NC, _M, _P, APPBARDATA, MONITORINFO = _structs()
+            shell32 = ctypes.windll.shell32
+            if not (shell32.SHAppBarMessage(ABM_GETSTATE, None)
+                    & ABS_AUTOHIDE):
+                return frozenset()          # nothing auto-hides anywhere
+
+            MONITOR_DEFAULTTONEAREST = 2
+            monitor = ctypes.windll.user32.MonitorFromWindow(
+                ctypes.c_void_p(self.hwnd), MONITOR_DEFAULTTONEAREST)
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if not ctypes.windll.user32.GetMonitorInfoW(
+                    ctypes.c_void_p(monitor), ctypes.byref(info)):
+                return frozenset()
+
+            found = set()
+            for index, edge in enumerate(_ABE):
+                data = APPBARDATA()
+                data.cbSize = ctypes.sizeof(APPBARDATA)
+                data.uEdge = index
+                data.rc = info.rcMonitor
+                if shell32.SHAppBarMessage(ABM_GETAUTOHIDEBAREX,
+                                           ctypes.byref(data)):
+                    found.add(edge)
+            return frozenset(found)
+        except Exception:
+            return frozenset()
+
     def _calc_size(self, wparam: int, lparam: int):
         """Reclaim the caption strip, and only the caption strip.
 
@@ -294,30 +393,36 @@ class NativeFrame:
         resize borders then live *inside* the client and are handled by
         `hit_region`, which is why they have to be tested there.
 
-        Maximised is the exception. Windows grows the window rect by the
-        resize border on every side when it maximises, expecting the
-        frame to absorb it. With no frame, that overhang runs off the
-        screen and takes the top of the toolbar with it.
+        Maximised is the exception, for two reasons that add up. Windows
+        grows the window rect by the resize border on every side when it
+        maximises, expecting the frame to absorb it, and with no frame
+        that overhang runs off the screen and takes the top of the
+        toolbar with it. Separately, an auto-hiding taskbar needs a pixel
+        left at its own edge or it can no longer see the pointer arrive.
+        `maximised_insets` works out both; it is a pure function, so the
+        arithmetic is tested without needing Windows.
         """
         if not wparam:
             return False, 0
         try:
-            ctypes, _w, _R, NCCALCSIZE_PARAMS, _M, _P = _structs()
+            ctypes, _w, _R, NCCALCSIZE_PARAMS = _structs()[:4]
             if self.window.isMaximized():
                 params = ctypes.cast(
                     lparam, ctypes.POINTER(NCCALCSIZE_PARAMS)).contents
-                edge = border_thickness(self.window.logicalDpiX())
-                params.rgrc[0].left += edge
-                params.rgrc[0].right -= edge
-                params.rgrc[0].top += edge
-                params.rgrc[0].bottom -= edge
+                left, top, right, bottom = maximised_insets(
+                    border_thickness(self.window.logicalDpiX()),
+                    self._autohide_edges())
+                params.rgrc[0].left += left
+                params.rgrc[0].top += top
+                params.rgrc[0].right -= right
+                params.rgrc[0].bottom -= bottom
             return True, 0
         except Exception:
             return False, 0
 
     def _hit_test(self, lparam: int):
         try:
-            ctypes, _w, _R, _NC, _M, POINT = _structs()
+            ctypes, _w, _R, _NC, _M, POINT, _A, _Mi = _structs()
             # lParam packs two signed 16-bit screen coordinates.
             x = ctypes.c_short(lparam & 0xFFFF).value
             y = ctypes.c_short((lparam >> 16) & 0xFFFF).value

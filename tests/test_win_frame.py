@@ -166,3 +166,26 @@ def test_hover_and_press_are_told_from_outside(qapp):
     assert bar.caption["close"].down
     bar.set_caption_state("", "")
     assert not any(b.hot or b.down for b in bar.caption.values())
+
+
+def test_a_maximised_window_leaves_room_for_an_autohiding_taskbar():
+    """It reveals itself when the pointer reaches its screen edge, and it
+    cannot see the pointer through a window covering that edge.
+
+    Without the pixel, the taskbar simply stops working while this program
+    is open, which reads as Windows being broken rather than as us."""
+    from darlaston.ui.win_frame import maximised_insets
+
+    plain = maximised_insets(8)
+    assert plain == (8, 8, 8, 8), "the frame overhang is per edge"
+
+    at_bottom = maximised_insets(8, frozenset({BOTTOM}))
+    assert at_bottom == (8, 8, 8, 9)
+    # Only the edge that has one, so three edges do not lose a pixel for
+    # a taskbar that is not there.
+    assert at_bottom[:3] == plain[:3]
+
+    # A taskbar on the left, which plenty of people run.
+    assert maximised_insets(8, frozenset({LEFT})) == (9, 8, 8, 8)
+    # And more than one, which is unusual but possible with several bars.
+    assert maximised_insets(8, frozenset({TOP, RIGHT})) == (8, 9, 9, 8)
