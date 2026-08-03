@@ -67,6 +67,66 @@ class Chip(QtWidgets.QLabel):
             f"padding:1px 7px; color:{colour}; font-size:11px;")
 
 
+class CaptionButton(QtWidgets.QWidget):
+    """Minimise, maximise or close, drawn rather than set in a font.
+
+    Windows' own are glyphs from Segoe MDL2 Assets, which is present on
+    every Windows and on nothing else, so a build that used it would look
+    right on the target and be untestable anywhere. These are three
+    strokes each.
+
+    They receive no mouse events. Once hit testing claims their area
+    Windows routes the pointer through non-client messages, so `set_state`
+    is how they learn they are being hovered or pressed -- see
+    win_frame.NativeFrame._button_input.
+    """
+
+    #: Windows' own caption buttons are 46 x 32 at 100%. Matching the
+    #: width matters more than the height: it is the target size people
+    #: have muscle memory for, including the flick into the top-right
+    #: corner that closes a maximised window.
+    WIDTH = 46
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+        self.hot = False
+        self.down = False
+        self.setFixedWidth(self.WIDTH)
+        self.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def set_state(self, hot: bool, down: bool) -> None:
+        if (hot, down) != (self.hot, self.down):
+            self.hot, self.down = hot, down
+            self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        if self.hot or self.down:
+            # Red for close, as every Windows application does. Getting
+            # this wrong is more jarring than having no highlight at all.
+            if self.kind == "close":
+                wash = QtGui.QColor(0xC4, 0x2B, 0x1C, 255 if self.down else 220)
+            else:
+                wash = QtGui.QColor(255, 255, 255, 38 if self.down else 24)
+            p.fillRect(self.rect(), wash)
+        ink = (QtGui.QColor(theme.INK) if self.kind != "close" or not
+               (self.hot or self.down) else QtGui.QColor("#ffffff"))
+        p.setPen(QtGui.QPen(ink, 1.1))
+        cx, cy, arm = self.width() / 2, self.height() / 2, 5.0
+        if self.kind == "minimise":
+            p.drawLine(QtCore.QPointF(cx - arm, cy), QtCore.QPointF(cx + arm, cy))
+        elif self.kind == "maximise":
+            p.drawRect(QtCore.QRectF(cx - arm, cy - arm, arm * 2, arm * 2))
+        else:
+            p.drawLine(QtCore.QPointF(cx - arm, cy - arm),
+                       QtCore.QPointF(cx + arm, cy + arm))
+            p.drawLine(QtCore.QPointF(cx + arm, cy - arm),
+                       QtCore.QPointF(cx - arm, cy + arm))
+
+
 class ToolBar(QtWidgets.QFrame):
     """The top bar is for things you can do.
 
@@ -101,7 +161,71 @@ class ToolBar(QtWidgets.QFrame):
         self._row.addSpacing(4)
         self._row.addWidget(divider)
         self._row.addSpacing(4)
+        # Menus go in here, before the stretch. Counted rather than
+        # inserted at `count - 1`: that meant "just before the last item",
+        # which was the stretch until the caption strip was added after it
+        # and quietly started putting the menus on the far right.
+        self._menu_slot = self._row.count()
         self._row.addStretch(1)
+
+        # Only ever shown on Windows, and only once the native frame has
+        # been taken. Built here regardless so the geometry the frame asks
+        # for is the geometry that is really on screen.
+        self.caption = {kind: CaptionButton(kind)
+                        for kind in ("minimise", "maximise", "close")}
+        # In their own strip with no spacing and no margin. The row has
+        # both, and either one leaves a dead pixel column between two
+        # buttons or a gap between the last button and the corner -- and
+        # the corner is where people flick to close a maximised window
+        # without aiming.
+        self._caption_strip = QtWidgets.QWidget()
+        strip = QtWidgets.QHBoxLayout(self._caption_strip)
+        strip.setContentsMargins(0, 0, 0, 0)
+        strip.setSpacing(0)
+        for kind in ("minimise", "maximise", "close"):
+            strip.addWidget(self.caption[kind])
+        self._caption_strip.hide()
+        self._row.addWidget(self._caption_strip)
+
+    def show_caption_buttons(self) -> None:
+        """Draw our own minimise, maximise and close.
+
+        Windows only, and only after the frame has been taken: showing
+        them beside a native caption would be six buttons for three jobs.
+        """
+        left, top, _right, bottom = self._row.getContentsMargins()
+        self._row.setContentsMargins(left, top, 0, bottom)
+        self._caption_strip.show()
+
+    def set_caption_state(self, hot: str, down: str) -> None:
+        """Told from outside, because these get no mouse events."""
+        for kind, button in self.caption.items():
+            button.set_state(kind == hot, kind == down)
+
+    def caption_geometry(self):
+        """Where the buttons are, and what else in the bar takes clicks.
+
+        Both in the bar's own coordinates, which are the window's, since
+        the bar sits at its top left. Returned rather than assumed so the
+        hit testing and the layout cannot disagree about where anything
+        is: the frame asks, the layout answers.
+        """
+        # Mapped into the bar's own coordinates rather than read off
+        # `x()`, which is relative to whatever the button was parented
+        # into. The strip is a nesting level deep.
+        buttons = tuple(
+            (b.mapTo(self, QtCore.QPoint(0, 0)).x(), b.width())
+            for b in (self.caption["minimise"], self.caption["maximise"],
+                      self.caption["close"])
+            if not b.isHidden())
+        # Everything from the left edge to the end of the last menu is
+        # clickable, so the drag must not claim it.
+        rightmost = self.wordmark.x() + self.wordmark.width()
+        for menu_button in self.findChildren(QtWidgets.QPushButton):
+            if menu_button.property("role") == "menu":
+                rightmost = max(rightmost,
+                                menu_button.x() + menu_button.width())
+        return buttons, ((0, rightmost),)
 
     def inset_for_window_controls(self, pixels: int) -> None:
         """Start the toolbar to the right of the platform's own buttons.
@@ -133,7 +257,8 @@ class ToolBar(QtWidgets.QFrame):
         menu = QtWidgets.QMenu(button)
         button.setMenu(menu)
         self.menus[name] = menu
-        self._row.insertWidget(self._row.count() - 1, button)
+        self._row.insertWidget(self._menu_slot, button)
+        self._menu_slot += 1
         return menu
 
 

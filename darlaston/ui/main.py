@@ -43,6 +43,7 @@ from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .perf_ui import PerfPanel, PerformanceDialog
 from .setup_ui import CameraDialog, MicroscopeDialog
+from .win_frame import NativeFrame
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
                     WaitingPage)
@@ -1837,6 +1838,47 @@ class MainWindow(QtWidgets.QMainWindow):
             self.focus.set_data(s.focus_trace, s.focus_fraction_of_peak)
             self.strip.set_live(s)
 
+    #: Set once the Windows frame has been taken. None everywhere else.
+    _frame: NativeFrame | None = None
+
+    def nativeEvent(self, kind, message):
+        """Non-client messages, when we own the frame.
+
+        Only reached on Windows, and only after NativeFrame.attach has
+        succeeded. Anything it does not claim falls through to Qt exactly
+        as before, so a message this does not understand behaves the way
+        it always did.
+        """
+        if self._frame is not None and kind == b"windows_generic_MSG":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                msg = ctypes.cast(int(message),
+                                  ctypes.POINTER(wintypes.MSG)).contents
+                handled, result = self._frame.handle(
+                    msg.message, int(msg.wParam), int(msg.lParam))
+                if handled:
+                    return True, result
+            except Exception:
+                pass          # a frame that misbehaves must not eat the app
+        return super().nativeEvent(kind, message)
+
+    def take_native_frame(self) -> bool:
+        """Draw our own title bar, on the platforms where that is ours.
+
+        Returns whether it took. It is deliberately possible for this to
+        fail and leave a perfectly ordinary window: every part of it
+        reaches past Qt into the platform, and a future Windows is allowed
+        to disagree.
+        """
+        frame = NativeFrame(self, self.toolbar)
+        if not frame.attach():
+            return False
+        self._frame = frame
+        self.toolbar.show_caption_buttons()
+        return True
+
     def shutdown(self) -> None:
         """Release the camera. Idempotent, and reached from both the window
         closing and a Ctrl-C, so the device is never left held."""
@@ -1999,7 +2041,13 @@ def main() -> int:
     # title bar transparent and runs the content up under it, which leaves
     # the traffic lights floating over the toolbar -- so the toolbar gets
     # out of their way, but only if the restyle actually took.
-    if theme.match_frame(win) and sys.platform == "darwin":
+    if sys.platform.startswith("win"):
+        # Windows has no way to keep the native buttons and take the bar,
+        # so the whole frame is ours or none of it is. Falls back to the
+        # dark caption below if that does not take.
+        if not win.take_native_frame():
+            theme.match_frame(win)
+    elif theme.match_frame(win) and sys.platform == "darwin":
         win.toolbar.inset_for_window_controls(theme.MACOS_LIGHTS)
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and

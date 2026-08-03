@@ -1,0 +1,375 @@
+"""A window frame of our own, on Windows.
+
+Windows draws a caption bar above the window: an icon, the application's
+name, and three buttons. On a program that already has a toolbar that is a
+second bar saying less, and it is drawn in Windows' dark rather than ours.
+
+macOS had a middle path -- make the title bar transparent and keep the
+native traffic lights. Windows has no equivalent. Either you accept the
+caption or you take the client area and draw the buttons yourself, and
+taking it means owning six things:
+
+  1. `WM_NCCALCSIZE`, to reclaim the caption strip while keeping the
+     resize borders.
+  2. `DwmExtendFrameIntoClientArea`, so the drop shadow and composition
+     survive.
+  3. `WM_NCHITTEST`, which is where dragging, double-click to maximise,
+     the right-click system menu and Aero Snap all come from.
+  4. Caption button *input*, which arrives as non-client messages once
+     hit testing claims those areas, so Qt never sees a click there.
+  5. Maximised padding: Windows grows the window rect by the resize
+     border on every side when maximised, and content near the edge goes
+     off screen.
+  6. Per-monitor DPI, since the border thickness changes with it and
+     changes again when the window is dragged to another screen.
+
+**The geometry is separated from the API on purpose.** `hit_region` below
+is a pure function of rectangles, so the piece most likely to be wrong is
+testable on any platform, and only the thin layer that talks to Win32
+needs a Windows machine to exercise.
+"""
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+
+# ---- what the geometry can decide ------------------------------------------
+
+CLIENT = "client"
+CAPTION = "caption"
+MINIMISE, MAXIMISE, CLOSE = "minimise", "maximise", "close"
+TOP, BOTTOM, LEFT, RIGHT = "top", "bottom", "left", "right"
+TOPLEFT, TOPRIGHT = "topleft", "topright"
+BOTTOMLEFT, BOTTOMRIGHT = "bottomleft", "bottomright"
+
+#: Regions that resize, and which cursor edge each is.
+EDGES = {TOP, BOTTOM, LEFT, RIGHT, TOPLEFT, TOPRIGHT, BOTTOMLEFT, BOTTOMRIGHT}
+#: Regions that are one of our own caption buttons.
+BUTTONS = {MINIMISE, MAXIMISE, CLOSE}
+
+
+@dataclass(frozen=True)
+class Frame:
+    """Everything the geometry needs, in client pixels.
+
+    `buttons` are the three caption buttons left to right, as
+    (x, width) pairs; their height is the bar. Passed in rather than
+    computed because the toolbar owns its own layout and this must not
+    have a second opinion about where the buttons ended up.
+    """
+
+    width: int
+    height: int
+    bar: int                       # height of our toolbar, the drag strip
+    border: int                    # resize border thickness, DPI scaled
+    buttons: tuple[tuple[int, int], ...] = ()
+    maximised: bool = False
+    #: Regions of the bar that are *not* draggable, because something
+    #: clickable lives there: the wordmark and the menu buttons.
+    reserved: tuple[tuple[int, int], ...] = ()
+
+
+def hit_region(x: int, y: int, frame: Frame) -> str:
+    """Which part of the window a client-relative point falls in.
+
+    The order of these tests is the specification, not an implementation
+    detail:
+
+    * Resize edges win over everything, including the caption buttons.
+      A window whose corner cannot be grabbed because a button is near it
+      is a window people describe as broken.
+    * A maximised window has no resize edges at all. Windows will happily
+      let you drag one and the result is a window that un-maximises to
+      somewhere surprising.
+    * Buttons beat the caption, or the drag would swallow the click.
+    * Anything the toolbar has claimed beats the caption too, or the
+      menus stop opening and start moving the window.
+    """
+    if not frame.maximised:
+        near_left, near_right = x < frame.border, x >= frame.width - frame.border
+        near_top, near_bottom = y < frame.border, y >= frame.height - frame.border
+        if near_top and near_left:
+            return TOPLEFT
+        if near_top and near_right:
+            return TOPRIGHT
+        if near_bottom and near_left:
+            return BOTTOMLEFT
+        if near_bottom and near_right:
+            return BOTTOMRIGHT
+        if near_top:
+            return TOP
+        if near_bottom:
+            return BOTTOM
+        if near_left:
+            return LEFT
+        if near_right:
+            return RIGHT
+
+    if 0 <= y < frame.bar:
+        for name, (bx, bw) in zip((MINIMISE, MAXIMISE, CLOSE), frame.buttons):
+            if bx <= x < bx + bw:
+                return name
+        for rx, rw in frame.reserved:
+            if rx <= x < rx + rw:
+                return CLIENT
+        return CAPTION
+    return CLIENT
+
+
+# ---- the Win32 half --------------------------------------------------------
+
+#: Hit-test results. HTMAXBUTTON is the one that matters most: Windows 11
+#: shows its snap-layouts flyout when the pointer rests on a region that
+#: reports it, and a custom frame that does not is one people quietly find
+#: worse than the standard one.
+_HT = {
+    CLIENT: 1, CAPTION: 2, MINIMISE: 8, MAXIMISE: 9, CLOSE: 20,
+    LEFT: 10, RIGHT: 11, TOP: 12, TOPLEFT: 13, TOPRIGHT: 14,
+    BOTTOM: 15, BOTTOMLEFT: 16, BOTTOMRIGHT: 17,
+}
+
+WM_NCCALCSIZE = 0x0083
+WM_NCHITTEST = 0x0084
+WM_NCMOUSEMOVE = 0x00A0
+WM_NCLBUTTONDOWN = 0x00A1
+WM_NCLBUTTONUP = 0x00A2
+WM_NCMOUSELEAVE = 0x02A2
+WM_DPICHANGED = 0x02E0
+
+#: DWMWA_WINDOW_CORNER_PREFERENCE, and DWMWCP_ROUND. Windows 11 rounds a
+#: standard frame for you; strip the frame and the rounding goes with it
+#: unless it is asked for back.
+_DWMWA_CORNER = 33
+_DWMWCP_ROUND = 2
+
+SM_CXSIZEFRAME = 32
+SM_CYSIZEFRAME = 33
+SM_CXPADDEDBORDER = 92
+
+
+def border_thickness(dpi: int = 96) -> int:
+    """Resize border width at a given DPI, in pixels.
+
+    `SM_CXSIZEFRAME` alone is the visible frame and is too thin to grab;
+    Windows itself adds `SM_CXPADDEDBORDER`, which is why the grabbable
+    edge of a standard window is wider than it looks. Falls back to the
+    96-DPI figures where the per-DPI call is unavailable, which is
+    Windows 8.1 and earlier.
+    """
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        if hasattr(user32, "GetSystemMetricsForDpi"):
+            return (user32.GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
+                    + user32.GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi))
+        return (user32.GetSystemMetrics(SM_CXSIZEFRAME)
+                + user32.GetSystemMetrics(SM_CXPADDEDBORDER))
+    except Exception:
+        return max(4, round(8 * dpi / 96))
+
+
+def supported() -> bool:
+    return sys.platform.startswith("win")
+
+
+# ---- talking to Windows ----------------------------------------------------
+
+def _structs():
+    """The Win32 types this needs, built lazily.
+
+    Lazily because ctypes.wintypes does not import on anything but
+    Windows, and this module is read on every platform for the geometry
+    above.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
+                    ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+
+    class NCCALCSIZE_PARAMS(ctypes.Structure):
+        _fields_ = [("rgrc", RECT * 3), ("lppos", ctypes.c_void_p)]
+
+    class MARGINS(ctypes.Structure):
+        _fields_ = [("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int)]
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    return ctypes, wintypes, RECT, NCCALCSIZE_PARAMS, MARGINS, POINT
+
+
+class NativeFrame:
+    """Owns the window's non-client area.
+
+    Constructed with the window and the toolbar that becomes its title
+    bar. `attach` returns whether it took: everything here is best effort,
+    and a window that could not be reframed should look like Windows drew
+    it rather than like a bug.
+    """
+
+    def __init__(self, window, toolbar) -> None:
+        self.window = window
+        self.toolbar = toolbar
+        self.hwnd = 0
+        self._hot = ""          # region the pointer is over
+        self._down = ""         # region the button went down on
+
+    # -- what the geometry needs to know about right now ------------------
+
+    def frame(self) -> Frame:
+        ratio = self.window.devicePixelRatioF() or 1.0
+        buttons, reserved = self.toolbar.caption_geometry()
+        return Frame(width=self.window.width(), height=self.window.height(),
+                     bar=self.toolbar.height(),
+                     border=max(1, round(border_thickness(round(96 * ratio))
+                                         / ratio)),
+                     buttons=buttons, reserved=reserved,
+                     maximised=self.window.isMaximized())
+
+    # -- setting it up -----------------------------------------------------
+
+    def attach(self) -> bool:
+        if not supported():
+            return False
+        try:
+            ctypes, wintypes, RECT, _NC, MARGINS, _P = _structs()
+            self.hwnd = int(self.window.winId())
+            if not self.hwnd:
+                return False
+
+            # Windows 11 rounds a standard frame for you. Strip the frame
+            # and the rounding goes with it, so ask for it back. Fails
+            # harmlessly on Windows 10, which has square corners anyway.
+            corner = ctypes.c_int(_DWMWCP_ROUND)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                ctypes.c_void_p(self.hwnd), ctypes.c_uint(_DWMWA_CORNER),
+                ctypes.byref(corner), ctypes.sizeof(corner))
+
+            # One pixel of frame, which is what keeps the drop shadow and
+            # the DWM composition. Zero margins lose the shadow and the
+            # window reads as flat against whatever is behind it.
+            margins = MARGINS(0, 0, 0, 1)
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+                ctypes.c_void_p(self.hwnd), ctypes.byref(margins))
+
+            # Make Windows recompute the non-client area now, rather than
+            # at the next resize, or the caption stays until something
+            # moves the window.
+            SWP_FRAMECHANGED = 0x0020
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0002, 0x0001, 0x0004
+            ctypes.windll.user32.SetWindowPos(
+                ctypes.c_void_p(self.hwnd), None, 0, 0, 0, 0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
+            return True
+        except Exception:
+            self.hwnd = 0
+            return False
+
+    # -- the messages ------------------------------------------------------
+
+    def handle(self, message: int, wparam: int, lparam: int):
+        """Returns (handled, result), or (False, 0) to let Qt have it."""
+        if not self.hwnd:
+            return False, 0
+        if message == WM_NCCALCSIZE:
+            return self._calc_size(wparam, lparam)
+        if message == WM_NCHITTEST:
+            return self._hit_test(lparam)
+        if message in (WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP,
+                       WM_NCMOUSELEAVE):
+            return self._button_input(message, wparam)
+        return False, 0
+
+    def _calc_size(self, wparam: int, lparam: int):
+        """Reclaim the caption strip, and only the caption strip.
+
+        Returning zero with no adjustment makes the client area the whole
+        window, which is what puts our toolbar where the caption was. The
+        resize borders then live *inside* the client and are handled by
+        `hit_region`, which is why they have to be tested there.
+
+        Maximised is the exception. Windows grows the window rect by the
+        resize border on every side when it maximises, expecting the
+        frame to absorb it. With no frame, that overhang runs off the
+        screen and takes the top of the toolbar with it.
+        """
+        if not wparam:
+            return False, 0
+        try:
+            ctypes, _w, _R, NCCALCSIZE_PARAMS, _M, _P = _structs()
+            if self.window.isMaximized():
+                params = ctypes.cast(
+                    lparam, ctypes.POINTER(NCCALCSIZE_PARAMS)).contents
+                edge = border_thickness(self.window.logicalDpiX())
+                params.rgrc[0].left += edge
+                params.rgrc[0].right -= edge
+                params.rgrc[0].top += edge
+                params.rgrc[0].bottom -= edge
+            return True, 0
+        except Exception:
+            return False, 0
+
+    def _hit_test(self, lparam: int):
+        try:
+            ctypes, _w, _R, _NC, _M, POINT = _structs()
+            # lParam packs two signed 16-bit screen coordinates.
+            x = ctypes.c_short(lparam & 0xFFFF).value
+            y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+            point = POINT(x, y)
+            ctypes.windll.user32.ScreenToClient(ctypes.c_void_p(self.hwnd),
+                                                ctypes.byref(point))
+            ratio = self.window.devicePixelRatioF() or 1.0
+            region = hit_region(round(point.x / ratio), round(point.y / ratio),
+                                self.frame())
+            return True, _HT[region]
+        except Exception:
+            return False, 0
+
+    def _button_input(self, message: int, wparam: int):
+        """Drive the caption buttons from non-client messages.
+
+        Once hit testing claims those areas, Qt never sees a mouse event
+        there: Windows sends WM_NC* instead, and a widget that looks like
+        a button but never lights up is worse than no button. So hover and
+        press are driven from here, and the toolbar is told what to draw.
+        """
+        by_code = {v: k for k, v in _HT.items()}
+        region = by_code.get(wparam, "")
+        try:
+            if message == WM_NCMOUSELEAVE:
+                self._hot = ""
+                self.toolbar.set_caption_state("", "")
+                return False, 0                  # Windows still wants it
+            if message == WM_NCMOUSEMOVE:
+                if region != self._hot:
+                    self._hot = region if region in BUTTONS else ""
+                    self.toolbar.set_caption_state(self._hot, self._down)
+                return False, 0
+            if message == WM_NCLBUTTONDOWN and region in BUTTONS:
+                self._down = region
+                self.toolbar.set_caption_state(self._hot, self._down)
+                return True, 0                   # ours; do not let DefWindowProc
+            if message == WM_NCLBUTTONUP and region in BUTTONS:
+                fired, self._down = self._down, ""
+                self.toolbar.set_caption_state(self._hot, "")
+                if fired == region:
+                    self._activate(region)
+                return True, 0
+        except Exception:
+            return False, 0
+        return False, 0
+
+    def _activate(self, region: str) -> None:
+        if region == MINIMISE:
+            self.window.showMinimized()
+        elif region == MAXIMISE:
+            (self.window.showNormal() if self.window.isMaximized()
+             else self.window.showMaximized())
+        elif region == CLOSE:
+            self.window.close()
