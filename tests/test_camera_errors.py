@@ -413,3 +413,80 @@ def test_sdk_verification_accepts_each_platform_build(monkeypatch, tmp_path):
         assert found == root, f"{plat}: found {found}"
         # And never the android build, whatever the platform.
         assert "android" not in str(found)
+
+
+def test_an_empty_enumeration_is_waiting_and_not_a_fault():
+    """The macOS bug, reproduced without macOS.
+
+    `usb.present` can only read sysfs, so off Linux it has to guess yes --
+    which means the session attempts an open, the SDK reports an empty
+    enumeration, and that used to arrive as `CameraProblem` with numbered
+    steps and a Copy button. Linux never saw it, because sysfs answered
+    first and the session showed a calm waiting screen instead.
+
+    Same drawer, same absent camera, two completely different screens.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.errors import NoCameraFound
+    from darlaston.camera.session import CameraSession
+
+    seen = []
+
+    class _Absent:
+        def open(self):
+            raise NoCameraFound("ToupTek-family camera")
+
+    session = CameraSession(lambda: _Absent(), on_status=seen.append,
+                            on_frame=lambda _f: None,
+                            is_present=lambda: True)      # what macOS says
+    session._try_connect()
+
+    assert seen, "nothing was published at all"
+    last = seen[-1]
+    assert last.state is CameraState.DISCONNECTED, \
+        f"an absent camera reported {last.state}, not a waiting state"
+    assert not last.steps, "waiting is not a fault and needs no instructions"
+    assert not last.detail, "and no explanation of a failure that did not fail"
+    assert last.message
+
+
+def test_a_retry_that_changes_nothing_says_nothing():
+    """The flash. Each cycle used to publish CONNECTING -- heading only,
+    no detail, no steps -- and then the failure again with all of it, so
+    the page collapsed and re-expanded every few seconds."""
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.session import CameraSession
+
+    seen = []
+
+    class _Broken:
+        def open(self):
+            raise RuntimeError("the camera is on fire")
+
+    session = CameraSession(lambda: _Broken(), on_status=seen.append,
+                            on_frame=lambda _f: None,
+                            is_present=lambda: True)
+    session.RETRY_BACKOFF = (0.0,)
+
+    for _ in range(4):
+        try:
+            session._try_connect()
+        except Exception as why:
+            session._fail(why)
+
+    connecting = [s for s in seen if s.state is CameraState.CONNECTING]
+    assert len(connecting) == 1, (
+        f"said 'connecting' {len(connecting)} times for one unchanging "
+        f"failure; each one collapses the page and the next expands it")
+
+
+def test_the_waiting_message_is_not_written_twice_in_english():
+    """It was, in two places in the session, duplicating a catalogue entry
+    that already said the same words. The kind of thing an i18n pass
+    misses because it is in the camera layer, not the interface."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent
+              / "darlaston" / "camera" / "session.py").read_text()
+    assert "Waiting for a camera" not in source
+    assert '_("session.waiting")' in source

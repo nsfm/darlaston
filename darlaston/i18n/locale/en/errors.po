@@ -5,6 +5,16 @@
 #. Every message here says what to do, not merely what broke. These are the
 #. words a person reads at midnight with a diatom under the objective.
 
+#. Not a failure. Nothing is plugged in yet, and the application is
+#. watching for one -- the state a demonstration starts in and the state
+#. it returns to when the camera is unplugged on purpose.
+msgid "session.waiting"
+msgstr "Waiting for a camera"
+
+#. Shown once, on the first attempt. A retry says nothing new.
+msgid "session.connecting"
+msgstr "Connecting"
+
 #. Heading and detail joined, when a failure reaches a traceback.
 msgid "error.joined"
 msgstr "{heading}: {detail}"

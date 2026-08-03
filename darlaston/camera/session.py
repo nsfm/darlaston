@@ -23,8 +23,9 @@ from typing import Callable
 from .base import CameraBackend, CameraInfo, CameraState
 from .buffers import Frame
 from . import usb
-from .errors import CameraProblem
+from .errors import CameraProblem, NoCameraFound
 from ..cpu import usable_cores
+from ..i18n import _
 
 
 #: The preview rates the status bar offers, and therefore the only rates a
@@ -141,7 +142,7 @@ class CameraSession:
         self.framerate_cap = default_framerate_cap()
 
         self._status = SessionStatus(CameraState.DISCONNECTED,
-                                     message="Waiting for a camera")
+                                     message=_("session.waiting"))
 
     # ---- public surface --------------------------------------------------
 
@@ -268,16 +269,35 @@ class CameraSession:
             # No detail line: it pointed at a synthetic camera that is no
             # longer offered, and anything else here only restates the
             # heading in more words.
-            self._publish(CameraState.DISCONNECTED, link=link,
-                          message="Waiting for a camera")
+            self._wait(link)
             return
 
         self._attempt += 1
-        self._publish(CameraState.CONNECTING, link=link,
-                      message="Connecting", attempt=self._attempt)
+        # Only the first attempt says so. A retry of something that has
+        # already failed is not news, and publishing it made the waiting
+        # page collapse to a one-line "Connecting" and expand again on
+        # the next failure, once every few seconds, for ever.
+        if self._attempt == 1:
+            self._publish(CameraState.CONNECTING, link=link,
+                          message=_("session.connecting"),
+                          attempt=self._attempt)
 
         backend = self._make_backend()
-        info = backend.open()
+        try:
+            info = backend.open()
+        except NoCameraFound:
+            # Not a failure. This is the SDK reporting an empty
+            # enumeration, which is the same fact sysfs gives us on Linux
+            # and which Linux answers with a calm waiting screen -- it
+            # simply arrives here later, because off Linux there is no bus
+            # to read and `usb.present` has to guess yes.
+            #
+            # Rendering it as a fault was why macOS showed an error page
+            # with numbered steps, and a flash, where Linux showed nothing
+            # of the kind with the same camera in the same drawer.
+            self._attempt = 0
+            self._wait(link)
+            return
         with self._lock:
             self._backend = backend
         self._attempt = 0
@@ -294,6 +314,16 @@ class CameraSession:
             detail = link.advice
         self._publish(CameraState.STREAMING, info=info, link=link,
                       message="Live", detail=detail)
+
+    def _wait(self, link) -> None:
+        """Nothing is plugged in, and that is not a fault.
+
+        One place, because two of them drifted: the state a session starts
+        in and the state it returns to have to look identical or the
+        difference reads as something having gone wrong.
+        """
+        self._publish(CameraState.DISCONNECTED, link=link,
+                      message=_("session.waiting"))
 
     def _watch(self) -> None:
         """Cheap liveness check: if the device left the bus, the link is gone.
