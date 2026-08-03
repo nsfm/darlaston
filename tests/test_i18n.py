@@ -173,3 +173,26 @@ def test_the_catalogue_carries_nothing_nobody_asks_for():
     assert not stale, (
         f"{len(stale)} entr(ies) in the English catalogue that nothing "
         f"names: {sorted(stale)[:10]}")
+
+
+def test_the_platform_icons_match_the_mark_that_is_drawn(qapp):
+    """The dock icon, the taskbar icon and the window icon are one design,
+    so they are one piece of code.
+
+    Committed rather than generated at build time, because PyInstaller
+    wants a path before anything of ours runs. That makes drift possible,
+    which is what this catches: change the mark without regenerating and
+    the shipped app disagrees with the running one.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    done = subprocess.run(
+        [sys.executable, str(root / "packaging" / "make_icons.py"), "--check"],
+        capture_output=True, text=True, cwd=root,
+        env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen",
+             "PYTHONPATH": str(root)})
+    assert done.returncode == 0, (
+        f"the icon files no longer match the mark:\n{done.stderr}")

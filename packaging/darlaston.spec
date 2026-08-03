@@ -106,7 +106,10 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    # Windows reads this one; macOS uses the BUNDLE icon below. Generated
+    # by packaging/make_icons.py from the same code that draws the window
+    # icon, so the taskbar and the window cannot disagree.
+    icon=str(ROOT / "packaging" / "icons" / "darlaston.ico"),
 )
 
 coll = COLLECT(
@@ -122,7 +125,7 @@ if MACOS:
     app = BUNDLE(
         coll,
         name="darlaston.app",
-        icon=None,
+        icon=str(ROOT / "packaging" / "icons" / "darlaston.icns"),
         bundle_identifier="com.ndube.darlaston",
         info_plist={
             "CFBundleName": "darlaston",

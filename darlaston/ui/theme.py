@@ -12,6 +12,7 @@ Three decisions, each with a reason:
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -110,67 +111,102 @@ def install(app) -> None:
 
 
 #: Sizes a window manager, taskbar, dock or alt-tab switcher is likely to
-#: ask for. Rasterised at each rather than scaled from one, because the
-#: mark is a letter and a letter scaled down from 256 to 16 is a smudge.
-ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+#: ask for, plus what an .icns wants. Rasterised at each rather than scaled
+#: from one: the slots are thin at the small end and a resample turns them
+#: to speckle.
+ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512, 1024)
+
+#: The aperture: a brass annulus cut by five slots around a pentagonal
+#: opening. It is a diatom valve and a lens iris at the same time, which is
+#: the subject and the instrument in one shape.
+#:
+#: Every number here was chosen against a 16 px render magnified with
+#: nearest-neighbour, because that is where icons are actually judged and
+#: where the obvious version of this dies. What was learned:
+#:
+#:   * Detail has to live in *negative space*. Twelve stroked ribs, which
+#:     is what a diatom really looks like, alias into noise below 32 px.
+#:     Solid areas survive a resample; thin lines do not.
+#:   * Five, not six. A hexagon at 32 px reads as a nut or a bolt head.
+#:     Odd symmetry reads as nothing else in a dock, which is the whole
+#:     job of an icon at that size.
+#:   * The slots are phase-offset by half a step so no slot lines up with
+#:     a vertex of the opening. Aligned, the two dark shapes merge into
+#:     one smear small.
+BLADES = 5
+#: Radii as a fraction of the disc, and the slot width in degrees.
+OPENING = 0.46
+SLOT_DEGREES = 10.0
+DISC = 0.36
+
+
+def _aperture(size: int) -> QtGui.QImage:
+    """One rasterisation of the mark, at `size` square."""
+    image = QtGui.QImage(size, size,
+                         QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QtGui.QColor(0, 0, 0, 0))
+    p = QtGui.QPainter(image)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+
+    # The plate. A rounded square rather than a full-bleed one because
+    # macOS expects the art to *be* that shape -- it applies no mask of
+    # its own -- and Windows is happy either way.
+    p.setBrush(QtGui.QColor(PANEL))
+    radius = size * 0.225
+    p.drawRoundedRect(QtCore.QRectF(0, 0, size, size), radius, radius)
+
+    centre = size / 2.0
+    disc = size * DISC
+    p.setBrush(QtGui.QColor(BRASS))
+    p.drawEllipse(QtCore.QPointF(centre, centre), disc, disc)
+
+    # Slots, as filled wedges rather than strokes: a stroked line has a
+    # width that has to survive scaling and a filled shape does not.
+    p.setBrush(QtGui.QColor(PANEL))
+    inner, outer = disc * (OPENING + 0.08), disc * 1.02
+    for i in range(BLADES):
+        angle = 360.0 * i / BLADES + 180.0 / BLADES
+        wedge = QtGui.QPainterPath()
+        out_box = QtCore.QRectF(centre - outer, centre - outer,
+                                2 * outer, 2 * outer)
+        in_box = QtCore.QRectF(centre - inner, centre - inner,
+                               2 * inner, 2 * inner)
+        wedge.arcMoveTo(out_box, angle - SLOT_DEGREES / 2)
+        wedge.arcTo(out_box, angle - SLOT_DEGREES / 2, SLOT_DEGREES)
+        wedge.arcTo(in_box, angle + SLOT_DEGREES / 2, -SLOT_DEGREES)
+        wedge.closeSubpath()
+        p.drawPath(wedge)
+
+    # The opening, point up.
+    opening = QtGui.QPainterPath()
+    for i in range(BLADES):
+        angle = math.radians(360.0 * i / BLADES - 90.0)
+        point = QtCore.QPointF(centre + math.cos(angle) * disc * OPENING,
+                               centre + math.sin(angle) * disc * OPENING)
+        opening.moveTo(point) if i == 0 else opening.lineTo(point)
+    opening.closeSubpath()
+    p.drawPath(opening)
+    p.end()
+    return image
 
 
 def app_icon() -> QtGui.QIcon:
-    """The mark: the wordmark's own initial, brass on the panel colour.
+    """The mark, at every size a platform asks for.
 
-    Drawn rather than shipped as a file. This is the first letter of the
-    name in the face the name is already set in, so it is not a new design
-    decision -- and generating it means one source of truth for the mark
-    instead of a folder of PNGs that drift from the wordmark the moment
-    anybody touches either.
+    Drawn rather than shipped as a folder of PNGs, so the dock, the
+    taskbar, the About window and the installers cannot drift apart. The
+    files the platforms need are generated from this same function; see
+    packaging/make_icons.py.
     """
-    # Same refusal as load_fonts, for the same reason: QFontDatabase does
-    # not raise without a QApplication, it aborts the process. Drawing the
-    # mark needs font metrics, so this cannot be attempted early.
+    # Not strictly needed now the mark carries no type, but kept: a
+    # QApplication is required for QImage on some platforms and this is
+    # called early during startup.
     if QtWidgets.QApplication.instance() is None:
         return QtGui.QIcon()
-
-    fam = load_fonts()
     icon = QtGui.QIcon()
     for size in ICON_SIZES:
-        image = QtGui.QImage(size, size,
-                             QtGui.QImage.Format.Format_ARGB32_Premultiplied)
-        image.fill(QtGui.QColor(0, 0, 0, 0))
-        p = QtGui.QPainter(image)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        # A hairline round the plate, as on every dialog in the program.
-        # It is also what stops the mark disappearing into a dark taskbar:
-        # the panel colour is four levels off the ground, which is right
-        # inside the window and invisible outside it. Dropped below 24 px,
-        # where a one-pixel border is a sixteenth of the whole icon.
-        stroke = size / 32.0 if size >= 24 else 0.0
-        p.setPen(QtGui.QPen(QtGui.QColor(BRASS_DEEP), stroke) if stroke
-                 else QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(PANEL))
-        inset = stroke / 2.0
-        radius = size * 0.22
-        p.drawRoundedRect(
-            QtCore.QRectF(inset, inset, size - stroke, size - stroke),
-            radius, radius)
-
-        font = QtGui.QFont(fam["display"])
-        # By pixel size, not point: at 16 px a point size is rounded to
-        # whatever the screen's DPI makes of it and the letter lands
-        # anywhere.
-        font.setPixelSize(max(8, int(size * 0.62)))
-        p.setFont(font)
-        p.setPen(QtGui.QColor(BRASS))
-        # Placed off the letter's own ink rather than off the font's line
-        # box. This face carries a tall ascender and a deep descender, so
-        # centring the box leaves the "d" riding high with its stem in the
-        # border; centring the glyph's actual bounding rectangle puts the
-        # mark where the eye expects it at every size.
-        box = QtCore.QRectF(0, 0, size, size)
-        ink = QtGui.QFontMetricsF(font).tightBoundingRect("d")
-        p.drawText(QtCore.QPointF(box.center().x() - ink.center().x(),
-                                  box.center().y() - ink.center().y()), "d")
-        p.end()
-        icon.addPixmap(QtGui.QPixmap.fromImage(image))
+        icon.addPixmap(QtGui.QPixmap.fromImage(_aperture(size)))
     return icon
 
 
