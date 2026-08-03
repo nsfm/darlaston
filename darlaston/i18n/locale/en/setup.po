@@ -1,0 +1,327 @@
+# Describing the instrument: the Microscopes window and the Cameras window.
+#
+# Everything downstream keys on what is entered here, so most of these
+# entries are tooltips rather than labels. They are long on purpose: this is
+# a page you visit twice a year, and the questions it asks are ones you have
+# to know some optics to answer.
+
+#. ---- one turret position ------------------------------------------------
+#. A row of the objective list. Empty is a legitimate state: real turrets
+#. have gaps, and a five-position turret with three objectives must not
+#. silently renumber itself.
+
+#. Shown in the magnification box instead of "0.0×" when the position holds
+#. no objective.
+msgid "setup.objective.mag.state.empty"
+msgstr "empty"
+
+#. Shown in the aperture box instead of "NA 0.00" when the number is not
+#. known. Two dashes rather than a word, because the box is 78 px wide and
+#. the whole row of them has to stay readable as a column.
+msgid "setup.objective.na.state.unknown"
+msgstr "--"
+
+#. An example of an objective's optical design, in the box that asks for
+#. one. A real name rather than a description, because it is what is
+#. engraved on the barrel and that is where a reader will look for it.
+#. Achromat, Fluar or Neofluar would do as well.
+msgid "setup.objective.kind.placeholder"
+msgstr "Planapo"
+
+#. ---- immersion ----------------------------------------------------------
+#. What sits between the front element and the slide. These are the words
+#. on the menu; the values they stand for are identifiers in the code and
+#. do not change with the language.
+
+msgid "setup.objective.immersion.dry.option"
+msgstr "dry"
+
+msgid "setup.objective.immersion.oil.option"
+msgstr "oil"
+
+msgid "setup.objective.immersion.water.option"
+msgstr "water"
+
+msgid "setup.objective.immersion.glycerol.option"
+msgstr "glycerol"
+
+#. ---- a capped position --------------------------------------------------
+
+#. Offered only where it means something, which is a position with no
+#. objective in it.
+msgid "setup.objective.capped.label"
+msgstr "capped"
+
+msgid "setup.objective.capped.tooltip"
+msgstr ""
+"There is a dust cap in this position rather than an open hole.\n"
+"\n"
+"The two look like opposite ends of the scale: an open position passes\n"
+"the whole condenser cone straight through and blows white, a capped\n"
+"one is black. Both are simply 'no objective' unless you say which."
+
+#. ---- the stand ----------------------------------------------------------
+
+msgid "setup.scope.name.label"
+msgstr "Name"
+
+msgid "setup.scope.tube.label"
+msgstr "Tube length"
+
+#. The box carries a "mm" suffix the code supplies, so the tooltip does not
+#. repeat the unit. The numbers are standards and manufacturers' own values.
+msgid "setup.scope.tube.tooltip"
+msgstr ""
+"What turns an objective's magnification into a focal length:\n"
+"f = tube / M, which is the focal length written into every capture.\n"
+"\n"
+"160 is the DIN finite standard and what most pre-1990 stands use. It is "
+"engraved on the objective, under the\n"
+"magnification. An infinity\n"
+"stand has no tube length as such, so put its tube *lens* focal length\n"
+"here instead: 165 Zeiss, 180 Olympus, 200 Nikon and Leica."
+
+msgid "setup.scope.condenser.label"
+msgstr "Condenser"
+
+#. What the condenser is, in whatever words its owner would use. Examples
+#. rather than a description, because the field is free text and there is no
+#. right answer to describe.
+msgid "setup.scope.condenser.placeholder"
+msgstr "phase turret, darkfield stop"
+
+msgid "setup.scope.condenser_na.label"
+msgstr "Condenser NA"
+
+#. Shown instead of "0.00" when the aperture has not been set. Not the same
+#. as zero: it means assume the objective always wins.
+msgid "setup.scope.condenser_na.state.unknown"
+msgstr "unknown"
+
+msgid "setup.scope.condenser_na.tooltip"
+msgstr ""
+"The condenser's *working* aperture, not the number engraved on it.\n"
+"An NA 1.4 condenser only reaches 1.4 with oil between it and the slide;\n"
+"dry, air caps it below 1.0, and the iris puts it anywhere below that.\n"
+"\n"
+"It sets how bright each objective is, because the smaller of the two\n"
+"apertures gathers the light, and above about NA 0.5 that is the\n"
+"condenser, not the objective. Used only as a first guess; a confirmed\n"
+"rotation teaches the real value."
+
+#. ---- the magnification changer ------------------------------------------
+#. Rare glass, so it is off by default. Zeiss call theirs an Optovar; the
+#. generic name is the label and the trade name is in the tooltip, where
+#. somebody looking for it will find it. Both names are the manufacturers'
+#. own and are worth keeping as they are.
+
+msgid "setup.scope.changer.label"
+msgstr "Magnification changer"
+
+#. The tick box beside the factors, saying the stand has one at all.
+msgid "setup.scope.changer.fitted.label"
+msgstr "fitted"
+
+#. On the tick box and on the factors beside it, which is why it describes
+#. both. The factors box is read with a decimal point and spaces, so its own
+#. example is not translated.
+msgid "setup.scope.changer.tooltip"
+msgstr ""
+"An intermediate magnification changer, between the objective and\n"
+"the tube lens. Zeiss call theirs an Optovar; Leitz, Olympus and\n"
+"Nikon call it a magnification changer. Most stands have none.\n"
+"\n"
+"Its factors, space separated. It multiplies into total magnification\n"
+"exactly as the relay does, and changes magnification without moving\n"
+"the optical axis, which is what makes an overview frame cheap."
+
+#. ---- which way round the image is ---------------------------------------
+
+msgid "setup.scope.handedness.label"
+msgstr "Image handedness"
+
+msgid "setup.scope.handedness.normal.option"
+msgstr "normal"
+
+msgid "setup.scope.handedness.inverted.option"
+msgstr "inverted"
+
+msgid "setup.scope.handedness.tooltip"
+msgstr ""
+"How the image's handedness relates to the turret. Nothing to do with\n"
+"whether your turret is conventional.\n"
+"\n"
+"Between the turret moving and a pixel darkening, the handedness\n"
+"passes through the objective (which inverts the image), the head and any\n"
+"photo tube, however the camera is screwed onto its C-mount, and the\n"
+"raw stream arriving bottom-up. Four stages, each able to flip a sign.\n"
+"\n"
+"You should not need this: correcting a wrong proposal once teaches it."
+
+#. ---- the turret ---------------------------------------------------------
+
+#. The suffix on the count of turret positions, so the box reads "5
+#. positions". The leading space separates it from the number and is part of
+#. the string; a language that puts the noun first will want it at the other
+#. end instead.
+msgid "setup.turret.slots.detail"
+msgstr " positions"
+
+msgid "setup.turret.slots.tooltip"
+msgstr ""
+"How many positions the turret holds, including any that are empty.\n"
+"\n"
+"Four and five are usual; six and seven exist. It has to be the real\n"
+"count, because stepping and turret detection both work in physical\n"
+"order. A five-position turret described as four is one position out\n"
+"for half the ring."
+
+#. Beside the count, above the rows. No full stop: it is a caption rather
+#. than a sentence.
+msgid "setup.turret.order.detail"
+msgstr "In turret order. The order matters for stepping and detection"
+
+#. The section header above the rows. Upper case is how it is set; the code
+#. does not raise it.
+msgid "setup.turret.objectives.heading"
+msgstr "OBJECTIVES"
+
+#. ---- the camera and its relay -------------------------------------------
+#. The relay travels with the camera rather than with the stand, because
+#. that is what physically happens when a camera moves between scopes.
+
+msgid "setup.camera.name.label"
+msgstr "Name"
+
+msgid "setup.camera.relay.label"
+msgstr "Relay / adapter"
+
+#. A real adapter, as an example of what to write. The make and the mount
+#. are names; "1-2x" is its zoom range.
+msgid "setup.camera.relay.placeholder"
+msgstr "AmScope 1-2x C-mount"
+
+msgid "setup.camera.relay_factor.label"
+msgstr "Relay factor"
+
+#. The box carries an "x" prefix the code supplies.
+msgid "setup.camera.relay_factor.tooltip"
+msgstr ""
+"What the relay multiplies by, at the setting you use it.\n"
+"\n"
+"It sits between the objective and the sensor, so it multiplies into\n"
+"total magnification exactly as a magnification changer does. A 1-2x\n"
+"C-mount adapter left at 2x doubles the magnification at the sensor,\n"
+"which changes the f-number and how much slide each pixel covers."
+
+msgid "setup.camera.pixel.label"
+msgstr "Pixel pitch"
+
+#. Shown instead of "0.00 um" when the pitch has not been set, because zero
+#. is what makes the program ask the camera for it rather than a pitch of
+#. nothing.
+msgid "setup.camera.pixel.state.ask"
+msgstr "ask the camera"
+
+#. IMX183 is a sensor part number.
+msgid "setup.camera.pixel.tooltip"
+msgstr ""
+"Sensor pixel pitch, from the datasheet.\n"
+"\n"
+"Set it and every capture can record how much slide one pixel covers,\n"
+"which is the number a scale bar is drawn from. The SDK is asked\n"
+"first when this is left at zero, but it reports 0 on some models,\n"
+"and a zero pitch means no scale bar anywhere, quietly. The IMX183\n"
+"is 2.4 um."
+
+msgid "setup.camera.serial.label"
+msgstr "Serial"
+
+msgid "setup.camera.serial.tooltip"
+msgstr ""
+"Read from the camera. This is how it recognises itself between sessions."
+
+#. In place of the serial, for a camera that has never been plugged in.
+msgid "setup.camera.serial.state.unseen"
+msgstr "not seen yet"
+
+#. ---- the Microscopes window ---------------------------------------------
+
+msgid "setup.scopes.title"
+msgstr "Microscopes"
+
+msgid "setup.scopes.action.new"
+msgstr "New…"
+
+msgid "setup.scopes.action.remove"
+msgstr "Remove"
+
+#. The section header above the calibration key. Upper case is how it is
+#. set; the code does not raise it.
+msgid "setup.scopes.key.heading"
+msgstr "CALIBRATION KEY"
+
+msgid "setup.scopes.key.tooltip"
+msgstr ""
+"What a flat field is filed under. Change any of it and the existing flat "
+"no longer applies."
+
+#. The little window that asks for the name of a new stand.
+msgid "setup.scopes.new.title"
+msgstr "New microscope"
+
+msgid "setup.scopes.new.label"
+msgstr "Name"
+
+#. Already filled in, so pressing return is enough. {number} is how many
+#. stands the library will then hold.
+msgid "setup.scopes.new.detail"
+msgstr "Microscope {number}"
+
+msgid "setup.scopes.remove.title"
+msgstr "Remove microscope"
+
+#. {name} is the stand being removed. The flats are not deleted, so the
+#. sentence says so: it is what makes this safe to answer yes to.
+msgid "setup.scopes.remove.detail"
+msgstr ""
+"Remove {name}? Flat fields filed under it stay on disk but will no longer "
+"be found."
+
+#. ---- the Cameras window -------------------------------------------------
+#. There is no picker here on purpose. Which camera is in front of you is
+#. whichever one is plugged in, matched by its serial, so this window is a
+#. place to describe them rather than to choose between them.
+
+msgid "setup.cameras.title"
+msgstr "Cameras"
+
+msgid "setup.cameras.action.remove"
+msgstr "Remove"
+
+msgid "setup.cameras.remove.tooltip"
+msgstr "Forget this camera. It comes back if it is plugged in again."
+
+msgid "setup.cameras.remove.title"
+msgstr "Remove camera"
+
+#. {name} is the camera being forgotten.
+msgid "setup.cameras.remove.detail"
+msgstr ""
+"Forget {name}? It will be added again the next time it is plugged in."
+
+#. The whole window, when the library is empty. Everything that appears gets
+#. filed, so there is nothing to do here until something has appeared.
+msgid "setup.cameras.empty.detail"
+msgstr ""
+"No camera has been seen yet.\n"
+"\n"
+"One is added the first time it is plugged in, recognised by its serial, "
+"so there is nothing to describe until then."
+
+#. {name} is the stand this camera was last used on.
+msgid "setup.cameras.bound.detail"
+msgstr "Last used on {name}."
+
+msgid "setup.cameras.bound.detail.unused"
+msgstr "Not yet used on a microscope."

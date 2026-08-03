@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..i18n import _
 from . import icons, theme
 
 #: Grab height at the top of a panel. Deliberately generous: this is a
@@ -40,7 +41,7 @@ class _Grip(QtWidgets.QWidget):
         self._start: QtCore.QSize | None = None
         self.setFixedSize(self.SIZE, self.SIZE)
         self.setCursor(QtCore.Qt.CursorShape.SizeFDiagCursor)
-        self.setToolTip("Drag to resize")
+        self.setToolTip(_("panel.resize.tooltip"))
         # Only the strokes, no plate under them: the theme gives every
         # QWidget the window background, which drew a slightly darker
         # square in the corner of the panel and left the hairlines

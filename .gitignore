@@ -21,6 +21,11 @@ calibration/
 *.jpg
 *.xmp
 
+# The mark, which is source rather than output. The blanket *.png above
+# is for photographs, and it swallowed this one silently -- the AppImage
+# build referenced a file that existed on one laptop and in no clone.
+!packaging/icons/*.png
+
 # Written by setuptools-scm at build time, from the git tags.
 darlaston/_version.py
 

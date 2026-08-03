@@ -15,42 +15,54 @@ from datetime import datetime
 
 from PySide6 import QtWidgets
 
+from ..i18n import N_, _
 from .framed import FramedDialog
 
 #: Offered because most microscopy that gets shared is shared under one of
 #: these, and typing a licence string from memory is how you get it wrong.
+#:
+#: Two catalogue keys each: what the menu calls it, and the words the notice
+#: ends with. The notice used to be one template per licence, but the year
+#: and the name in front of the terms are the same in all of them, so they
+#: live in `photographer.notice.detail` and only the tail varies. That is
+#: also what makes the notice matchable back to its licence.
 LICENCES = (
-    ("All rights reserved", "{year} {name}. All rights reserved."),
-    ("CC BY 4.0", "{year} {name}. CC BY 4.0."),
-    ("CC BY-SA 4.0", "{year} {name}. CC BY-SA 4.0."),
-    ("CC BY-NC 4.0", "{year} {name}. CC BY-NC 4.0."),
-    ("CC0 / public domain", "{year} {name}. CC0 1.0, public domain."),
+    (N_("photographer.licence.reserved.label"),
+     N_("photographer.licence.reserved.terms")),
+    (N_("photographer.licence.cc_by.label"),
+     N_("photographer.licence.cc_by.terms")),
+    (N_("photographer.licence.cc_by_sa.label"),
+     N_("photographer.licence.cc_by_sa.terms")),
+    (N_("photographer.licence.cc_by_nc.label"),
+     N_("photographer.licence.cc_by_nc.terms")),
+    (N_("photographer.licence.cc0.label"),
+     N_("photographer.licence.cc0.terms")),
 )
 
 
 class PhotographerDialog(FramedDialog):
     def __init__(self, settings, parent=None) -> None:
         super().__init__(parent, width=460)
-        self.setWindowTitle("Photographer")
+        self.setWindowTitle(_("photographer.title"))
         self._settings = settings
 
         self.name = QtWidgets.QLineEdit(settings.artist)
-        self.name.setPlaceholderText("your name, as you want it credited")
+        self.name.setPlaceholderText(_("photographer.name.placeholder"))
 
         self.licence = QtWidgets.QComboBox()
-        self.licence.addItem("none", "")
-        for label, template in LICENCES:
-            self.licence.addItem(label, template)
+        self.licence.addItem(_("photographer.licence.none.label"), "")
+        for label, terms in LICENCES:
+            self.licence.addItem(_(label), terms)
 
         self.notice = QtWidgets.QLineEdit(settings.copyright)
         self.notice.setPlaceholderText(
-            "left empty, no copyright tag is written at all")
+            _("photographer.notice.placeholder"))
 
         form = QtWidgets.QFormLayout()
         form.setSpacing(9)
-        form.addRow("Name", self.name)
-        form.addRow("Licence", self.licence)
-        form.addRow("Notice", self.notice)
+        form.addRow(_("photographer.name.label"), self.name)
+        form.addRow(_("photographer.licence.label"), self.licence)
+        form.addRow(_("photographer.notice.label"), self.notice)
 
         self.note = QtWidgets.QLabel()
         self.note.setProperty("role", "key")
@@ -84,15 +96,16 @@ class PhotographerDialog(FramedDialog):
         one must survive untouched. But the combo then opened on "none"
         every time, so a licence chosen last week looked forgotten.
 
-        Matched on the tail rather than the whole string, because the
-        year and the name in front of it change. A notice that matches
-        nothing stays on "none", which is honest: it is a custom one.
+        Matched on the terms at the end rather than the whole string,
+        because the year and the name in front of them change. A notice
+        that matches nothing stays on "none", which is honest: it is a
+        custom one.
         """
         stored = (self._settings.copyright or "").strip()
         if not stored:
             return
         for index in range(1, self.licence.count()):
-            tail = self.licence.itemData(index).split("{name}.", 1)[-1].strip()
+            tail = _(self.licence.itemData(index)).strip()
             if tail and stored.endswith(tail):
                 self.licence.blockSignals(True)
                 self.licence.setCurrentIndex(index)
@@ -100,24 +113,25 @@ class PhotographerDialog(FramedDialog):
                 return
 
     def _apply_licence(self) -> None:
-        template = self.licence.currentData()
-        if not template:
+        terms = self.licence.currentData()
+        if not terms:
             return
-        self.notice.setText(template.format(year=datetime.now().year,
-                                            name=self.name.text().strip()
-                                            or "your name"))
+        self.notice.setText(
+            _("photographer.notice.detail", year=datetime.now().year,
+              name=self.name.text().strip()
+              or _("photographer.notice.detail.noname"), terms=_(terms)))
 
     def _describe(self) -> None:
         bits = []
         if self.name.text().strip():
-            bits.append(f"Artist: {self.name.text().strip()}")
+            bits.append(_("photographer.summary.detail.artist",
+                          name=self.name.text().strip()))
         if self.notice.text().strip():
-            bits.append(f"Copyright: {self.notice.text().strip()}")
+            bits.append(_("photographer.summary.detail.copyright",
+                          notice=self.notice.text().strip()))
         self.note.setText(
-            "Written into every capture from now on.\n" + "\n".join(bits)
-            if bits else
-            "Nothing set -- captures carry no attribution, which is fine "
-            "until you share one.")
+            _("photographer.summary.detail", lines="\n".join(bits))
+            if bits else _("photographer.summary.detail.empty"))
 
     def _save(self) -> None:
         self._settings.artist = self.name.text().strip()

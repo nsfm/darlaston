@@ -1,0 +1,71 @@
+# The slide map: where you have been, and how to get back.
+
+msgid "map.pin.action"
+msgstr "Pin"
+
+msgid "map.pin.tooltip"
+msgstr ""
+"Mark the current position as a point of interest.\n"
+"Click a pin on the map to navigate back to it."
+
+msgid "map.clear.action"
+msgstr "Clear"
+
+msgid "map.clear.tooltip"
+msgstr ""
+"Forget the map and all pins, and restart tracking from here.\n"
+"Do this after changing objective: magnification changes the scale\n"
+"and the old map no longer measures anything."
+
+msgid "map.mosaic.action"
+msgstr "Mosaic"
+
+msgid "map.mosaic.tooltip"
+msgstr ""
+"Start a mosaic: every capture becomes a tile in a session folder,\n"
+"placed on the map at its tracked position. Steer for 15–25% overlap\n"
+"between neighbours. The readout says how much you have."
+
+msgid "map.undo.action"
+msgstr "Undo"
+
+msgid "map.undo.tooltip"
+msgstr "Delete the last tile, file and record. For the one that was mid-crank."
+
+#. Mosaic started, nothing captured yet.
+msgid "map.mosaic.first"
+msgstr "mosaic, first tile when ready"
+
+#. {count} tiles captured so far.
+msgid "map.mosaic.tiles"
+msgid_plural "map.mosaic.tiles"
+msgstr[0] "mosaic · {count} tile"
+msgstr[1] "mosaic · {count} tiles"
+
+#. The current view does not overlap any tile, so stitching would fail.
+msgid "map.mosaic.no_overlap"
+msgid_plural "map.mosaic.no_overlap"
+msgstr[0] "mosaic · {count} tile · no overlap, back up"
+msgstr[1] "mosaic · {count} tiles · no overlap, back up"
+
+#. {percent} is how much the current view overlaps its best neighbour.
+msgid "map.mosaic.overlap"
+msgid_plural "map.mosaic.overlap"
+msgstr[0] "mosaic · {count} tile · overlap {percent}%"
+msgstr[1] "mosaic · {count} tiles · overlap {percent}%"
+
+msgid "map.guide.arrived"
+msgstr "at the pin"
+
+#. {pin} is the pin number, {fields} a distance in frame widths,
+#. {compass} one of N NE E SE S SW W NW.
+msgid "map.guide.distance"
+msgstr "pin {pin} · {fields} fields {compass}"
+
+msgid "map.state.waiting"
+msgstr "waiting for detail to track"
+
+#. Held rather than lost: position resumes when structure returns, but
+#. anything cranked over blank glass was never measured.
+msgid "map.state.holding"
+msgstr "holding, nothing to track"

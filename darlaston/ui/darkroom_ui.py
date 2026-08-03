@@ -16,24 +16,28 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 
+from ..i18n import N_, _
 from . import theme
 
 #: (key, label, hint, default on). Order is roughly cheapest first, which
-#: is also the order the worker runs them in.
+#: is also the order the worker runs them in. The label and the hint are
+#: catalogue keys rather than words: this table is built at import time and
+#: read by main.py as well, so the words are looked up where they are shown.
 RENDERS = [
-    ("wiggle", "Wigglegram", "a looping wobble, wiggle.webm and .webp",
-     True),
-    ("stereo", "Stereo pair and anaglyph",
-     "crossed-eye pair, plus red/cyan", True),
-    ("dic", "Darlaston Inferred Contrast",
-     "relief shaded from depth, looks like DIC but is not", True),
-    ("mesh", "Printable mesh", "model.ply, watertight, colour per vertex",
-     True),
-    ("sirds", "Autostereogram", "a Magic Eye of the subject", False),
-    ("pull", "Focus pull", "the focal plane drifting through, on video",
-     True),
-    ("turntable", "Turntable", "the surface lit from an orbiting light",
-     False),
+    ("wiggle", N_("darkroom.render.wiggle.label"),
+     N_("darkroom.render.wiggle.detail"), True),
+    ("stereo", N_("darkroom.render.stereo.label"),
+     N_("darkroom.render.stereo.detail"), True),
+    ("dic", N_("darkroom.render.dic.label"),
+     N_("darkroom.render.dic.detail"), True),
+    ("mesh", N_("darkroom.render.mesh.label"),
+     N_("darkroom.render.mesh.detail"), True),
+    ("sirds", N_("darkroom.render.sirds.label"),
+     N_("darkroom.render.sirds.detail"), False),
+    ("pull", N_("darkroom.render.pull.label"),
+     N_("darkroom.render.pull.detail"), True),
+    ("turntable", N_("darkroom.render.turntable.label"),
+     N_("darkroom.render.turntable.detail"), False),
 ]
 
 
@@ -42,32 +46,31 @@ class RenderDialog(QtWidgets.QDialog):
 
     def __init__(self, directory: Path, run, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Render depth")
+        self.setWindowTitle(_("darkroom.render.title"))
         self.setStyleSheet(theme.stylesheet())
         self._run = run
         self._directory = Path(directory)
 
         head = QtWidgets.QLabel(
-            f"<b>{self._directory.name}</b><br>"
-            "Everything here is synthesised from the stack's depth map.")
+            _("darkroom.render.heading", name=self._directory.name))
         head.setWordWrap(True)
 
         self.boxes = {}
         form = QtWidgets.QVBoxLayout()
         for key, label, hint, on in RENDERS:
-            box = QtWidgets.QCheckBox(label)
+            box = QtWidgets.QCheckBox(_(label))
             box.setChecked(on)
-            box.setToolTip(hint)
+            box.setToolTip(_(hint))
             self.boxes[key] = box
             form.addWidget(box)
-            note = QtWidgets.QLabel(hint)
+            note = QtWidgets.QLabel(_(hint))
             note.setProperty("role", "key")
             note.setContentsMargins(22, 0, 0, 6)
             form.addWidget(note)
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        self.go = buttons.addButton("Render",
+        self.go = buttons.addButton(_("darkroom.render.action.render"),
                                     QtWidgets.QDialogButtonBox.ButtonRole
                                     .AcceptRole)
         buttons.rejected.connect(self.reject)
@@ -94,7 +97,7 @@ class PlateDialog(QtWidgets.QDialog):
 
     def __init__(self, start: Path, run, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Make a plate")
+        self.setWindowTitle(_("darkroom.plate.title"))
         self.setStyleSheet(theme.stylesheet())
         self._run = run
         self._start = Path(start)
@@ -102,10 +105,12 @@ class PlateDialog(QtWidgets.QDialog):
         self.list = QtWidgets.QListWidget()
         self.list.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        add = QtWidgets.QPushButton("Add…")
+        add = QtWidgets.QPushButton(_("darkroom.plate.action.add"))
         add.clicked.connect(self._add)
-        drop = QtWidgets.QPushButton("Remove")
+        drop = QtWidgets.QPushButton(_("darkroom.plate.action.remove"))
         drop.clicked.connect(self._drop)
+        # The two arrows carry no words, so there is nothing to translate:
+        # up is up in every language this could be read in.
         up = QtWidgets.QPushButton("↑")
         up.clicked.connect(lambda: self._move(-1))
         down = QtWidgets.QPushButton("↓")
@@ -117,35 +122,32 @@ class PlateDialog(QtWidgets.QDialog):
         row.addStretch(1)
 
         self.title = QtWidgets.QLineEdit()
-        self.title.setPlaceholderText("Plate I, arrangement, 25×/0.65")
+        self.title.setPlaceholderText(_("darkroom.plate.caption.placeholder"))
         self.footer = QtWidgets.QLineEdit()
-        self.footer.setPlaceholderText("collection, date, mountant…")
+        self.footer.setPlaceholderText(_("darkroom.plate.footer.placeholder"))
         self.columns = QtWidgets.QSpinBox()
         self.columns.setRange(1, 8)
         self.columns.setValue(3)
 
         form = QtWidgets.QFormLayout()
-        form.addRow("Title", self.title)
-        form.addRow("Footer", self.footer)
-        form.addRow("Columns", self.columns)
+        form.addRow(_("darkroom.plate.caption.label"), self.title)
+        form.addRow(_("darkroom.plate.footer.label"), self.footer)
+        form.addRow(_("darkroom.plate.columns.label"), self.columns)
 
-        note = QtWidgets.QLabel(
-            "Each cell gets a scale bar computed from the optics recorded "
-            "in that file. Files captured without a pixel pitch set get no "
-            "bar rather than a guessed one.")
+        note = QtWidgets.QLabel(_("darkroom.plate.note.scale"))
         note.setWordWrap(True)
         note.setProperty("role", "key")
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        self.go = buttons.addButton("Make plate…",
+        self.go = buttons.addButton(_("darkroom.plate.action.make"),
                                     QtWidgets.QDialogButtonBox.ButtonRole
                                     .AcceptRole)
         buttons.rejected.connect(self.reject)
         self.go.clicked.connect(self._accept)
 
         col = QtWidgets.QVBoxLayout(self)
-        col.addWidget(QtWidgets.QLabel("Captures, in the order they appear:"))
+        col.addWidget(QtWidgets.QLabel(_("darkroom.plate.list.label")))
         col.addWidget(self.list, 1)
         col.addLayout(row)
         col.addSpacing(8)
@@ -157,7 +159,7 @@ class PlateDialog(QtWidgets.QDialog):
 
     def _add(self) -> None:
         picked = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "Stack, mosaic or capture folder", str(self._start))
+            self, _("darkroom.plate.add.title"), str(self._start))
         if picked:
             self.list.addItem(picked)
             self._start = Path(picked).parent
@@ -179,9 +181,11 @@ class PlateDialog(QtWidgets.QDialog):
                    for i in range(self.list.count())]
         if not sources:
             return
-        target, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save plate", str(self._start / "plate.png"),
-            "PNG (*.png)")
+        # `_filter` rather than `_`: the latter is the catalogue lookup, and
+        # binding it here would make it a local for the whole function.
+        target, _filter = QtWidgets.QFileDialog.getSaveFileName(
+            self, _("darkroom.plate.save.title"),
+            str(self._start / "plate.png"), "PNG (*.png)")
         if not target:
             return
         self.accept()
@@ -193,44 +197,44 @@ class ArrangeDialog(QtWidgets.QDialog):
     """Find the specimens in a capture and lay them out in a pattern."""
 
     STYLES = [
-        ("rosette", "Rosette", "radiating from a centre, sizes balanced"),
-        ("spiral", "Spiral", "winding outward"),
-        ("rows", "Rows", "a taxonomic plate, graded by size"),
+        ("rosette", N_("darkroom.arrange.rosette.label"),
+         N_("darkroom.arrange.rosette.detail")),
+        ("spiral", N_("darkroom.arrange.spiral.label"),
+         N_("darkroom.arrange.spiral.detail")),
+        ("rows", N_("darkroom.arrange.rows.label"),
+         N_("darkroom.arrange.rows.detail")),
     ]
 
     def __init__(self, directory: Path, run, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Arrange specimens")
+        self.setWindowTitle(_("darkroom.arrange.title"))
         self.setStyleSheet(theme.stylesheet())
         self._run = run
         self._directory = Path(directory)
 
         head = QtWidgets.QLabel(
-            f"<b>{self._directory.name}</b><br>"
-            "Cuts each frustule out and lays them out, the way Darlaston did "
-            "with a bristle.")
+            _("darkroom.arrange.heading", name=self._directory.name))
         head.setWordWrap(True)
 
         self.style = QtWidgets.QComboBox()
         for key, label, hint in self.STYLES:
-            self.style.addItem(f"{label}: {hint}", key)
+            self.style.addItem(
+                _("darkroom.arrange.style.option", name=_(label),
+                  detail=_(hint)), key)
         self.title = QtWidgets.QLineEdit()
-        self.title.setPlaceholderText("An arrangement")
+        self.title.setPlaceholderText(_("darkroom.arrange.caption.placeholder"))
 
         form = QtWidgets.QFormLayout()
-        form.addRow("Pattern", self.style)
-        form.addRow("Title", self.title)
+        form.addRow(_("darkroom.arrange.style.label"), self.style)
+        form.addRow(_("darkroom.arrange.caption.label"), self.title)
 
-        note = QtWidgets.QLabel(
-            "Only specimens it can isolate are used. A crowded field where "
-            "valves overlap may yield few or none. That is reported "
-            "rather than guessed at.")
+        note = QtWidgets.QLabel(_("darkroom.arrange.note.isolation"))
         note.setWordWrap(True)
         note.setProperty("role", "key")
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        go = buttons.addButton("Arrange…",
+        go = buttons.addButton(_("darkroom.arrange.action.arrange"),
                                QtWidgets.QDialogButtonBox.ButtonRole
                                .AcceptRole)
         buttons.rejected.connect(self.reject)
@@ -246,8 +250,10 @@ class ArrangeDialog(QtWidgets.QDialog):
         self.resize(440, 260)
 
     def _accept(self) -> None:
-        target, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save arrangement",
+        # `_filter` rather than `_`, as in PlateDialog: `_` is the catalogue
+        # lookup and must not become a local of this function.
+        target, _filter = QtWidgets.QFileDialog.getSaveFileName(
+            self, _("darkroom.arrange.save.title"),
             str(self._directory / "arrangement.png"), "PNG (*.png)")
         if not target:
             return

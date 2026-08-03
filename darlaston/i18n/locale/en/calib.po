@@ -1,0 +1,94 @@
+# The calibration panel and its rail button.
+
+#. The rail row that summarises calibration and opens the panel.
+msgid "calib.button.label"
+msgstr "calibration"
+
+msgid "calib.button.working"
+msgstr "calibration   working…"
+
+msgid "calib.button.complete"
+msgstr "calibration   complete"
+
+#. {have} of {total} products exist. A count rather than a list: the rail
+#. is 258 px wide and a truncated list looks like information and is not.
+msgid "calib.button.progress"
+msgstr "calibration   {have} of {total}"
+
+msgid "calib.button.tooltip"
+msgstr ""
+"Dark, flat, white balance and preview profile for this configuration.\n"
+"Click to open. Missing products are a nag, not a gate. Capture anyway\n"
+"and the file records what it did and did not have."
+
+#. The dark frame.
+msgid "calib.dark.label"
+msgstr "dark"
+
+msgid "calib.dark.action"
+msgstr "Shoot"
+
+msgid "calib.dark.tooltip"
+msgstr ""
+"Cap the lens or switch the lamp off, then shoot.\n"
+"Averaged over several frames; ages after about eight hours because this "
+"sensor has no cooling."
+
+#. The flat field. One row with three jobs, so three actions.
+msgid "calib.flat.label"
+msgstr "flat"
+
+msgid "calib.flat.action.collect"
+msgstr "Collect"
+
+msgid "calib.flat.action.stop"
+msgstr "Stop"
+
+msgid "calib.flat.action.build"
+msgstr "Build"
+
+msgid "calib.flat.tooltip"
+msgstr ""
+"Set the light and the optics the way you will shoot, then collect.\n"
+"Move to blank glass and hold still; four frames at distinct stage\n"
+"positions median away slide debris. Each one freezes the preview for\n"
+"about a second, and a flat is only valid at the illumination it\n"
+"was shot under."
+
+#. {banked} of {wanted} blank fields gathered so far.
+msgid "calib.flat.detail.count"
+msgstr "{banked}/{wanted}"
+
+msgid "calib.flat.detail.collecting"
+msgstr "{banked}/{wanted}  move to blank glass"
+
+#. Fewer than three will not median away debris on the glass.
+msgid "calib.flat.detail.debris"
+msgstr "{banked}/{wanted}  3+ rejects debris"
+
+#. White balance, which is derived rather than shot.
+msgid "calib.wb.label"
+msgstr "white balance"
+
+msgid "calib.wb.action"
+msgstr "--"
+
+msgid "calib.wb.detail"
+msgstr "from flat"
+
+msgid "calib.wb.tooltip"
+msgstr ""
+"Measured from the flat. A featureless illuminated field is neutral by "
+"definition."
+
+#. The preview profile: what the ISP does to the sensor data.
+msgid "calib.lut.label"
+msgstr "preview profile"
+
+msgid "calib.lut.action"
+msgstr "Profile"
+
+msgid "calib.lut.tooltip"
+msgstr ""
+"Measures what the ISP does to the sensor data, so the histogram can "
+"report real headroom.\nTakes an exposure ramp, so it needs a few seconds."

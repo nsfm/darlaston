@@ -1,0 +1,75 @@
+# Stitching a mosaic, with the size decided before the work starts.
+
+msgid "stitch.title"
+msgstr "Stitch mosaic"
+
+#. Section headers. Upper case is how they are set; the code does not raise
+#. them.
+msgid "stitch.folder.heading"
+msgstr "TILE FOLDER"
+
+msgid "stitch.size.heading"
+msgstr "OUTPUT SIZE"
+
+msgid "stitch.action.stitch"
+msgstr "Stitch"
+
+msgid "stitch.action.close"
+msgstr "Close"
+
+#. Full is genuinely full sensor resolution; the rest are honest fractions
+#. of it rather than invented tiers.
+msgid "stitch.size.full.label"
+msgstr "Full"
+
+msgid "stitch.size.half.label"
+msgstr "Half"
+
+msgid "stitch.size.quarter.label"
+msgstr "Quarter"
+
+msgid "stitch.size.preview.label"
+msgstr "Preview"
+
+#. One size on the chooser, with what it costs: {label} is the name above,
+#. {w} and {h} the pixel dimensions, {mp} megapixels, {gb} gigabytes. The
+#. numbers arrive already rounded. The wide gaps are the layout.
+msgid "stitch.size.option"
+msgstr "{label}   {w} × {h}   {mp} MP   {gb} GB"
+
+#. Shown while the manifest is being read, before any size can be sized.
+msgid "stitch.note.measuring"
+msgstr "measuring…"
+
+msgid "stitch.note.too_few"
+msgstr "A mosaic needs at least two tiles."
+
+#. {reason} is the failure, which is not translated.
+msgid "stitch.note.unreadable"
+msgstr "Cannot read that folder: {reason}"
+
+#. A DNG's offsets are 32-bit, so 4 GB is a hard ceiling rather than a
+#. policy.
+msgid "stitch.note.too_big"
+msgstr "Past the 4 GB a DNG can address. Choose a smaller size."
+
+#. What the run will do, once the geometry is known. {count} is the number
+#. of tiles, which is always two or more.
+msgid "stitch.note.plan"
+msgid_plural "stitch.note.plan"
+msgstr[0] ""
+"{count} tile. Positions come from the manifest and are refined seam by "
+"seam; illumination is levelled from the tiles themselves."
+msgstr[1] ""
+"{count} tiles. Positions come from the manifest and are refined seam by "
+"seam; illumination is levelled from the tiles themselves."
+
+#. Registration is the pass that refines each tile's position from the
+#. overlap, before anything is drawn.
+msgid "stitch.note.registering"
+msgstr "registering…"
+
+#. The mosaic is composited a horizontal band at a time, because the whole
+#. thing does not fit in memory. {done} of {total} bands.
+msgid "stitch.note.compositing"
+msgstr "compositing band {done} of {total}…"

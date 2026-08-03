@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera.base import CameraState
 from ..camera.session import FRAMERATES
+from ..i18n import _
 from . import icons, theme
 
 
@@ -66,6 +67,100 @@ class Chip(QtWidgets.QLabel):
             f"padding:1px 7px; color:{colour}; font-size:11px;")
 
 
+class CaptionButton(QtWidgets.QWidget):
+    """Minimise, maximise or close, drawn rather than set in a font.
+
+    Windows' own are glyphs from Segoe MDL2 Assets, which is present on
+    every Windows and on nothing else, so a build that used it would look
+    right on the target and be untestable anywhere. These are three
+    strokes each.
+
+    They work two ways, because the platforms deliver the pointer
+    differently. On a frameless Qt window they are ordinary widgets and
+    handle their own mouse. On Windows, once hit testing claims their
+    area, the pointer arrives as non-client messages and Qt never sees a
+    click there at all -- so `deafen` turns the mouse handling off and
+    `set_state` becomes how they learn they are being hovered or pressed.
+    See frame.WindowsFrame._button_input.
+    """
+
+    pressed = QtCore.Signal(str)
+
+    #: Windows' own caption buttons are 46 x 32 at 100%. Matching the
+    #: width matters more than the height: it is the target size people
+    #: have muscle memory for, including the flick into the top-right
+    #: corner that closes a maximised window.
+    WIDTH = 46
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+        self.hot = False
+        self.down = False
+        self.setFixedWidth(self.WIDTH)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover, True)
+
+    def deafen(self) -> None:
+        """Stop taking the mouse, because something else is delivering it."""
+        self.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def enterEvent(self, _event) -> None:
+        self.set_state(True, self.down)
+
+    def leaveEvent(self, _event) -> None:
+        self.set_state(False, False)
+
+    def mousePressEvent(self, event) -> None:
+        # Left only, and anything else goes back where it came from. A
+        # swallowed right-click here is a window menu that works
+        # everywhere along the bar except over three buttons.
+        if event.button() is not QtCore.Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self.set_state(True, True)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() is not QtCore.Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        fired = self.down
+        inside = self.rect().contains(event.position().toPoint())
+        self.set_state(inside, False)
+        if fired and inside:
+            self.pressed.emit(self.kind)
+
+    def set_state(self, hot: bool, down: bool) -> None:
+        if (hot, down) != (self.hot, self.down):
+            self.hot, self.down = hot, down
+            self.update()
+
+    def paintEvent(self, _event) -> None:
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        if self.hot or self.down:
+            # Red for close, as every Windows application does. Getting
+            # this wrong is more jarring than having no highlight at all.
+            if self.kind == "close":
+                wash = QtGui.QColor(0xC4, 0x2B, 0x1C, 255 if self.down else 220)
+            else:
+                wash = QtGui.QColor(255, 255, 255, 38 if self.down else 24)
+            p.fillRect(self.rect(), wash)
+        ink = (QtGui.QColor(theme.INK) if self.kind != "close" or not
+               (self.hot or self.down) else QtGui.QColor("#ffffff"))
+        p.setPen(QtGui.QPen(ink, 1.1))
+        cx, cy, arm = self.width() / 2, self.height() / 2, 5.0
+        if self.kind == "minimise":
+            p.drawLine(QtCore.QPointF(cx - arm, cy), QtCore.QPointF(cx + arm, cy))
+        elif self.kind == "maximise":
+            p.drawRect(QtCore.QRectF(cx - arm, cy - arm, arm * 2, arm * 2))
+        else:
+            p.drawLine(QtCore.QPointF(cx - arm, cy - arm),
+                       QtCore.QPointF(cx + arm, cy + arm))
+            p.drawLine(QtCore.QPointF(cx + arm, cy - arm),
+                       QtCore.QPointF(cx - arm, cy + arm))
+
+
 class ToolBar(QtWidgets.QFrame):
     """The top bar is for things you can do.
 
@@ -81,10 +176,10 @@ class ToolBar(QtWidgets.QFrame):
         self.setProperty("role", "bar")
         self.setFixedHeight(36)
 
-        self.wordmark = QtWidgets.QPushButton("darlaston")
+        self.wordmark = QtWidgets.QPushButton(_("shell.wordmark.label"))
         self.wordmark.setProperty("role", "wordmark")
         self.wordmark.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.wordmark.setToolTip("About darlaston")
+        self.wordmark.setToolTip(_("shell.wordmark.tooltip"))
         self.wordmark.clicked.connect(self.about)
 
         divider = QtWidgets.QFrame()
@@ -100,18 +195,162 @@ class ToolBar(QtWidgets.QFrame):
         self._row.addSpacing(4)
         self._row.addWidget(divider)
         self._row.addSpacing(4)
+        # Menus go in here, before the stretch. Counted rather than
+        # inserted at `count - 1`: that meant "just before the last item",
+        # which was the stretch until the caption strip was added after it
+        # and quietly started putting the menus on the far right.
+        self._menu_slot = self._row.count()
         self._row.addStretch(1)
 
-    def add_menu(self, title: str) -> QtWidgets.QMenu:
+        # Only ever shown on Windows, and only once the native frame has
+        # been taken. Built here regardless so the geometry the frame asks
+        # for is the geometry that is really on screen.
+        self.caption = {kind: CaptionButton(kind)
+                        for kind in ("minimise", "maximise", "close")}
+        # In their own strip with no spacing and no margin. The row has
+        # both, and either one leaves a dead pixel column between two
+        # buttons or a gap between the last button and the corner -- and
+        # the corner is where people flick to close a maximised window
+        # without aiming.
+        self._spare_margin: int | None = None
+        self._geometry = None
+        self._caption_strip = QtWidgets.QWidget()
+        self._caption_strip.setProperty("role", "caption")
+        strip = QtWidgets.QHBoxLayout(self._caption_strip)
+        strip.setContentsMargins(0, 0, 0, 0)
+        strip.setSpacing(0)
+        for kind in ("minimise", "maximise", "close"):
+            strip.addWidget(self.caption[kind])
+        self._caption_strip.hide()
+        self._row.addWidget(self._caption_strip)
+
+    def show_caption_buttons(self) -> None:
+        """Draw our own minimise, maximise and close.
+
+        Only after the frame has actually been taken: showing them beside
+        a native caption would be six buttons for three jobs.
+        """
+        left, top, right, bottom = self._row.getContentsMargins()
+        # Remembered on the way past, not recomputed on the way back: a
+        # second call would otherwise record the zero this one sets, and
+        # the margin would be gone for good.
+        if self._spare_margin is None:
+            self._spare_margin = right
+        self._row.setContentsMargins(left, top, 0, bottom)
+        self._caption_strip.show()
+        self.forget_geometry()
+
+    def hide_caption_buttons(self) -> None:
+        """Give the corner back, for when the platform draws them again."""
+        left, top, _right, bottom = self._row.getContentsMargins()
+        self._row.setContentsMargins(left, top, self._spare_margin or 0,
+                                     bottom)
+        self._caption_strip.hide()
+        self.forget_geometry()
+
+    def set_caption_state(self, hot: str, down: str) -> None:
+        """Told from outside, because these get no mouse events."""
+        for kind, button in self.caption.items():
+            button.set_state(kind == hot, kind == down)
+
+    def caption_geometry(self):
+        """Where the buttons are, and what else in the bar takes clicks.
+
+        Both in the bar's own coordinates, which are the window's, since
+        the bar sits at its top left. Returned rather than assumed so the
+        hit testing and the layout cannot disagree about where anything
+        is: the frame asks, the layout answers.
+
+        Cached, because the callers are hit testing -- once per mouse
+        move over the window on Windows, and on Linux from an
+        application-wide event filter, which is every mouse move
+        anywhere. Twenty microseconds of tree walk is not much and it is
+        also not something a program showing a live camera preview should
+        spend on every pointer twitch. `forget_geometry` is called from
+        the three things that can move any of it.
+        """
+        if self._geometry is None:
+            self._geometry = self._measure()
+        return self._geometry
+
+    def forget_geometry(self) -> None:
+        """Something moved. Measure again when next asked."""
+        self._geometry = None
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.forget_geometry()
+
+    def event(self, event) -> bool:
+        # A LayoutRequest is Qt saying a child's size hint changed, which
+        # is how a longer translated menu label reaches this without
+        # anything having to remember to say so.
+        if event.type() == QtCore.QEvent.Type.LayoutRequest:
+            self.forget_geometry()
+        return super().event(event)
+
+    def _measure(self):
+        # Mapped into the bar's own coordinates rather than read off
+        # `x()`, which is relative to whatever the button was parented
+        # into. The strip is a nesting level deep.
+        # All three, always, in the order `hit_region` expects. A button
+        # that is not on screen contributes a zero-width span, which can
+        # never match a coordinate -- rather than being dropped, which
+        # would shift the ones after it onto the wrong names. And
+        # `isVisibleTo`, not `isHidden`: hiding the strip does not mark
+        # its children hidden, so `isHidden` said the buttons were still
+        # there after the frame had given them back to the platform.
+        buttons = tuple(
+            (b.mapTo(self, QtCore.QPoint(0, 0)).x(),
+             b.width() if b.isVisibleTo(self) else 0)
+            for b in (self.caption["minimise"], self.caption["maximise"],
+                      self.caption["close"]))
+        # Everything from the wordmark to the end of the last menu is
+        # clickable, so the drag must not claim it. From the wordmark and
+        # not from zero: the layout's own left margin is not a control,
+        # and reserving it made the first few pixels of the bar the one
+        # part of it a window cannot be dragged by.
+        left = self.wordmark.x()
+        rightmost = left + self.wordmark.width()
+        for menu_button in self.findChildren(QtWidgets.QPushButton):
+            if menu_button.property("role") == "menu":
+                rightmost = max(rightmost,
+                                menu_button.x() + menu_button.width())
+        return buttons, ((left, rightmost - left),)
+
+    def inset_for_window_controls(self, pixels: int) -> None:
+        """Start the toolbar to the right of the platform's own buttons.
+
+        Only reached on macOS, and only once the title bar has actually
+        been made transparent. The traffic lights then float over this
+        bar rather than sitting in a strip above it, so without this the
+        wordmark is underneath them.
+
+        Applied here rather than at construction because it depends on
+        whether the restyle worked, which is not known until the window
+        has a native handle.
+        """
+        left, top, right, bottom = self._row.getContentsMargins()
+        self._row.setContentsMargins(pixels, top, right, bottom)
+        self.forget_geometry()
+
+    def add_menu(self, name: str, title: str) -> QtWidgets.QMenu:
         """A popup rather than a plain button, so these can nest as more
-        arrives without every name having to change."""
+        arrives without every name having to change.
+
+        `name` identifies the menu and `title` is what it says. They used
+        to be one string, which made the registry key change with the
+        language -- so `menus["Setup"]` would have found nothing the
+        moment anything was translated.
+        """
         button = QtWidgets.QPushButton(title)
         button.setProperty("role", "menu")
         button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         menu = QtWidgets.QMenu(button)
         button.setMenu(menu)
-        self.menus[title] = menu
-        self._row.insertWidget(self._row.count() - 1, button)
+        self.menus[name] = menu
+        self._row.insertWidget(self._menu_slot, button)
+        self._menu_slot += 1
         return menu
 
 
@@ -129,7 +368,7 @@ class StatusBar(QtWidgets.QFrame):
             f"background: {theme.PANEL}; border-top: 1px solid {theme.LINE};")
 
         self.dot = Dot()
-        self.state = QtWidgets.QLabel("--")
+        self.state = QtWidgets.QLabel(_("shell.state.idle"))
         self.state.setProperty("role", "sub")
         self.context = QtWidgets.QLabel("")
         self.context.setProperty("role", "sub")
@@ -146,10 +385,7 @@ class StatusBar(QtWidgets.QFrame):
         self.preview.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.preview.setMinimumContentsLength(18)
-        self.preview.setToolTip(
-            "Live preview resolution. Captures are always full resolution;\n"
-            "this only trades preview detail for frame rate, and every\n"
-            "per-pixel stage of the live loop scales with it.")
+        self.preview.setToolTip(_("shell.preview.tooltip"))
         self.preview.setStyleSheet(
             f"QComboBox {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
             f" margin: 1px; padding: 1px 6px; color: {theme.DIM};"
@@ -164,14 +400,11 @@ class StatusBar(QtWidgets.QFrame):
         # quality against load, and the pair a person reaches for together.
         self.rate = QtWidgets.QComboBox()
         self.rate.setProperty("role", "sub")
-        self.rate.setToolTip(
-            "How many frames a second to ask the camera for.\n"
-            "Frames we cannot analyse in time are still pulled over USB with\n"
-            "the driver holding the interpreter, so asking for fewer beats\n"
-            "discarding more. Watch the drop percentage to the right.")
+        self.rate.setToolTip(_("shell.rate.tooltip"))
         self.rate.setStyleSheet(self.preview.styleSheet())
         for fps in FRAMERATES:
-            self.rate.addItem("uncapped" if fps == 0 else f"{fps} fps", fps)
+            self.rate.addItem(_("shell.rate.uncapped") if fps == 0
+                              else _("shell.rate.fps", fps=fps), fps)
 
         self.numbers = QtWidgets.QLabel("")
         self.numbers.setProperty("role", "sub")
@@ -191,10 +424,8 @@ class StatusBar(QtWidgets.QFrame):
         # visible on the picture -- but this one changes every file
         # written and is discoverable nowhere else. Off is the unusual
         # state, so the chip appears only then.
-        self.wb_off = Chip("no white balance", active=True)
-        self.wb_off.setToolTip(
-            "Files are being written with the sensor's own channels, "
-            "untouched.\nTurn it back on in Capture > Write white balance.")
+        self.wb_off = Chip(_("shell.wb_off.label"), active=True)
+        self.wb_off.setToolTip(_("shell.wb_off.tooltip"))
         self.wb_off.hide()
 
         row.addWidget(self.dot)
@@ -225,7 +456,11 @@ class StatusBar(QtWidgets.QFrame):
             self.disk.setToolTip("")
             return
         gb = free_bytes / 1e9
-        text = f"{gb:.0f} GB free" if gb >= 10 else f"{gb:.1f} GB free"
+        # One decimal only when it is running out, where the difference
+        # between 1.2 and 1.8 GB is the difference between one more tile
+        # and none.
+        text = (_("shell.disk.free", gb=f"{gb:.0f}") if gb >= 10
+                else _("shell.disk.free", gb=f"{gb:.1f}"))
         colour = ""
         if gb < self.DISK_CRITICAL_GB:
             colour = f"color: {theme.BAD};"
@@ -233,10 +468,8 @@ class StatusBar(QtWidgets.QFrame):
             colour = f"color: {theme.BRASS};"
         self.disk.setText(text)
         self.disk.setStyleSheet(colour)
-        self.disk.setToolTip(
-            f"Room left on the volume holding {root or 'your captures'}.\n"
-            "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
-            if root else "Room left where captures are written.")
+        self.disk.setToolTip(_("shell.disk.tooltip", root=root) if root
+                             else _("shell.disk.tooltip.unknown"))
 
     def set_white_balance(self, on: bool) -> None:
         """Say so when files are going out unbalanced."""
@@ -267,7 +500,8 @@ class StatusBar(QtWidgets.QFrame):
         self.dot.set_state(status.state)
         bits = [status.message.lower()]
         if status.state is CameraState.ERROR and status.next_retry_in:
-            bits.append(f"retrying in {status.next_retry_in:.0f}s")
+            bits.append(_("shell.state.retrying",
+                              seconds=f"{status.next_retry_in:.0f}"))
         self._base = "   ".join(bits)
         if not self._note:
             self.state.setText(self._base)
@@ -291,7 +525,9 @@ class StatusBar(QtWidgets.QFrame):
             self.preview.clear()
             for r in info.resolutions:
                 mp = r.width * r.height / 1e6
-                self.preview.addItem(f"{r.width}×{r.height}  {mp:.1f} MP",
+                self.preview.addItem(
+                    _("shell.preview.resolution", w=r.width, h=r.height,
+                      mp=f"{mp:.1f}"),
                                      r.index)
             self.preview.blockSignals(False)
 
@@ -307,8 +543,9 @@ class StatusBar(QtWidgets.QFrame):
     def set_live(self, signals) -> None:
         st = signals.stats
         total = max(st["delivered"] + st["dropped"], 1)
-        self._live = (f"{st['analysed_fps']:.0f} fps   "
-                      f"dropped {st['dropped']} ({st['dropped'] / total * 100:.0f}%)")
+        self._live = _("shell.numbers.live",
+                       fps=f"{st['analysed_fps']:.0f}", dropped=st["dropped"],
+                       percent=f"{st['dropped'] / total * 100:.0f}")
         self._render_numbers()
 
     def _render_numbers(self) -> None:
@@ -355,7 +592,7 @@ class WaitingPage(QtWidgets.QWidget):
         self.setStyleSheet(f"background:{theme.SUNK};")
 
         self.pulse = _Pulse()
-        self.heading = QtWidgets.QLabel("Waiting for a camera")
+        self.heading = QtWidgets.QLabel(_("shell.waiting.heading"))
         self.heading.setProperty("role", "heading")
         self.body = QtWidgets.QLabel("")
         self.body.setProperty("role", "body")
@@ -380,15 +617,15 @@ class WaitingPage(QtWidgets.QWidget):
         _wraps(self.steps)
         self.steps.hide()
 
-        self.synthetic = QtWidgets.QPushButton("Use a synthetic camera")
+        self.synthetic = QtWidgets.QPushButton(_("shell.waiting.synthetic"))
         self.synthetic.clicked.connect(self.use_synthetic)
         # Shown only for the failure it fixes. A button offering to
         # download a 242 MB vendor archive should not be sitting there
         # while the camera is merely unplugged.
-        self.install_sdk = QtWidgets.QPushButton("Install the camera driver")
+        self.install_sdk = QtWidgets.QPushButton(_("shell.waiting.install"))
         self.install_sdk.clicked.connect(self.install_sdk_requested)
         self.install_sdk.hide()
-        self.copy_btn = QtWidgets.QPushButton("Copy this message")
+        self.copy_btn = QtWidgets.QPushButton(_("shell.waiting.copy"))
         self.copy_btn.setProperty("role", "seg")
         self.copy_btn.clicked.connect(self._copy)
         self.copy_btn.hide()
@@ -437,14 +674,14 @@ class WaitingPage(QtWidgets.QWidget):
         Someone asking for help should be able to paste what they saw,
         rather than retyping it or photographing their screen."""
         QtWidgets.QApplication.clipboard().setText(self._last)
-        self.copy_btn.setText("Copied")
+        self.copy_btn.setText(_("shell.waiting.copied"))
         QtCore.QTimer.singleShot(
-            1500, lambda: self.copy_btn.setText("Copy this message"))
+            1500, lambda: self.copy_btn.setText(_("shell.waiting.copy")))
 
     def update_status(self, status) -> None:
         faulted = status.state is CameraState.ERROR
         self.heading.setProperty("role", "fault" if faulted else "heading")
-        self.heading.setText(status.message or "Waiting for a camera")
+        self.heading.setText(status.message or _("shell.waiting.heading"))
         self.heading.style().unpolish(self.heading)
         self.heading.style().polish(self.heading)
 
@@ -460,7 +697,8 @@ class WaitingPage(QtWidgets.QWidget):
                 f"<td>{step}</td></tr>"
                 for i, step in enumerate(steps, 1))
             self.steps.setText(
-                f"<div style='margin-top:6px'><b>What to do</b>"
+                f"<div style='margin-top:6px'>"
+                f"<b>{_('shell.waiting.what_to_do')}</b>"
                 f"<table style='margin-top:4px'>{items}</table></div>")
             self.steps.show()
         else:
@@ -549,7 +787,7 @@ class ObjectiveStepper(QtWidgets.QWidget):
             b.setIconSize(QtCore.QSize(12, 12))
         for b in (self.prev, self.next):
             b.setProperty("role", "step")
-        self.label = QtWidgets.QLabel("--")
+        self.label = QtWidgets.QLabel(_("objective.none"))
         self.label.setProperty("role", "value")
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
@@ -595,24 +833,20 @@ class ObjectiveStepper(QtWidgets.QWidget):
         positions = getattr(self._turret, "positions", None) or []
         hint = ""
         if obj:
-            text = obj.label + ("  ?" if self._uncertain else "")
+            text = obj.label + (_("objective.uncertain")
+                                if self._uncertain else "")
         elif positions and not any(positions):
             # A turret nobody has described yet, which is not the same thing
             # as being parked on an empty detent of one that was -- and "--"
             # said both. A new stand now starts empty rather than being given
             # four invented objectives, so this is the first thing a stranger
             # sees here and it should say what to do about it.
-            text = "no objectives yet"
-            hint = ("Nothing has been put in this turret. Setup > Microscopes "
-                    "is where\nthe objectives and how many positions there "
-                    "are get described.")
+            text = _("objective.unconfigured")
+            hint = _("objective.unconfigured.tooltip")
         else:
-            text = "--"
+            text = _("objective.none")
         self.label.setText(text)
         self.label.setStyleSheet(
             f"color: {theme.BRASS};" if self._uncertain else "")
         self.label.setToolTip(
-            "A turret rotation was detected and never answered, so this may "
-            "no longer be\nthe objective in the light path. Step it, or "
-            "answer the next prompt, to be sure."
-            if self._uncertain else hint)
+            _("objective.uncertain.tooltip") if self._uncertain else hint)

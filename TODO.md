@@ -241,6 +241,23 @@
       anchoring sufficient, or is a brightfield registration pass needed?
 - [ ] **? Darkfield raw capture.** Never actually shot. The extreme case: 90.6%
       of pixels in four luma levels at 8-bit, sixty-four at 12.
+- [ ] **? The window frames, on Windows and macOS.** Checklist in
+      `docs/frame-bench.md`, written to be worked through by somebody with
+      the hardware. Most of the frame is a pure function of rectangles and
+      is tested on any machine; the rest reaches past Qt into the platform
+      and has never run. The two that matter most: a maximised window on a
+      scaled display, and the macOS title bar surviving a trip through
+      fullscreen.
+- [ ] **? Snap layouts below half-screen.** The window's minimum width is
+      766 px and Microsoft's limit for snap layouts is 500, so the
+      half-screen layouts work and the third- and quarter-width ones
+      invoke and then fail to snap. Traced to three constraints in a
+      chain -- the rail fixed at 286, the live view's 480 minimum and the
+      waiting page's 458 -- so relaxing the live view alone bottoms out
+      at 744 and changes nothing. The one that bites is a third of 1920,
+      the commonest screen. Three positions and the numbers behind them
+      in `docs/frame-bench.md`; it is a judgement about what this program
+      is for, so it is measured rather than quietly changed.
 
 ## Packaging
 

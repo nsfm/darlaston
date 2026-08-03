@@ -1,0 +1,6 @@
+# Floating panels: the slide map, the stack window, the performance monitor.
+
+#: The grab corner. Qt's own size grip only resizes top-level windows, so
+#: these panels draw their own.
+msgid "panel.resize.tooltip"
+msgstr "Drag to resize"

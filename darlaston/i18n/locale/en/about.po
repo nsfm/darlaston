@@ -1,0 +1,30 @@
+# The About window / who the program is named after.
+
+msgid "about.title"
+msgstr "About darlaston"
+
+# Don't translate this one.
+msgid "about.wordmark"
+msgstr "darlaston"
+
+msgid "about.body"
+msgstr ""
+"<b>Herbert William Hutton Darlaston</b> (1867-1949) was an amateur naturalist "
+"from Birmingham. In 1888 a friend introduced him to an elderly "
+"microscopist named Neville, and he came away \"in a hot fever to do "
+"similar work\". He prepared nearly a thousand slides that year; over the "
+"next twelve he made thousands more and gave most of them away to "
+"beginners."
+"<br><br>"
+"At thirty-nine he started working at it professionally, sending slides by "
+"post as far as Australia. His brochures promised <i>{tagline}</i>. He "
+"made so many, so well, you can still find them today, over a hundred "
+"years later."
+
+#. The typefaces are named because their licence asks for attribution.
+msgid "about.licence"
+msgstr ""
+"<i>darlaston</i> is provided freely to use, share, and modify under the "
+"GPLv3, with a linking exception for the camera SDKs, which are never "
+"redistributed. Type is IBM Plex and Petit Formal Script, both under the "
+"SIL Open Font License."

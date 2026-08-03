@@ -1,0 +1,28 @@
+# The focus group in the rail: the trace, its toggles, and coverage.
+
+msgid "focus.group.label"
+msgstr "FOCUS"
+
+msgid "focus.stack.label"
+msgstr "stack"
+
+msgid "focus.stack.tooltip"
+msgstr ""
+"Capture a Z-stack: rack the fine focus, pause, and a slice is taken.\n"
+"Rack again for the next. The knob is the whole interface,\n"
+"nothing is clicked between slices."
+
+msgid "focus.peak.label"
+msgstr "peak"
+
+msgid "focus.peak.tooltip"
+msgstr "Highlight the sharpest edges in the live view."
+
+msgid "focus.sweep.label"
+msgstr "sweep"
+
+msgid "focus.sweep.tooltip"
+msgstr ""
+"Accumulate which parts of the frame have been through focus.\n"
+"Rack past focus in both directions; it reads 100%\n"
+"when every region with something in it has been passed."

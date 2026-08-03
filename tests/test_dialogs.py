@@ -77,14 +77,18 @@ def test_the_photographer_remembers_which_licence_it_wrote(qapp, tmp_path):
     assert d.licence.currentText() == "CC BY 4.0"
     d.deleteLater()
 
-    # Every offered licence round-trips.
+    # Every offered licence round-trips. The table holds catalogue keys, so
+    # the notice is built the same way the dialog builds it.
+    from darlaston.i18n import _
     from darlaston.ui.photographer_ui import LICENCES
-    for label, template in LICENCES:
-        notice = template.format(year=2026, name="Nate Dube")
+    for label, terms in LICENCES:
+        notice = _("photographer.notice.detail", year=2026, name="Nate Dube",
+                   terms=_(terms))
         s2 = Settings(capture_root=str(tmp_path), artist="Nate Dube",
                       copyright=notice)
         d2 = PhotographerDialog(s2)
-        assert d2.licence.currentText() == label, f"{label} was not restored"
+        assert d2.licence.currentText() == _(label), \
+            f"{label} was not restored"
         d2.deleteLater()
 
     # A hand-written notice is not claimed by any of them.

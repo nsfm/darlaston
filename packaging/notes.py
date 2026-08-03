@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
 """Release notes, from the commits since the previous release.
 
-Written rather than hand-maintained because a changelog nobody updates is
-worse than no changelog: it goes stale silently and then misleads. The
-commit subjects in this project are already plain descriptions of what
-changed, which is what a release note is, so they are reused directly
-instead of being duplicated into a second file.
-
-Grouped by what each commit did to the version -- see packaging/version.py
--- so anything that moved the major or minor number appears first, where
-somebody deciding whether to upgrade will read it.
+Grouped by what each commit did to the version (see packaging/version.py)
 """
 from __future__ import annotations
 
@@ -25,7 +17,6 @@ from version import MARKER, TAG, level_of, tag_for        # noqa: E402
 
 #: Most subjects listed under one heading.
 MOST = 25
-
 
 def _git(*args: str) -> str:
     return subprocess.run(("git",) + args, capture_output=True, text=True,
@@ -79,16 +70,14 @@ def main() -> int:
 
     print("### Downloads\n")
     print("- **Linux**: the `.AppImage`. `chmod +x` it and run it.")
-    print("- **macOS**: the `.dmg` for your processor -- `arm64` for Apple "
+    print("- **macOS**: the `.dmg` for your processor - `arm64` for Apple "
           "silicon, `x86_64` for Intel.")
     print("- **Windows**: the `.zip`. Unpack it and run `darlaston.exe`.")
     print()
     print("These builds are unsigned, so macOS and Windows will warn about "
-          "them. The disk image carries a note explaining what to click, "
-          "and the same text is in `packaging/NOTARISING.md`.")
+          "them. The disk image carries a note explaining what to click.")
     print()
-    print("The camera SDK is never bundled -- it ships with no licence of "
-          "any kind, so darlaston loads yours at runtime. See `SUPPORT.md`.")
+    print("Thank you for choosing _darlaston_!")
 
     if previous:
         print(f"\n<sub>{len(messages)} commits since {previous}.</sub>")

@@ -1,0 +1,92 @@
+# The status strip's running commentary, and the few dialogs the main
+# window raises itself. These are read out of the corner of an eye while
+# somebody is looking down an eyepiece, so they are short.
+
+msgid "note.objective_changed"
+msgstr "objective changed, position unclear"
+
+msgid "note.banking"
+msgstr "banking a blank field…"
+
+#. A slice was rejected because the view moved during the exposure.
+msgid "note.slice_discarded"
+msgstr "slice discarded, it moved. Hold still and it will retake"
+
+#. {n} is the slice number. The first one also says what to do next.
+msgid "note.slice_landed"
+msgstr "slice {n} ✓, keep racking"
+
+msgid "note.slice_landed.first"
+msgstr "slice {n} ✓, keep racking. Slide on when the field is done"
+
+msgid "note.stack_armed"
+msgstr "stack armed. Rack to the first plane and hold"
+
+msgid "note.stacked_mosaic"
+msgstr "stacked mosaic: rack to stack this field, sliding on seals the tile"
+
+msgid "note.stack_discarded"
+msgstr "stack discarded"
+
+#. {n} is the tile number.
+msgid "note.tile_sealed.single"
+msgstr "tile {n} sealed, one exposure"
+
+#. {tile} is the tile number, {count} how many slices are merging.
+msgid "note.tile_sealed.stack"
+msgid_plural "note.tile_sealed.stack"
+msgstr[0] "tile {tile} sealed, {count} slice merging behind you, keep going"
+msgstr[1] "tile {tile} sealed, {count} slices merging behind you, keep going"
+
+#. {n} is the tile number, {reason} the failure text from the merge.
+msgid "note.tile_merge_failed"
+msgstr "tile {n} merge failed: {reason}. The stitcher will retry it"
+
+#. Stitching has to wait for merges still running. {count} of them.
+msgid "note.waiting_on_merges"
+msgid_plural "note.waiting_on_merges"
+msgstr[0] "waiting on {count} tile merge before stitching…"
+msgstr[1] "waiting on {count} tile merges before stitching…"
+
+msgid "note.tile_merging"
+msgstr "that tile is still merging, one moment"
+
+msgid "note.synthesising"
+msgstr "synthesising from the depth map…"
+
+msgid "note.arranging_plate"
+msgstr "arranging the plate…"
+
+msgid "note.flythrough"
+msgstr "flying through the mosaic…"
+
+msgid "note.finding_specimens"
+msgstr "finding specimens…"
+
+#. Confirming that a whole stack is about to be deleted.
+msgid "stack.discard.title"
+msgstr "Discard stack"
+
+msgid "stack.discard.question"
+msgid_plural "stack.discard.question"
+msgstr[0] "Delete the one slice?"
+msgstr[1] "Delete all {count} slices?"
+
+msgid "stack.discard.keep"
+msgstr "Keep"
+
+msgid "stack.discard.confirm"
+msgstr "Discard"
+
+msgid "thumbnailer.title"
+msgstr "Thumbnailer installed"
+
+#. {reason} is the underlying failure, which is not translated.
+msgid "thumbnailer.failed"
+msgstr "could not install thumbnailer: {reason}"
+
+msgid "mosaic.finished.title"
+msgstr "Mosaic finished"
+
+msgid "moved.title"
+msgstr "Moved during exposure"

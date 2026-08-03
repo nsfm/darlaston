@@ -12,6 +12,7 @@ Three decisions, each with a reason:
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -110,67 +111,102 @@ def install(app) -> None:
 
 
 #: Sizes a window manager, taskbar, dock or alt-tab switcher is likely to
-#: ask for. Rasterised at each rather than scaled from one, because the
-#: mark is a letter and a letter scaled down from 256 to 16 is a smudge.
-ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+#: ask for, plus what an .icns wants. Rasterised at each rather than scaled
+#: from one: the slots are thin at the small end and a resample turns them
+#: to speckle.
+ICON_SIZES = (16, 24, 32, 48, 64, 128, 256, 512, 1024)
+
+#: The aperture: a brass annulus cut by five slots around a pentagonal
+#: opening. It is a diatom valve and a lens iris at the same time, which is
+#: the subject and the instrument in one shape.
+#:
+#: Every number here was chosen against a 16 px render magnified with
+#: nearest-neighbour, because that is where icons are actually judged and
+#: where the obvious version of this dies. What was learned:
+#:
+#:   * Detail has to live in *negative space*. Twelve stroked ribs, which
+#:     is what a diatom really looks like, alias into noise below 32 px.
+#:     Solid areas survive a resample; thin lines do not.
+#:   * Five, not six. A hexagon at 32 px reads as a nut or a bolt head.
+#:     Odd symmetry reads as nothing else in a dock, which is the whole
+#:     job of an icon at that size.
+#:   * The slots are phase-offset by half a step so no slot lines up with
+#:     a vertex of the opening. Aligned, the two dark shapes merge into
+#:     one smear small.
+BLADES = 5
+#: Radii as a fraction of the disc, and the slot width in degrees.
+OPENING = 0.46
+SLOT_DEGREES = 10.0
+DISC = 0.36
+
+
+def _aperture(size: int) -> QtGui.QImage:
+    """One rasterisation of the mark, at `size` square."""
+    image = QtGui.QImage(size, size,
+                         QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QtGui.QColor(0, 0, 0, 0))
+    p = QtGui.QPainter(image)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+
+    # The plate. A rounded square rather than a full-bleed one because
+    # macOS expects the art to *be* that shape -- it applies no mask of
+    # its own -- and Windows is happy either way.
+    p.setBrush(QtGui.QColor(PANEL))
+    radius = size * 0.225
+    p.drawRoundedRect(QtCore.QRectF(0, 0, size, size), radius, radius)
+
+    centre = size / 2.0
+    disc = size * DISC
+    p.setBrush(QtGui.QColor(BRASS))
+    p.drawEllipse(QtCore.QPointF(centre, centre), disc, disc)
+
+    # Slots, as filled wedges rather than strokes: a stroked line has a
+    # width that has to survive scaling and a filled shape does not.
+    p.setBrush(QtGui.QColor(PANEL))
+    inner, outer = disc * (OPENING + 0.08), disc * 1.02
+    for i in range(BLADES):
+        angle = 360.0 * i / BLADES + 180.0 / BLADES
+        wedge = QtGui.QPainterPath()
+        out_box = QtCore.QRectF(centre - outer, centre - outer,
+                                2 * outer, 2 * outer)
+        in_box = QtCore.QRectF(centre - inner, centre - inner,
+                               2 * inner, 2 * inner)
+        wedge.arcMoveTo(out_box, angle - SLOT_DEGREES / 2)
+        wedge.arcTo(out_box, angle - SLOT_DEGREES / 2, SLOT_DEGREES)
+        wedge.arcTo(in_box, angle + SLOT_DEGREES / 2, -SLOT_DEGREES)
+        wedge.closeSubpath()
+        p.drawPath(wedge)
+
+    # The opening, point up.
+    opening = QtGui.QPainterPath()
+    for i in range(BLADES):
+        angle = math.radians(360.0 * i / BLADES - 90.0)
+        point = QtCore.QPointF(centre + math.cos(angle) * disc * OPENING,
+                               centre + math.sin(angle) * disc * OPENING)
+        opening.moveTo(point) if i == 0 else opening.lineTo(point)
+    opening.closeSubpath()
+    p.drawPath(opening)
+    p.end()
+    return image
 
 
 def app_icon() -> QtGui.QIcon:
-    """The mark: the wordmark's own initial, brass on the panel colour.
+    """The mark, at every size a platform asks for.
 
-    Drawn rather than shipped as a file. This is the first letter of the
-    name in the face the name is already set in, so it is not a new design
-    decision -- and generating it means one source of truth for the mark
-    instead of a folder of PNGs that drift from the wordmark the moment
-    anybody touches either.
+    Drawn rather than shipped as a folder of PNGs, so the dock, the
+    taskbar, the About window and the installers cannot drift apart. The
+    files the platforms need are generated from this same function; see
+    packaging/make_icons.py.
     """
-    # Same refusal as load_fonts, for the same reason: QFontDatabase does
-    # not raise without a QApplication, it aborts the process. Drawing the
-    # mark needs font metrics, so this cannot be attempted early.
+    # Not strictly needed now the mark carries no type, but kept: a
+    # QApplication is required for QImage on some platforms and this is
+    # called early during startup.
     if QtWidgets.QApplication.instance() is None:
         return QtGui.QIcon()
-
-    fam = load_fonts()
     icon = QtGui.QIcon()
     for size in ICON_SIZES:
-        image = QtGui.QImage(size, size,
-                             QtGui.QImage.Format.Format_ARGB32_Premultiplied)
-        image.fill(QtGui.QColor(0, 0, 0, 0))
-        p = QtGui.QPainter(image)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        # A hairline round the plate, as on every dialog in the program.
-        # It is also what stops the mark disappearing into a dark taskbar:
-        # the panel colour is four levels off the ground, which is right
-        # inside the window and invisible outside it. Dropped below 24 px,
-        # where a one-pixel border is a sixteenth of the whole icon.
-        stroke = size / 32.0 if size >= 24 else 0.0
-        p.setPen(QtGui.QPen(QtGui.QColor(BRASS_DEEP), stroke) if stroke
-                 else QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(PANEL))
-        inset = stroke / 2.0
-        radius = size * 0.22
-        p.drawRoundedRect(
-            QtCore.QRectF(inset, inset, size - stroke, size - stroke),
-            radius, radius)
-
-        font = QtGui.QFont(fam["display"])
-        # By pixel size, not point: at 16 px a point size is rounded to
-        # whatever the screen's DPI makes of it and the letter lands
-        # anywhere.
-        font.setPixelSize(max(8, int(size * 0.62)))
-        p.setFont(font)
-        p.setPen(QtGui.QColor(BRASS))
-        # Placed off the letter's own ink rather than off the font's line
-        # box. This face carries a tall ascender and a deep descender, so
-        # centring the box leaves the "d" riding high with its stem in the
-        # border; centring the glyph's actual bounding rectangle puts the
-        # mark where the eye expects it at every size.
-        box = QtCore.QRectF(0, 0, size, size)
-        ink = QtGui.QFontMetricsF(font).tightBoundingRect("d")
-        p.drawText(QtCore.QPointF(box.center().x() - ink.center().x(),
-                                  box.center().y() - ink.center().y()), "d")
-        p.end()
-        icon.addPixmap(QtGui.QPixmap.fromImage(image))
+        icon.addPixmap(QtGui.QPixmap.fromImage(_aperture(size)))
     return icon
 
 
@@ -200,35 +236,225 @@ def identify(app) -> None:
 _DWM_DARK = (20, 19)
 
 
+#: How far the traffic lights reach across the top left of a macOS
+#: window, plus a little air. The toolbar is inset by this so the wordmark
+#: does not sit under them once the title bar is transparent.
+#:
+#: A measurement, not a specification. Apple publishes no figure for it --
+#: not in the human interface guidelines and not in the headers -- and has
+#: moved the buttons before, in Big Sur. The runtime answer is
+#: `NSMaxX([window standardWindowButton:NSWindowZoomButton].frame)`, which
+#: returns an NSRect: 32 bytes, so it needs `objc_msgSend_stret` on Intel
+#: and the plain call on Apple silicon, which is a two-architecture ctypes
+#: problem in exchange for about six points of accuracy. Measured extent
+#: runs 70 to 75 across Big Sur through Sequoia, so this errs wide and the
+#: cost of being wrong is a little more air rather than a hidden wordmark.
+#:
+#: `safeAreaMargins` does not answer this. It reports the *title bar's
+#: height* as a top margin; the lights' reach across is a left margin that
+#: macOS does not report at all.
+MACOS_LIGHTS = 78
+
+#: NSWindowTitleHidden.
+#:
+#: Distinct from setting an empty title: hiding the title is also what
+#: vertically centres the traffic lights in the bar. An empty string
+#: leaves them where a title would have pushed them.
+_NS_TITLE_HIDDEN = 1
+
+#: Re-exported. It lives in `frame` now, because it has to be consulted
+#: before the takeover as well as before the restyling, and `frame` is
+#: what the takeover goes through.
+from .frame import NATIVE_FRAME_ENV  # noqa: E402
+
+
+def _mac_unify_titlebar(window) -> bool:
+    """Make the title bar transparent and run the content up under it.
+
+    macOS draws a grey strip above the window saying the application's
+    name, which on a program with its own toolbar is a second bar saying
+    less. The usual answer is to go frameless, and the usual cost is
+    reimplementing everything the frame does: full screen, zoom on double
+    click, snapping, the window menu, and the traffic lights themselves.
+
+    This is the other answer, and it is what every Mac application with a
+    custom toolbar actually does. The window keeps its real title bar and
+    every gesture that comes with it; the bar is simply made transparent,
+    its title hidden, and the content view told it may extend the whole
+    height.
+
+    **Two of the three are Qt's own API and must be**, on Qt 6.9 and
+    later. `ExpandedClientAreaHint` is what Qt now derives
+    `NSWindowStyleMaskFullSizeContentView` from, and
+    `NoTitleBarBackgroundHint` is what it derives
+    `titlebarAppearsTransparent` from. Setting either by hand through
+    AppKit works and does not last: `QCocoaWindow::setWindowFlags`
+    reassigns both from the Qt flags, and both native fullscreen handlers
+    call it to restore the style mask. So the window would come back out
+    of fullscreen with an opaque title bar and no title in it. Before 6.9
+    Qt preserved a hand-set bit deliberately -- that was the fix for
+    QTBUG-69975 -- and 6.9 removed the preservation once the flags
+    existed to replace it.
+
+    **The third is not Qt's**, and is done here. `titleVisibility`
+    appears nowhere in the Cocoa plugin in any release from 6.2 to dev,
+    so nothing recomputes it and one message settles it for good.
+
+    The remaining call is a read-nothing, set-once `objc_msgSend` through
+    a private prototype: `ctypes` caches one function object per name on
+    the library, and assigning `argtypes` to the shared one is process-
+    wide mutable state that anything else calling into libobjc would
+    race with.
+    """
+    from PySide6 import QtCore
+
+    handle = window.windowHandle()
+    if handle is None:
+        return False
+
+    handle.setFlags(handle.flags()
+                    | QtCore.Qt.WindowType.ExpandedClientAreaHint
+                    | QtCore.Qt.WindowType.NoTitleBarBackgroundHint)
+
+    # Qt 6.8 gave macOS safe-area margins, and a widget layout then insets
+    # itself by the title bar -- so the content runs under the bar and the
+    # layout immediately puts it back below, which looks exactly like
+    # nothing happened. Clearing this on the top level is what stops that.
+    # Only the top level: since QTBUG-133215 the attribute defaults on for
+    # top levels alone, so children need no help.
+    window.setAttribute(
+        QtCore.Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
+
+    _mac_hide_title(window)
+    return True
+
+
+def _mac_hide_title(window) -> bool:
+    """Hide the title text, which is the one part Qt leaves alone."""
+    import ctypes
+    import ctypes.util
+    import sys
+
+    # Checked before the library is even looked for. `find_library("objc")`
+    # succeeds on a Linux box with GNUstep installed and hands back a
+    # runtime with no `objc_msgSend` in it -- a real machine, since that is
+    # what this was written on.
+    if sys.platform != "darwin":
+        return False
+    path = ctypes.util.find_library("objc")
+    if not path:
+        return False
+    try:
+        objc = ctypes.cdll.LoadLibrary(path)
+        send = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+    except (OSError, AttributeError):
+        return False
+    objc.sel_registerName.restype = ctypes.c_void_p
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+    view = ctypes.c_void_p(int(window.winId()))
+    if not view.value:
+        return False
+
+    # A prototype per signature, rather than assigning to the cached
+    # `objc.objc_msgSend`. Declaring every argument is also what makes the
+    # call non-variadic, which is what it has to be: objc_msgSend is a
+    # trampoline into a method that reads its arguments from registers,
+    # and a variadic call on arm64 would put them on the stack instead.
+    # A *partial* argtypes is worse than none -- CPython treats a call
+    # with more arguments than argtypes as variadic.
+    send_p = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
+                              ctypes.c_void_p)(send)
+    send_i = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p,
+                              ctypes.c_long)(send)
+
+    ns_window = send_p(view,
+                       ctypes.c_void_p(objc.sel_registerName(b"window")))
+    if not ns_window:
+        return False
+    send_i(ctypes.c_void_p(ns_window),
+           ctypes.c_void_p(objc.sel_registerName(b"setTitleVisibility:")),
+           ctypes.c_long(_NS_TITLE_HIDDEN))
+    return True
+
+
+def follow_window_controls(window, toolbar) -> None:
+    """Keep the toolbar clear of the traffic lights, including when there
+    are none.
+
+    In native fullscreen macOS takes the title bar out of the layout and
+    moves the traffic lights into the overlay that slides down with the
+    menu bar. They are no longer above the toolbar, so an inset that
+    stayed put would be a hole in the top left with nothing in it, and
+    the hole would come and go as the pointer neared the top edge.
+
+    Driven from Qt's window state rather than an AppKit notification:
+    `QCocoaWindow` reports both fullscreen transitions through it, and it
+    is the same signal on every platform even though only one uses it.
+    """
+    handle = window.windowHandle()
+    if handle is None:
+        return
+
+    from PySide6 import QtCore
+
+    def apply(state=None) -> None:
+        full = bool(window.windowState()
+                    & QtCore.Qt.WindowState.WindowFullScreen)
+        toolbar.inset_for_window_controls(0 if full else MACOS_LIGHTS)
+        # Re-asserted here, not because Qt recomputes it -- it never
+        # touches titleVisibility, in any release -- but because Qt
+        # destroys and rebuilds the NSWindow on some transitions, and a
+        # *new* one starts with the title visible. Free, since this is
+        # already connected to the signal those transitions raise.
+        _mac_hide_title(window)
+
+    handle.windowStateChanged.connect(apply)
+    apply()
+
+
 def match_frame(window) -> bool:
     """Ask the platform for a title bar that matches the program.
 
-    Windows draws the frame in the *system* light or dark setting, not the
-    application's, so a near-black program on a light-themed machine gets a
-    white title bar across the top of it. One documented DWM attribute
-    fixes that. Everywhere else this is a no-op: macOS follows the system
-    appearance and offers no supported way to disagree, and X11 and Wayland
-    decorations belong to the window manager by design.
+    **Windows** draws the frame in the *system* light or dark setting
+    rather than the application's, so a near-black program on a
+    light-themed machine gets a white strip across the top of it. One
+    documented DWM attribute settles that.
 
-    Returns whether anything was actually changed, for the test.
+    **macOS** gets its title bar made transparent, with the content run
+    up underneath -- see `_mac_unify_titlebar`. The window keeps its
+    traffic lights and every native gesture.
+
+    **X11 and Wayland** are left alone: decorations belong to the window
+    manager there by design, and taking them over would be arguing with
+    the desktop rather than fitting into it.
+
+    Returns whether anything was changed. Never raises: a frame that could
+    not be restyled is a cosmetic disappointment, and taking the window
+    down over it would not be.
     """
+    import os
     import sys
 
-    if not sys.platform.startswith("win"):
+    if os.environ.get(NATIVE_FRAME_ENV):
         return False
-    import ctypes
+    try:
+        if sys.platform == "darwin":
+            return _mac_unify_titlebar(window)
+        if not sys.platform.startswith("win"):
+            return False
+        import ctypes
 
-    handle = ctypes.c_void_p(int(window.winId()))
-    enabled = ctypes.c_int(1)
-    for attribute in _DWM_DARK:
-        try:
+        handle = ctypes.c_void_p(int(window.winId()))
+        enabled = ctypes.c_int(1)
+        for attribute in _DWM_DARK:
             ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 handle, ctypes.c_uint(attribute), ctypes.byref(enabled),
                 ctypes.sizeof(enabled))
-        except (AttributeError, OSError):
-            return False                 # no dwmapi: older than we support
-        if ok == 0:
-            return True
+            if ok == 0:
+                return True
+    except Exception:
+        return False
     return False
 
 
@@ -274,6 +500,10 @@ def stylesheet() -> str:
     QFrame[role="bar"] {{
         background: {PANEL}; border: 0; border-bottom: 1px solid {LINE};
     }}
+    /* The caption strip sits inside the bar and has to let it through.
+       Without this the blanket QWidget rule above paints it the window's
+       colour, and the window buttons sit in a darker patch. */
+    QWidget[role="caption"] {{ background: transparent; }}
 
     QPushButton {{
         font-family: "{fam['mono']}";

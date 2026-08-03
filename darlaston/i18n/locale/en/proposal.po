@@ -1,0 +1,26 @@
+# The turret proposal bar, over the live view. A detected rotation is
+# always a question, never a decision: a silent misdetection would poison
+# every calibration lookup afterwards.
+
+msgid "proposal.other"
+msgstr "Other ▾"
+
+#. Answering "didn't switch" is an answer and keeps the objective
+#. trustworthy. Letting the bar time out is not.
+msgid "proposal.no"
+msgstr "Didn't switch"
+
+#. Shown when more than one position is plausible.
+msgid "proposal.which.heading"
+msgstr "Objective changed. Which one?"
+
+msgid "proposal.which.detail"
+msgstr "the turret moved, naming it once teaches which way it counts"
+
+#. {objective} is a label like "40×/0.65".
+msgid "proposal.now.heading"
+msgstr "Objective now {objective}?"
+
+#. {reason} names the signals that agreed, {percent} the confidence.
+msgid "proposal.now.detail"
+msgstr "{reason} · {percent}% sure"

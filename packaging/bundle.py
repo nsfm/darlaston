@@ -113,21 +113,8 @@ def appimage(label: str) -> Path:
 
 
 def _write_icon(path: Path) -> None:
-    """The application mark, rasterised out of the program itself.
-
-    Same source as the window icon rather than a second file that would
-    drift from it the first time either was touched.
-    """
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6 import QtWidgets
-
-    from darlaston.ui import theme
-
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    theme.load_fonts()
-    icon = theme.app_icon()
-    icon.pixmap(256, 256).save(str(path))
-    del app
+    """The application mark, from the file the other platforms also use."""
+    shutil.copy(ROOT / "packaging" / "icons" / "darlaston.png", path)
 
 
 # ---- macOS ---------------------------------------------------------------
