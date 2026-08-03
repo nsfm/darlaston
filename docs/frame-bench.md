@@ -69,11 +69,53 @@ Rest the pointer on the maximise button for about a second. The Windows
   the frame instead of at the top of the client area, and the
   alternative is a top edge that cannot be grabbed above three buttons.
 - **The window's minimum width is 766 px, and Microsoft's limit for
-  snap layouts is 500.** So the half-screen layouts work and the third-
-  and quarter-width ones will invoke and then fail to snap. The 766 is
-  the live view's 480 px minimum plus the rail's 286; both are design
-  decisions rather than accidents, so this is written down rather than
-  quietly changed. Worth deciding once someone has seen it happen.
+  snap layouts is 500.** So the half-screen layouts work, and the third-
+  and quarter-width ones invoke and then fail to snap. Measured, and
+  traced -- see below. It is a design decision, not an accident, so it
+  is written down rather than quietly changed.
+
+#### Where the 766 comes from
+
+Three constraints in a chain, and no single one of them is the answer:
+
+| | width | set at |
+|---|---|---|
+| the rail | 286, **fixed** | `main.py`, `rail.setFixedWidth(286)` |
+| the live view | 480 minimum | `widgets.py`, `setMinimumSize(480, 320)` |
+| the waiting page | 458 minimum | `shell.py`, `_WRAP_W = 440` on the message label |
+
+The live view and the waiting page share a stacked widget, so the stack
+takes the larger: 286 + 480 = 766. Relaxing the live view alone bottoms
+out at 286 + 458 = **744**, because the waiting page then binds -- which
+is why "make the preview narrower" is not by itself a fix.
+
+What that means in practice, since the 500 figure is a guarantee rather
+than the real question. The zone widths that matter:
+
+| screen | half | third | quarter |
+|---|---|---|---|
+| 1366 | 683 | 455 | 341 |
+| 1920 | 960 | 640 | 480 |
+| 2560 | 1280 | 853 | 640 |
+| 3840 | 1920 | 1280 | 960 |
+
+At 766 the half-screen layouts all work, and so does a third of 2560 or
+wider. What fails is a third of 1920 -- the single most common screen --
+and every quarter below 3840.
+
+So there are three honest positions, and the choice is which one this
+program is for:
+
+1. **Leave it.** Half-screen works everywhere, which is what people
+   actually use, and a 20 MP capture program at 640 px wide is not
+   something anybody wants. Cost: on a 1920 screen the flyout offers a
+   third and then does not deliver it, which reads as broken rather than
+   as a limit.
+2. **Get under 640**, so a third of 1920 works. Needs the live view and
+   the waiting page down to about 350 each. Still over Microsoft's 500.
+3. **Get under 500**, which needs all three: 286 + 214 + 214. The rail
+   is a fixed design width, so this one is a layout change rather than a
+   constant change.
 
 ### 4. Auto-hiding taskbar
 

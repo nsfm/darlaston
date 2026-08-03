@@ -249,12 +249,15 @@
       scaled display, and the macOS title bar surviving a trip through
       fullscreen.
 - [ ] **? Snap layouts below half-screen.** The window's minimum width is
-      766 px -- the live view's 480 plus the rail's 286 -- and Microsoft's
-      limit for snap layouts is 500. So the half-screen layouts work and
-      the third- and quarter-width ones invoke and then fail to snap.
-      Whether that is worth narrowing the live view for is a judgement
-      about what this program is for, so it is measured and written down
-      rather than quietly changed.
+      766 px and Microsoft's limit for snap layouts is 500, so the
+      half-screen layouts work and the third- and quarter-width ones
+      invoke and then fail to snap. Traced to three constraints in a
+      chain -- the rail fixed at 286, the live view's 480 minimum and the
+      waiting page's 458 -- so relaxing the live view alone bottoms out
+      at 744 and changes nothing. The one that bites is a third of 1920,
+      the commonest screen. Three positions and the numbers behind them
+      in `docs/frame-bench.md`; it is a judgement about what this program
+      is for, so it is measured rather than quietly changed.
 
 ## Packaging
 
