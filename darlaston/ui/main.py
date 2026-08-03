@@ -43,7 +43,7 @@ from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .perf_ui import PerfPanel, PerformanceDialog
 from .setup_ui import CameraDialog, MicroscopeDialog
-from .frame import SystemFrame, WindowsFrame
+from .frame import SystemFrame, TitleDrag, WindowsFrame
 from .frame import wanted as frame_wanted
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
@@ -2127,6 +2127,13 @@ def main() -> int:
         # bar is restyled, and the toolbar steps aside for the lights.
         if theme.match_frame(win):
             theme.follow_window_controls(win, win.toolbar)
+            # Running the content up under the title bar puts our toolbar
+            # exactly where AppKit's drag region was, so the window stops
+            # being draggable by the one strip everybody grabs first.
+            # Handing the drag back is the whole fix.
+            drag = TitleDrag(win, win.toolbar, lights=theme.MACOS_LIGHTS)
+            if drag.attach():
+                win._frame = drag
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and
     # Ctrl-C does nothing. A timer that does nothing at all gives the

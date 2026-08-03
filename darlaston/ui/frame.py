@@ -1011,6 +1011,113 @@ _EDGES_TO_QT = _LazyEdges()
 
 # ---- everywhere else -------------------------------------------------------
 
+class TitleDrag:
+    """Make a macOS toolbar drag its window.
+
+    macOS keeps its own frame, so there is no resizing or window-button
+    work to do here -- but `ExpandedClientAreaHint` runs the content up
+    under the title bar, and the toolbar is then an opaque Qt widget
+    sitting exactly where AppKit's drag region used to be. AppKit never
+    sees the press, and the window cannot be moved by the one strip
+    every Mac user grabs first.
+
+    The fix is the same call the Linux frame uses: hand the drag to the
+    window manager with `startSystemMove`. Qt implements it on Cocoa,
+    and handing it over is better than moving the window by setting
+    geometry -- it keeps the snapping, the spaces and the drag-to-full-
+    screen gestures that belong to the compositor.
+
+    Only the caption strip drags. `hit_region` decides that, from the
+    same geometry the toolbar reports, so the menus and the wordmark go
+    on taking their own clicks.
+    """
+
+    def __init__(self, window, toolbar, lights: int = 0) -> None:
+        self.window = window
+        self.toolbar = toolbar
+        #: How far the traffic lights reach across. Reserved rather than
+        #: captioned, so a press there is never turned into a drag. They
+        #: sit in a view above the content and should get the click
+        #: themselves; this makes that true regardless of view order.
+        self.lights = lights
+        self._filter = None
+
+    def frame(self) -> Frame:
+        buttons, reserved = self.toolbar.caption_geometry()
+        if self.lights:
+            reserved = ((0, self.lights),) + tuple(reserved)
+        return Frame(width=self.window.width(), height=self.window.height(),
+                     bar=self.toolbar.height(),
+                     border=0,          # the real frame still resizes
+                     buttons=(),        # and still draws its own buttons
+                     reserved=reserved,
+                     maximised=self.window.isMaximized())
+
+    def attach(self) -> bool:
+        from PySide6 import QtCore, QtWidgets
+
+        try:
+            outer = self
+
+            class _Drag(QtCore.QObject):
+                """On the application, not the window.
+
+                The central widget covers the window, so a filter on the
+                window alone would never see the press -- the same reason
+                `SystemFrame` does it this way.
+                """
+
+                def eventFilter(self, _watched, event):
+                    return outer._filter_event(event)
+
+            self._filter = _Drag()
+            QtWidgets.QApplication.instance().installEventFilter(self._filter)
+            return True
+        except Exception:
+            return False
+
+    def detach(self) -> bool:
+        from PySide6 import QtWidgets
+
+        app = QtWidgets.QApplication.instance()
+        if self._filter is not None and app is not None:
+            app.removeEventFilter(self._filter)
+            self._filter = None
+        return True
+
+    def _filter_event(self, event) -> bool:
+        from PySide6 import QtCore
+
+        kind = event.type()
+        if kind not in (QtCore.QEvent.Type.MouseButtonPress,
+                        QtCore.QEvent.Type.MouseButtonDblClick):
+            return False
+        if not self.window.isVisible():
+            return False
+        if event.button() is not QtCore.Qt.MouseButton.LeftButton:
+            return False
+        try:
+            local = self.window.mapFromGlobal(
+                event.globalPosition().toPoint())
+        except AttributeError:
+            return False
+        if not self.window.rect().contains(local):
+            return False
+        if hit_region(local.x(), local.y(), self.frame()) != CAPTION:
+            return False
+
+        handle = self.window.windowHandle()
+        if handle is None:
+            return False
+        if kind == QtCore.QEvent.Type.MouseButtonDblClick:
+            # macOS zooms rather than maximises, and which of zoom,
+            # minimise or nothing a double click does is a system
+            # preference. Left to AppKit by not claiming it.
+            return False
+        handle.startSystemMove()
+        return True
+
+
 class SystemFrame:
     """Our own chrome on a plain frameless window.
 

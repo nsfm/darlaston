@@ -875,3 +875,77 @@ def test_an_idle_client_move_costs_nothing(monkeypatch):
     _nc(frame, WM_NCMOUSEMOVE, CLOSE)
     _client(frame, WM_MOUSEMOVE, 600, 400)
     assert len(asked) == 1
+
+
+# ---- the macOS title drag --------------------------------------------------
+
+def _drag_rig(qapp):
+    from darlaston.ui.frame import TitleDrag
+    from darlaston.ui.shell import ToolBar
+
+    bar = ToolBar()
+    bar.add_menu("Setup", "Setup")
+    bar.add_menu("Capture", "Capture")
+    bar.resize(1200, 36)
+    bar.inset_for_window_controls(78)      # what macOS does to the toolbar
+    bar.show()
+    qapp.processEvents()
+
+    class _Window:
+        def width(self):
+            return 1200
+
+        def height(self):
+            return 800
+
+        def isMaximized(self):
+            return False
+
+    return TitleDrag(_Window(), bar, lights=78), bar
+
+
+def test_the_title_drag_leaves_the_menus_alone(qapp):
+    """The drag must not eat clicks on the things in the bar.
+
+    Getting this wrong is a title bar you can drag and a Setup menu that
+    never opens, which is a strictly worse trade than the bug it fixes.
+    """
+    from darlaston.ui.frame import CAPTION, CLIENT, hit_region
+
+    drag, bar = _drag_rig(qapp)
+    frame = drag.frame()
+
+    # The wordmark and every menu take their own clicks.
+    assert hit_region(bar.wordmark.x() + 4, 18, frame) == CLIENT
+    from PySide6 import QtCore
+
+    for widget in bar.findChildren(type(bar.wordmark)):
+        if widget.property("role") == "menu":
+            middle = widget.mapTo(bar, QtCore.QPoint(0, 0)).x() + 4
+            assert hit_region(middle, 18, frame) == CLIENT, \
+                f"the drag swallowed the {widget.text()} menu"
+
+    # The traffic lights keep theirs too. Reserved rather than captioned,
+    # so a press there is never turned into a drag whatever the view order
+    # underneath turns out to be.
+    for x in (4, 40, 77):
+        assert hit_region(x, 18, frame) == CLIENT, \
+            f"x={x} is under a traffic light and would have dragged"
+
+    # And the empty run to the right of the menus is what drags.
+    assert hit_region(900, 18, frame) == CAPTION
+    bar.close()
+
+
+def test_the_title_drag_claims_nothing_below_the_bar(qapp):
+    """macOS still owns the frame, so there are no resize edges of ours
+    and nothing outside the bar is any of our business."""
+    from darlaston.ui.frame import CLIENT, hit_region
+
+    drag, bar = _drag_rig(qapp)
+    frame = drag.frame()
+    assert frame.border == 0, "macOS resizes its own window"
+    assert frame.buttons == (), "macOS draws its own traffic lights"
+    for point in ((2, 2), (600, 400), (1198, 798), (2, 400)):
+        assert hit_region(*point, frame) == CLIENT, f"{point} was claimed"
+    bar.close()
