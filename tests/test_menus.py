@@ -4,6 +4,8 @@ One axis decides every entry: before a session, during it, or after it.
 The failure that produced the previous structure was that each stage menu
 grew its own preferences entry, which is why they are gathered now.
 """
+import sys
+
 import pytest
 
 from darlaston.camera.mock import MockCamera
@@ -30,9 +32,13 @@ def test_three_menus_on_one_axis(win):
 
 
 def test_setup_holds_what_outlives_the_session(win):
+    # The frame toggle is absent on macOS, where the frame is never ours
+    # to take -- only to restyle.
+    chrome = [] if sys.platform == "darwin" else ["Styled window frame"]
     assert entries(win, "Setup") == [
         "Microscopes…", "Cameras…", "Photographer…", "Files…",
-        "Performance…", "Install camera SDK…", "Install DNG thumbnailer…"]
+        "Performance…", *chrome,
+        "Install camera SDK…", "Install DNG thumbnailer…"]
 
 
 def test_capture_holds_only_what_needs_a_camera(win):

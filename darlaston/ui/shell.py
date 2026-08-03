@@ -75,11 +75,16 @@ class CaptionButton(QtWidgets.QWidget):
     right on the target and be untestable anywhere. These are three
     strokes each.
 
-    They receive no mouse events. Once hit testing claims their area
-    Windows routes the pointer through non-client messages, so `set_state`
-    is how they learn they are being hovered or pressed -- see
-    win_frame.NativeFrame._button_input.
+    They work two ways, because the platforms deliver the pointer
+    differently. On a frameless Qt window they are ordinary widgets and
+    handle their own mouse. On Windows, once hit testing claims their
+    area, the pointer arrives as non-client messages and Qt never sees a
+    click there at all -- so `deafen` turns the mouse handling off and
+    `set_state` becomes how they learn they are being hovered or pressed.
+    See frame.WindowsFrame._button_input.
     """
+
+    pressed = QtCore.Signal(str)
 
     #: Windows' own caption buttons are 46 x 32 at 100%. Matching the
     #: width matters more than the height: it is the target size people
@@ -93,8 +98,28 @@ class CaptionButton(QtWidgets.QWidget):
         self.hot = False
         self.down = False
         self.setFixedWidth(self.WIDTH)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover, True)
+
+    def deafen(self) -> None:
+        """Stop taking the mouse, because something else is delivering it."""
         self.setAttribute(
             QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def enterEvent(self, _event) -> None:
+        self.set_state(True, self.down)
+
+    def leaveEvent(self, _event) -> None:
+        self.set_state(False, False)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() is QtCore.Qt.MouseButton.LeftButton:
+            self.set_state(True, True)
+
+    def mouseReleaseEvent(self, event) -> None:
+        fired = self.down
+        self.set_state(self.rect().contains(event.position().toPoint()), False)
+        if fired and self.rect().contains(event.position().toPoint()):
+            self.pressed.emit(self.kind)
 
     def set_state(self, hot: bool, down: bool) -> None:
         if (hot, down) != (self.hot, self.down):
@@ -178,7 +203,9 @@ class ToolBar(QtWidgets.QFrame):
         # buttons or a gap between the last button and the corner -- and
         # the corner is where people flick to close a maximised window
         # without aiming.
+        self._spare_margin: int | None = None
         self._caption_strip = QtWidgets.QWidget()
+        self._caption_strip.setProperty("role", "caption")
         strip = QtWidgets.QHBoxLayout(self._caption_strip)
         strip.setContentsMargins(0, 0, 0, 0)
         strip.setSpacing(0)
@@ -190,12 +217,24 @@ class ToolBar(QtWidgets.QFrame):
     def show_caption_buttons(self) -> None:
         """Draw our own minimise, maximise and close.
 
-        Windows only, and only after the frame has been taken: showing
-        them beside a native caption would be six buttons for three jobs.
+        Only after the frame has actually been taken: showing them beside
+        a native caption would be six buttons for three jobs.
         """
-        left, top, _right, bottom = self._row.getContentsMargins()
+        left, top, right, bottom = self._row.getContentsMargins()
+        # Remembered on the way past, not recomputed on the way back: a
+        # second call would otherwise record the zero this one sets, and
+        # the margin would be gone for good.
+        if self._spare_margin is None:
+            self._spare_margin = right
         self._row.setContentsMargins(left, top, 0, bottom)
         self._caption_strip.show()
+
+    def hide_caption_buttons(self) -> None:
+        """Give the corner back, for when the platform draws them again."""
+        left, top, _right, bottom = self._row.getContentsMargins()
+        self._row.setContentsMargins(left, top, self._spare_margin or 0,
+                                     bottom)
+        self._caption_strip.hide()
 
     def set_caption_state(self, hot: str, down: str) -> None:
         """Told from outside, because these get no mouse events."""

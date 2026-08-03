@@ -401,6 +401,10 @@ def stylesheet() -> str:
     QFrame[role="bar"] {{
         background: {PANEL}; border: 0; border-bottom: 1px solid {LINE};
     }}
+    /* The caption strip sits inside the bar and has to let it through.
+       Without this the blanket QWidget rule above paints it the window's
+       colour, and the window buttons sit in a darker patch. */
+    QWidget[role="caption"] {{ background: transparent; }}
 
     QPushButton {{
         font-family: "{fam['mono']}";

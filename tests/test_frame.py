@@ -6,7 +6,7 @@ report -- "dragging doesn't work", "the corner won't grab", "the snap
 thing never appears" -- so it is a pure function of rectangles, tested on
 whatever machine happens to be to hand rather than only on Windows.
 """
-from darlaston.ui.win_frame import (BOTTOM, BOTTOMLEFT, BOTTOMRIGHT, BUTTONS,
+from darlaston.ui.frame import (BOTTOM, BOTTOMLEFT, BOTTOMRIGHT, BUTTONS,
                                     CAPTION, CLIENT, CLOSE, EDGES, LEFT,
                                     MAXIMISE, MINIMISE, RIGHT, TOP, TOPLEFT,
                                     TOPRIGHT, Frame, hit_region)
@@ -82,7 +82,7 @@ def test_the_body_of_the_window_is_left_alone():
 def test_every_region_maps_to_a_hit_test_code():
     """A region with no code would be returned to Windows as None and
     silently become HTNOWHERE, which is a window that ignores the mouse."""
-    from darlaston.ui.win_frame import _HT
+    from darlaston.ui.frame import _HT
 
     every = EDGES | BUTTONS | {CAPTION, CLIENT}
     assert every <= set(_HT), f"no code for {sorted(every - set(_HT))}"
@@ -92,7 +92,7 @@ def test_the_border_is_wider_than_it_looks():
     """SM_CXSIZEFRAME alone is the visible frame and is too thin to grab;
     Windows adds SM_CXPADDEDBORDER, which is why a standard window's edge
     is easier to hit than it appears."""
-    from darlaston.ui.win_frame import border_thickness
+    from darlaston.ui.frame import border_thickness
 
     at96 = border_thickness(96)
     assert at96 >= 4, at96
@@ -142,17 +142,82 @@ def test_the_toolbar_and_the_frame_agree_on_where_things_are(qapp):
     bar.close()
 
 
-def test_the_caption_buttons_take_no_mouse_events(qapp):
-    """Windows routes their area through non-client messages once hit
-    testing claims it, so a button that also tried to handle clicks would
-    be handling ones it never receives, and looking dead."""
-    from darlaston.ui.shell import ToolBar
+def test_the_caption_buttons_handle_their_own_mouse_until_told_not_to(qapp):
+    """The two platforms deliver the pointer differently.
+
+    On a frameless Qt window these are ordinary widgets. On Windows, once
+    hit testing claims their area, the pointer arrives as non-client
+    messages and Qt never sees a click there -- so a button still trying
+    to handle its own would be waiting for events that never come, and
+    would look dead.
+    """
     from PySide6 import QtCore
 
+    from darlaston.ui.shell import ToolBar
+
     bar = ToolBar()
+    transparent = QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
     for button in bar.caption.values():
-        assert button.testAttribute(
-            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        assert not button.testAttribute(transparent), \
+            "deaf before anything asked it to be"
+    for button in bar.caption.values():
+        button.deafen()
+        assert button.testAttribute(transparent)
+
+
+def test_a_caption_button_reports_which_one_it_was(qapp):
+    """One signal carrying the kind, rather than three connections, so the
+    frame can route them without knowing the layout."""
+    from PySide6 import QtCore, QtGui
+
+    from darlaston.ui.shell import ToolBar
+
+    bar = ToolBar()
+    bar.resize(600, 36)
+    seen = []
+    for button in bar.caption.values():
+        button.pressed.connect(seen.append)
+
+    close = bar.caption["close"]
+    close.resize(46, 36)
+    middle = QtCore.QPointF(20, 18)
+    for kind in (QtCore.QEvent.Type.MouseButtonPress,
+                 QtCore.QEvent.Type.MouseButtonRelease):
+        close.mousePressEvent(QtGui.QMouseEvent(
+            kind, middle, middle, QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier)) if kind == \
+            QtCore.QEvent.Type.MouseButtonPress else close.mouseReleaseEvent(
+            QtGui.QMouseEvent(
+                kind, middle, middle, QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.MouseButton.NoButton,
+                QtCore.Qt.KeyboardModifier.NoModifier))
+    assert seen == ["close"]
+
+
+def test_who_draws_the_frame_follows_the_desktop_and_the_setting(monkeypatch):
+    """Two desktops are left alone for opposite reasons: a tiling window
+    manager draws nothing on purpose, and KDE draws a real decoration in
+    the user's own colours. Everything else gets ours."""
+    from darlaston.ui.frame import wanted
+
+    def under(desktop):
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+        monkeypatch.delenv("GNOME_DESKTOP_SESSION_ID", raising=False)
+        return wanted("auto")
+
+    assert under("KDE") is False
+    assert under("sway") is False
+    assert under("") is False, "a bare window manager draws none on purpose"
+    assert under("GNOME") is True, "Qt's Wayland fallback is worse than ours"
+    assert under("ubuntu:GNOME") is True, "the list form is what GNOME sets"
+    assert under("XFCE") is True
+
+    # And the setting overrides the guess, both ways.
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    assert wanted("ours") is True
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+    assert wanted("system") is False
 
 
 def test_hover_and_press_are_told_from_outside(qapp):
@@ -174,7 +239,7 @@ def test_a_maximised_window_leaves_room_for_an_autohiding_taskbar():
 
     Without the pixel, the taskbar simply stops working while this program
     is open, which reads as Windows being broken rather than as us."""
-    from darlaston.ui.win_frame import maximised_insets
+    from darlaston.ui.frame import maximised_insets
 
     plain = maximised_insets(8)
     assert plain == (8, 8, 8, 8), "the frame overhang is per edge"
@@ -189,3 +254,23 @@ def test_a_maximised_window_leaves_room_for_an_autohiding_taskbar():
     assert maximised_insets(8, frozenset({LEFT})) == (9, 8, 8, 8)
     # And more than one, which is unusual but possible with several bars.
     assert maximised_insets(8, frozenset({TOP, RIGHT})) == (8, 9, 9, 8)
+
+
+def test_the_caption_strip_is_the_same_colour_as_the_bar(qapp):
+    """The blanket `QWidget` background rule reaches into the strip, and
+    painted it the window's colour rather than the bar's -- a darker patch
+    behind the window buttons, on every platform that draws its own."""
+    from darlaston.ui import theme
+    from darlaston.ui.shell import ToolBar
+
+    qapp.setStyleSheet(theme.stylesheet())
+    bar = ToolBar()
+    bar.add_menu("Setup", "Setup")
+    bar.show_caption_buttons()
+    bar.resize(560, 36)
+    image = bar.grab().toImage()
+
+    # A row above the glyphs, so this reads background and not ink.
+    left = image.pixelColor(200, 4).getRgb()[:3]
+    right = image.pixelColor(image.width() - 4, 4).getRgb()[:3]
+    assert left == right, f"strip {right} does not match bar {left}"

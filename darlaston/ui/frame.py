@@ -1,4 +1,4 @@
-"""A window frame of our own, on Windows.
+"""A window frame of our own.
 
 Windows draws a caption bar above the window: an icon, the application's
 name, and three buttons. On a program that already has a toolbar that is a
@@ -218,6 +218,50 @@ def supported() -> bool:
     return sys.platform.startswith("win")
 
 
+def desktop_draws_it_well() -> bool:
+    """Is the desktop's own decoration better left alone?
+
+    Two cases, and they are opposite in character:
+
+      * A tiling window manager draws nothing on purpose. Adding a title
+        bar there is arguing with the entire point of it.
+      * KDE draws a real decoration in the user's own colour scheme, and
+        a KDE user generally wants their applications to look like KDE
+        applications.
+
+    Everything else gets ours, which in practice means GNOME under
+    Wayland -- where Qt's fallback matches neither GNOME nor us -- and
+    the long tail of desktops with no strong opinion.
+
+    Read from the environment because there is no portable way to ask.
+    XDG_CURRENT_DESKTOP is set by every desktop session; a tiling window
+    manager usually sets nothing at all, which is itself the signal.
+    """
+    import os
+
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        return False
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+    if any(name in desktop for name in ("KDE", "PLASMA", "LXQT")):
+        return True
+    # Sway sets XDG_CURRENT_DESKTOP=sway; i3 usually sets nothing, and
+    # neither draws anything we would be improving on.
+    if any(name in desktop for name in ("SWAY", "I3", "HYPRLAND", "RIVER")):
+        return True
+    if not desktop and not os.environ.get("GNOME_DESKTOP_SESSION_ID"):
+        return True                  # bare window manager, no session
+    return False
+
+
+def wanted(preference: str) -> bool:
+    """Should this program draw its own frame?"""
+    if preference == "system":
+        return False
+    if preference == "ours":
+        return True
+    return not desktop_draws_it_well()
+
+
 # ---- talking to Windows ----------------------------------------------------
 
 @lru_cache(maxsize=1)
@@ -266,7 +310,7 @@ def _structs():
             APPBARDATA, MONITORINFO)
 
 
-class NativeFrame:
+class WindowsFrame:
     """Owns the window's non-client area.
 
     Constructed with the window and the toolbar that becomes its title
@@ -332,6 +376,32 @@ class NativeFrame:
         except Exception:
             self.hwnd = 0
             return False
+
+    def detach(self) -> bool:
+        """Give the non-client area back to Windows.
+
+        `handle` refuses everything once the handle is cleared, so the
+        default window procedure resumes deciding the frame; the call
+        below is only to make it recompute now rather than at the next
+        resize.
+        """
+        if not self.hwnd:
+            return False
+        try:
+            ctypes, _w, _R, _NC, MARGINS, _P, _A, _M = _structs()
+            hwnd, self.hwnd = self.hwnd, 0
+            margins = MARGINS(0, 0, 0, 0)
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+                ctypes.c_void_p(hwnd), ctypes.byref(margins))
+            SWP_FRAMECHANGED = 0x0020
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0002, 0x0001, 0x0004
+            ctypes.windll.user32.SetWindowPos(
+                ctypes.c_void_p(hwnd), None, 0, 0, 0, 0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
+        except Exception:
+            pass
+        self.toolbar.hide_caption_buttons()
+        return True
 
     # -- the messages ------------------------------------------------------
 
@@ -478,3 +548,216 @@ class NativeFrame:
              else self.window.showMaximized())
         elif region == CLOSE:
             self.window.close()
+
+
+#: Region to the Qt edge flags `startSystemResize` wants. Built lazily so
+#: this module still imports where PySide6's enums differ.
+def _qt_edges():
+    from PySide6 import QtCore
+
+    E = QtCore.Qt.Edge
+    return {
+        TOP: E.TopEdge, BOTTOM: E.BottomEdge,
+        LEFT: E.LeftEdge, RIGHT: E.RightEdge,
+        TOPLEFT: E.TopEdge | E.LeftEdge, TOPRIGHT: E.TopEdge | E.RightEdge,
+        BOTTOMLEFT: E.BottomEdge | E.LeftEdge,
+        BOTTOMRIGHT: E.BottomEdge | E.RightEdge,
+    }
+
+
+class _LazyEdges(dict):
+    def __missing__(self, key):
+        self.update(_qt_edges())
+        return self[key]
+
+
+_EDGES_TO_QT = _LazyEdges()
+
+
+# ---- everywhere else -------------------------------------------------------
+
+class SystemFrame:
+    """Our own chrome on a plain frameless window.
+
+    Used where the desktop's own decoration is worse than ours or absent:
+    GNOME under Wayland refuses server-side decorations as policy, so Qt
+    draws a fallback that matches neither GNOME nor this program, and a
+    tiling window manager draws nothing at all and never wanted to.
+
+    **Dragging and resizing are handed back to the compositor**, through
+    `startSystemMove` and `startSystemResize`, rather than moved by
+    setting geometry. That is not a preference:
+
+      * On Wayland a client cannot position itself at all. A frameless
+        window that moved by setting its own geometry would simply not
+        move.
+      * The compositor is where snapping, edge tiling, keyboard resize
+        and touch gestures live. Doing it by hand means reimplementing
+        each one badly and losing the rest.
+
+    So this is much smaller than the Windows implementation, and shares
+    the part that matters: `hit_region` decides, exactly as it does there.
+    """
+
+    #: Cursor per resize edge.
+    _CURSORS = {
+        TOP: "SizeVerCursor", BOTTOM: "SizeVerCursor",
+        LEFT: "SizeHorCursor", RIGHT: "SizeHorCursor",
+        TOPLEFT: "SizeFDiagCursor", BOTTOMRIGHT: "SizeFDiagCursor",
+        TOPRIGHT: "SizeBDiagCursor", BOTTOMLEFT: "SizeBDiagCursor",
+    }
+
+    #: Grab margin. Wider than it looks pleasant, because a frameless
+    #: window has no visible frame to aim at and a four-pixel target is
+    #: one people miss and then complain the window cannot be resized.
+    BORDER = 6
+
+    def __init__(self, window, toolbar) -> None:
+        self.window = window
+        self.toolbar = toolbar
+        self._filter = None
+
+    def frame(self) -> Frame:
+        buttons, reserved = self.toolbar.caption_geometry()
+        return Frame(width=self.window.width(), height=self.window.height(),
+                     bar=self.toolbar.height(), border=self.BORDER,
+                     buttons=buttons, reserved=reserved,
+                     maximised=self.window.isMaximized())
+
+    def attach(self) -> bool:
+        from PySide6 import QtCore, QtGui, QtWidgets
+
+        window = self.window
+        try:
+            was_visible = window.isVisible()
+            window.setWindowFlag(
+                QtCore.Qt.WindowType.FramelessWindowHint, True)
+            self.toolbar.show_caption_buttons()
+            for kind, button in self.toolbar.caption.items():
+                button.pressed.connect(self._activate)
+            window.setMouseTracking(True)
+
+            outer = self
+
+            class _Edges(QtCore.QObject):
+                """Watches for the pointer at the window's edges.
+
+                On the application rather than the window: the central
+                widget covers the whole window, so events reach children
+                first and a filter on the window alone would never see the
+                press that starts a resize.
+                """
+
+                def eventFilter(self, watched, event):
+                    return outer._filter_event(event)
+
+            self._filter = _Edges()
+            QtWidgets.QApplication.instance().installEventFilter(self._filter)
+            if was_visible:
+                window.show()          # flags only take on the next show
+            return True
+        except Exception:
+            return False
+
+    # -- the pointer -------------------------------------------------------
+
+    def _at(self, event) -> str:
+        from PySide6 import QtCore
+
+        try:
+            local = self.window.mapFromGlobal(
+                event.globalPosition().toPoint())
+        except AttributeError:
+            return CLIENT
+        if not self.window.rect().contains(local):
+            return CLIENT
+        return hit_region(local.x(), local.y(), self.frame())
+
+    def _filter_event(self, event) -> bool:
+        from PySide6 import QtCore, QtGui
+
+        kind = event.type()
+        if kind not in (QtCore.QEvent.Type.MouseButtonPress,
+                        QtCore.QEvent.Type.MouseMove,
+                        QtCore.QEvent.Type.MouseButtonDblClick):
+            return False
+        if not self.window.isVisible():
+            return False
+        region = self._at(event)
+
+        if kind == QtCore.QEvent.Type.MouseMove:
+            # Cursor only. The move is never consumed, or every widget
+            # under the pointer would stop seeing it.
+            name = self._CURSORS.get(region)
+            if name:
+                self.window.setCursor(getattr(QtCore.Qt.CursorShape, name))
+            else:
+                self.window.unsetCursor()
+            return False
+
+        handle = self.window.windowHandle()
+        if handle is None:
+            return False
+        if kind == QtCore.QEvent.Type.MouseButtonDblClick and region == CAPTION:
+            (self.window.showNormal() if self.window.isMaximized()
+             else self.window.showMaximized())
+            return True
+        if kind != QtCore.QEvent.Type.MouseButtonPress:
+            return False
+        if event.button() is not QtCore.Qt.MouseButton.LeftButton:
+            return False
+        if region in EDGES:
+            handle.startSystemResize(_EDGES_TO_QT[region])
+            return True
+        if region == CAPTION:
+            handle.startSystemMove()
+            return True
+        return False
+
+    def _activate(self, kind: str) -> None:
+        if kind == MINIMISE:
+            self.window.showMinimized()
+        elif kind == MAXIMISE:
+            (self.window.showNormal() if self.window.isMaximized()
+             else self.window.showMaximized())
+        else:
+            self.window.close()
+
+    def detach(self) -> bool:
+        """Hand the frame back to the window manager.
+
+        The reverse of `attach`, in reverse order, and it has to be
+        complete: a left-over event filter would keep claiming presses at
+        the edges of a window that now has a real border there, and a
+        left-over override cursor would be a resize arrow that never goes
+        away.
+        """
+        from PySide6 import QtCore, QtWidgets
+
+        app = QtWidgets.QApplication.instance()
+        if self._filter is not None and app is not None:
+            app.removeEventFilter(self._filter)
+            self._filter = None
+        self.window.unsetCursor()
+        for button in self.toolbar.caption.values():
+            try:
+                button.pressed.disconnect(self._activate)
+            except (RuntimeError, TypeError):
+                pass                   # never connected, or already gone
+        self.toolbar.hide_caption_buttons()
+
+        window = self.window
+        was_visible = window.isVisible()
+        # Geometry does not survive the flag change on every window
+        # manager, so put it back by hand. Maximised is carried
+        # separately: restoring a maximised window's geometry un-maximises
+        # it, which is a state change nobody asked for.
+        maximised, geometry = window.isMaximized(), window.geometry()
+        window.setWindowFlag(QtCore.Qt.WindowType.FramelessWindowHint, False)
+        if was_visible:
+            window.show()
+            if maximised:
+                window.showMaximized()
+            else:
+                window.setGeometry(geometry)
+        return True

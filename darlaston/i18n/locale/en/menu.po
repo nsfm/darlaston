@@ -31,6 +31,11 @@ msgstr "Files…"
 msgid "menu.setup.performance"
 msgstr "Performance…"
 
+#. A checkbox. Ticked, this program draws its own title bar and window
+#. buttons; cleared, the desktop draws them in its own style.
+msgid "menu.setup.chrome"
+msgstr "Styled window frame"
+
 msgid "menu.setup.install_sdk"
 msgstr "Install camera SDK…"
 

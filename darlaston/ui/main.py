@@ -43,7 +43,8 @@ from .capture_ui import SettingsDialog, ShutterBar, SubjectField
 from .map_ui import SlideMapPanel
 from .perf_ui import PerfPanel, PerformanceDialog
 from .setup_ui import CameraDialog, MicroscopeDialog
-from .win_frame import NativeFrame
+from .frame import SystemFrame, WindowsFrame
+from .frame import wanted as frame_wanted
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
                     WaitingPage)
@@ -176,6 +177,15 @@ class MainWindow(QtWidgets.QMainWindow):
         setup.addAction(_("menu.setup.photographer"), self._open_photographer)
         setup.addAction(_("menu.setup.files"), self._open_settings)
         setup.addAction(_("menu.setup.performance"), self._open_performance)
+        # Where the desktop already draws a good title bar this is a
+        # matter of taste, and where it draws a bad one or none at all it
+        # is the difference between looking finished and not. macOS is
+        # left out: there the frame is never ours to take, only to restyle.
+        if sys.platform != "darwin":
+            self.chrome_action = setup.addAction(_("menu.setup.chrome"))
+            self.chrome_action.setCheckable(True)
+            self.chrome_action.setChecked(self._frame is not None)
+            self.chrome_action.toggled.connect(self._set_window_frame)
         setup.addSeparator()
         # Once per computer, not once per session.
         setup.addAction(_("menu.setup.install_sdk"), self._install_sdk)
@@ -1839,7 +1849,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.strip.set_live(s)
 
     #: Set once the Windows frame has been taken. None everywhere else.
-    _frame: NativeFrame | None = None
+    _frame: object | None = None
 
     def nativeEvent(self, kind, message):
         """Non-client messages, when we own the frame.
@@ -1864,19 +1874,60 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass          # a frame that misbehaves must not eat the app
         return super().nativeEvent(kind, message)
 
+    def _set_window_frame(self, ours: bool) -> None:
+        """Swap between our chrome and the platform's, without a restart.
+
+        Saved as `ours` or `system` rather than back to `auto`: once
+        somebody has touched the switch, the guess about their desktop
+        has been overruled and should stay overruled.
+        """
+        if ours == (self._frame is not None):
+            return
+        if ours:
+            took = self.take_native_frame()
+        else:
+            took = self._frame.detach()
+            self._frame = None
+        if not took and ours:
+            # Could not take it. Say so by putting the tick back rather
+            # than leaving a checked box over a window that Windows or
+            # the window manager is still drawing.
+            self.chrome_action.setChecked(False)
+            return
+        self.settings.window_frame = "ours" if ours else "system"
+        self.settings.save()
+
     def take_native_frame(self) -> bool:
-        """Draw our own title bar, on the platforms where that is ours.
+        """Draw our own title bar, where that is ours to draw.
+
+        Two implementations, because the platforms differ in what has to
+        be taken. Windows hands out the whole non-client area and a pile
+        of messages to answer about it. Everywhere else it is a frameless
+        window and two calls that hand dragging back to the compositor,
+        which is mandatory under Wayland rather than merely polite.
+
+        macOS is neither: it keeps its frame and gets restyled, in
+        `theme`.
 
         Returns whether it took. It is deliberately possible for this to
         fail and leave a perfectly ordinary window: every part of it
         reaches past Qt into the platform, and a future Windows is allowed
         to disagree.
         """
-        frame = NativeFrame(self, self.toolbar)
-        if not frame.attach():
-            return False
+        if sys.platform.startswith("win"):
+            frame = WindowsFrame(self, self.toolbar)
+            if not frame.attach():
+                return False
+            self.toolbar.show_caption_buttons()
+            # Once hit testing claims the strip, the pointer arrives as
+            # non-client messages and Qt never sees a click there.
+            for button in self.toolbar.caption.values():
+                button.deafen()
+        else:
+            frame = SystemFrame(self, self.toolbar)
+            if not frame.attach():
+                return False
         self._frame = frame
-        self.toolbar.show_caption_buttons()
         return True
 
     def shutdown(self) -> None:
@@ -2041,14 +2092,22 @@ def main() -> int:
     # title bar transparent and runs the content up under it, which leaves
     # the traffic lights floating over the toolbar -- so the toolbar gets
     # out of their way, but only if the restyle actually took.
-    if sys.platform.startswith("win"):
-        # Windows has no way to keep the native buttons and take the bar,
-        # so the whole frame is ours or none of it is. Falls back to the
-        # dark caption below if that does not take.
+    if sys.platform == "darwin":
+        # macOS keeps its own frame and its own traffic lights; only the
+        # bar is restyled, and the toolbar steps aside for the lights.
+        if theme.match_frame(win):
+            win.toolbar.inset_for_window_controls(theme.MACOS_LIGHTS)
+    elif frame_wanted(win.settings.window_frame):
+        # Ours, or the platform's, depending on the desktop and the
+        # setting. Falling back is silent and safe: a window with the
+        # system's own frame is what every version until now shipped.
         if not win.take_native_frame():
             theme.match_frame(win)
-    elif theme.match_frame(win) and sys.platform == "darwin":
-        win.toolbar.inset_for_window_controls(theme.MACOS_LIGHTS)
+        # The menu was built before the window had a handle to reframe,
+        # so the tick catches up here.
+        win.chrome_action.setChecked(win._frame is not None)
+    else:
+        theme.match_frame(win)
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and
     # Ctrl-C does nothing. A timer that does nothing at all gives the

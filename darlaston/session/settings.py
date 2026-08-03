@@ -96,6 +96,15 @@ class Settings:
     jpeg_quality: int = 95
     #: Framing guides over the live view, as a camera's viewfinder offers.
     #: Kept between sessions because it is a habit rather than a decision.
+    #: Who draws the window's title bar and buttons: auto | ours | system.
+    #:
+    #: Auto means ours everywhere except where the desktop already does it
+    #: well. KDE draws a real decoration in the desktop's own colours and
+    #: a tiling window manager deliberately draws none, so both are left
+    #: alone; GNOME under Wayland refuses server-side decorations and Qt
+    #: falls back to something that matches neither GNOME nor this
+    #: program, so there we draw our own.
+    window_frame: str = "auto"       # auto | ours | system
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built
