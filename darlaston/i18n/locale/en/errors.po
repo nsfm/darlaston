@@ -135,15 +135,15 @@ msgid "error.no_camera.heading"
 msgstr "No {what} found"
 
 msgid "error.no_camera.detail"
-msgstr "The software is working, but nothing answered on the bus."
+msgstr "The software is working, but we can't find your camera."
 
 msgid "error.no_camera.step.plugged"
 msgstr "Check that the camera is plugged in."
 
 msgid "error.no_camera.step.cable"
 msgstr ""
-"Try a different USB port, and a different cable. A marginal cable does not "
-"fail cleanly, it renegotiates to USB 2.0 and everything simply becomes slow."
+"Try a different USB port, and a different cable. Ensure you're using a USB 3.0 "
+"cable; older cables may fail or lead to slower preview and capture."
 
 msgid "error.no_camera.step.wait"
 msgstr "Some cameras take a few seconds after being plugged in."
@@ -170,7 +170,7 @@ msgstr "No permission to open the camera"
 
 msgid "error.permission.detail"
 msgstr ""
-"The camera is on the bus but this user cannot open it. Cameras need a udev "
+"The camera is present but this user cannot open it. Cameras need a udev "
 "rule to be usable without root."
 
 msgid "error.permission.step.rules"

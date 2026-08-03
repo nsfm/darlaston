@@ -2,7 +2,7 @@
   <img src="assets/wordmark.png" alt="darlaston" width="420">
 </p>
 
-Originally built for photographing large-scale diatom arrangements, _*darlaston*_ is a tool for creative microscopy. It provides a convenient workflow for focus stacking, mosaic stitching, and more, while never compromising on quality. Free to use and share, it's designed to help you capture beautiful images and share your love for the microscopic world.
+Originally built for photographing diatom arrangements, _*darlaston*_ is a tool for creative microscopy. It provides a convenient workflow for focus stacking, mosaic stitching, and more, while never compromising on quality. Free to use and share, it's designed to help you capture beautiful images and share your love for the microscopic world.
 
 Named for **Herbert William Hutton Darlaston** (1867-1949), who prepared nearly a thousand microscope slides in his first year at the bench only to give most of them away. He continued his work for the next fifty years under the promise _Every Slide Perfect_.
 
