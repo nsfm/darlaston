@@ -209,6 +209,13 @@ no title text in it, permanently.
 *Wrong looks like:* a grey bar reappearing above the toolbar, or the
 toolbar content sitting below a band rather than under it.
 
+One thing to watch on the very first run: the flags are set after
+`show()`, because the NSWindow does not exist before it. That goes
+through `QCocoaWindow::setWindowFlags`, which can decide to rebuild the
+window. These two hints only change the style mask so it should not --
+but if it ever did, the surface the live view draws on goes with it. A
+flicker of the preview at startup is the thing to report.
+
 ### 11. The traffic-light inset
 
 The toolbar starts 78 pt in so the wordmark is not underneath the
