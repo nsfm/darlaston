@@ -7,9 +7,8 @@ msgstr "Install camera SDK"
 
 msgid "sdk.heading"
 msgstr ""
-"Your camera needs a driver made by the company that built it, which "
-"darlaston cannot include. Pick your camera's brand and darlaston will "
-"download the driver and check that it works."
+"Your camera needs a driver. Pick your camera's brand and <i>darlaston</i> will "
+"download it for you."
 
 msgid "sdk.brand.label"
 msgstr "Camera brand"
@@ -45,15 +44,14 @@ msgstr ""
 #. archive has to be unzipped into. The link markup has to survive.
 msgid "sdk.detail.manual"
 msgstr ""
-"{label} does not offer a direct download link. Get the Linux driver from "
+"{label} does not offer a direct download link. Get the driver from "
 "<a href='{page}'>their website</a>, then unzip it into <code>{where}</code>."
 
 #. {where} is the directory, which has already been created by the time this
 #. is shown.
 msgid "sdk.status.opened"
 msgstr ""
-"Opened their website. Unzip the Linux driver into {where}, which has been "
-"created for you."
+"Opened their website. Please unzip the driver into {where}"
 
 #. {host} is the site the archive comes from.
 msgid "sdk.status.contacting"
@@ -61,7 +59,7 @@ msgstr "Contacting {host}…"
 
 msgid "sdk.status.installed"
 msgstr ""
-"Installed. Unplug the camera and plug it back in, and darlaston will find "
+"Installed. Unplug the camera, plug it back in, and <i>darlaston</i> will find "
 "it."
 
 #. The download bar. `%p%` is Qt's own placeholder for the percentage and

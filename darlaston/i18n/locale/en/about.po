@@ -1,19 +1,15 @@
-# The About window: who the program is named after.
+# The About window / who the program is named after.
 
 msgid "about.title"
 msgstr "About darlaston"
 
-#. The program's own name, which is not translated, only placed.
+# Don't translate this one.
 msgid "about.wordmark"
 msgstr "darlaston"
 
-#. {tagline} is Darlaston's own line from a 1917 price list. It arrives
-#. already in English and must stay that way: it is a quotation from a
-#. real person, so translating it would put words in his mouth. Move it
-#. within the sentence if the grammar needs it, but do not render it.
 msgid "about.body"
 msgstr ""
-"Herbert William Hutton Darlaston (1867-1949) was an amateur naturalist "
+"<b>Herbert William Hutton Darlaston</b> (1867-1949) was an amateur naturalist "
 "from Birmingham. In 1888 a friend introduced him to an elderly "
 "microscopist named Neville, and he came away \"in a hot fever to do "
 "similar work\". He prepared nearly a thousand slides that year; over the "
