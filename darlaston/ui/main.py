@@ -44,6 +44,7 @@ from .map_ui import SlideMapPanel
 from .perf_ui import PerfPanel, PerformanceDialog
 from .setup_ui import CameraDialog, MicroscopeDialog
 from .frame import SystemFrame, TitleDrag, WindowsFrame
+from .update_ui import UpdateDialog, UpdateWatch, mark_as_update
 from .frame import wanted as frame_wanted
 from .sdk_ui import SdkDialog
 from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
@@ -186,6 +187,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chrome_action.setCheckable(True)
             self.chrome_action.setChecked(self._frame is not None)
             self.chrome_action.toggled.connect(self._set_window_frame)
+        # Absent until there is something to say. An "up to date" line
+        # that is always there is a line nobody reads and a menu one
+        # entry longer for ever.
+        self.update_action = setup.addAction(_("menu.setup.update"))
+        self.update_action.setVisible(False)
+        self.update_action.triggered.connect(self._show_update)
+        self._update_release = None
+
         setup.addSeparator()
         # Once per computer, not once per session.
         setup.addAction(_("menu.setup.install_sdk"), self._install_sdk)
@@ -1877,6 +1886,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass          # a frame that misbehaves must not eat the app
         return super().nativeEvent(kind, message)
 
+    def watch_for_updates(self) -> None:
+        """Ask once, quietly, if the setting allows it.
+
+        Started from `main` rather than the constructor so that a window
+        built by a test never reaches the network.
+        """
+        if not self.settings.check_for_updates:
+            return
+        self._update_watch = UpdateWatch(self)
+        self._update_watch.found.connect(self._update_found)
+        self._update_watch.start()
+
+    def _update_found(self, release) -> None:
+        """One entry appears in Setup. Nothing else happens.
+
+        No dialog on arrival: it would land four seconds after launch, on
+        top of whatever somebody had already started doing, for news that
+        keeps.
+        """
+        self._update_release = release
+        self.update_action.setVisible(True)
+        mark_as_update(self.update_action)
+
+    def _show_update(self) -> None:
+        if self._update_release is None:
+            return
+        UpdateDialog(self._update_release, self).exec()
+
     def _set_window_frame(self, ours: bool) -> None:
         """Swap between our chrome and the platform's, without a restart.
 
@@ -2134,6 +2171,10 @@ def main() -> int:
             drag = TitleDrag(win, win.toolbar, lights=theme.MACOS_LIGHTS)
             if drag.attach():
                 win._frame = drag
+
+    # Last, and only if the setting allows it. Nothing above this line
+    # touches the network.
+    win.watch_for_updates()
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and
     # Ctrl-C does nothing. A timer that does nothing at all gives the

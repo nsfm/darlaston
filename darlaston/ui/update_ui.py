@@ -20,9 +20,47 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import __version__
 from ..i18n import _
-from ..update import Release, latest_release, newer
+from ..update import Release, latest_release, newer, parse
 from . import theme
 from .framed import FramedDialog
+
+
+def mark_as_update(action) -> None:
+    """Make one menu entry stand out from the ones above it.
+
+    A menu item cannot be given a colour by stylesheet -- the rule
+    applies to the whole menu or to nothing -- so the two levers that
+    work everywhere are the font and an icon. Both are used, quietly: a
+    brass disc and a bold label.
+
+    The disc rather than an exclamation mark or a badge, because this
+    program already means "state, at a glance" with a coloured dot in the
+    status bar. Reusing that is one less thing to learn; inventing a new
+    mark for one menu entry is one more.
+    """
+    from PySide6 import QtGui
+
+    size = 12
+    pip = QtGui.QPixmap(size, size)
+    pip.fill(QtGui.QColor(0, 0, 0, 0))
+    p = QtGui.QPainter(pip)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    # A soft ring under it, the way the streaming dot glows. Enough to
+    # catch the eye in a list of plain entries without being a warning:
+    # a new version is good news, not a fault.
+    glow = QtGui.QColor(theme.BRASS)
+    glow.setAlpha(70)
+    p.setBrush(glow)
+    p.drawEllipse(0, 0, size, size)
+    p.setBrush(QtGui.QColor(theme.BRASS))
+    p.drawEllipse(3, 3, size - 6, size - 6)
+    p.end()
+
+    action.setIcon(QtGui.QIcon(pip))
+    font = action.font()
+    font.setBold(True)
+    action.setFont(font)
 
 
 class UpdateWatch(QtCore.QObject):
@@ -83,8 +121,14 @@ class UpdateDialog(FramedDialog):
         heading = QtWidgets.QLabel(_("update.heading"))
         heading.setProperty("role", "heading")
 
+        # The tidy form of our own version, not the raw one. A build from
+        # between releases calls itself `0.7.1.dev1+gdfa022e2a.d20260802`,
+        # which is the right thing to put in a bug report and the wrong
+        # thing to put in front of somebody deciding whether to upgrade.
+        # The full string is still in the About box, where it is wanted.
+        here = parse(__version__)
         versions = QtWidgets.QLabel(
-            _("update.versions", current=__version__,
+            _("update.versions", current=str(here) if here else __version__,
               latest=str(release.version)))
         versions.setStyleSheet(
             f"font-family: '{fam['mono']}'; font-size: 11px;"

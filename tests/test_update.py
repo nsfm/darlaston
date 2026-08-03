@@ -133,3 +133,87 @@ def test_nothing_here_reaches_the_network_by_itself():
     for name in ("parse", "newer"):
         source = inspect.getsource(getattr(update, name))
         assert "urlopen" not in source and "Request" not in source
+
+
+# ---- the wiring, which is where a check turns into an interruption --------
+
+def test_a_window_built_by_a_test_never_reaches_the_network(qapp):
+    """The watch starts from `main`, not from the constructor. Every test
+    in this suite builds a MainWindow; if that asked GitHub anything, the
+    suite would be making hundreds of requests and would fail differently
+    on a train."""
+    import inspect
+
+    from darlaston.ui.main import MainWindow
+
+    source = inspect.getsource(MainWindow.__init__)
+    assert "UpdateWatch" not in source
+    assert "watch_for_updates" not in source
+
+
+def test_the_setting_is_obeyed(qapp):
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    win.settings.check_for_updates = False
+    win.watch_for_updates()
+    assert not hasattr(win, "_update_watch"), \
+        "looked anyway, with the setting off"
+    win.shutdown()
+
+
+def test_the_menu_entry_appears_only_when_there_is_something_to_say(qapp):
+    """Not a dialog on arrival: it would land seconds after launch, over
+    whatever somebody had already started doing, for news that keeps."""
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+    from darlaston.update import Release, Version
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    assert not win.update_action.isVisible(), "there before there was news"
+
+    win._update_found(Release(version=Version(9, 9, 9), tag="v9.9.9",
+                              page="https://example.invalid/releases",
+                              notes="notes"))
+    assert win.update_action.isVisible()
+    assert not win.update_action.icon().isNull(), "nothing to catch the eye"
+    assert win.update_action.font().bold()
+    win.shutdown()
+
+
+def test_the_dialog_says_what_it_will_actually_do(qapp):
+    """It opens a web page. It does not install anything, and a person who
+    expects an installer and gets a browser has been misled by us."""
+    from PySide6 import QtWidgets
+
+    from darlaston.i18n import _
+    from darlaston.ui.update_ui import UpdateDialog
+    from darlaston.update import Release, Version
+
+    release = Release(version=Version(0, 9, 0), tag="v0.9.0",
+                      page="https://example.invalid/releases",
+                      notes="Present mode, and a scale bar.")
+    dialog = UpdateDialog(release)
+    text = " ".join(w.text() for w in dialog.findChildren(QtWidgets.QLabel))
+    assert "0.9.0" in text
+    assert _("update.body").split(".")[0] in text
+    dialog.close()
+
+
+def test_long_release_notes_are_cut_rather_than_scrolled(qapp):
+    """A wall of commit subjects in a dialog is not something anybody
+    reads, and a dialog taller than the screen cannot be dismissed."""
+    from PySide6 import QtWidgets
+
+    from darlaston.ui.update_ui import UpdateDialog
+    from darlaston.update import Release, Version
+
+    huge = "\n".join(f"* a change, number {i}" for i in range(400))
+    dialog = UpdateDialog(Release(version=Version(0, 9, 0), tag="v0.9.0",
+                                  page="https://example.invalid",
+                                  notes=huge))
+    shown = max((w.text() for w in dialog.findChildren(QtWidgets.QLabel)),
+                key=len)
+    assert len(shown) < 800, f"put {len(shown)} characters in a dialog"
+    dialog.close()
