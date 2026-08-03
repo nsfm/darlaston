@@ -9,8 +9,7 @@ msgstr "depth"
 
 msgid "stack.view.tooltip"
 msgstr ""
-"Tint each region by the slice that won it: the depth data,\n"
-"showing itself while it is still being collected."
+"Tint each region according to depth."
 
 #. The doubled ampersand is Qt's escape for a literal one. A single & would
 #. disappear and underline the letter after it instead.
@@ -40,7 +39,7 @@ msgstr ""
 "mesh, all written beside the stack."
 
 msgid "stack.options.tooltip"
-msgstr "Merge options: how the stack becomes one image."
+msgstr "Options for merging the stack into one image."
 
 #. ---- merge options ------------------------------------------------------
 #. Three knobs, each a statement about the subject that the merge cannot
@@ -96,7 +95,7 @@ msgid "stack.wiggle.normal.label"
 msgstr "racking down goes deeper"
 
 msgid "stack.wiggle.inverted.label"
-msgstr "inverted: my stacks rock backwards"
+msgstr "inverted: I rack focus the other way"
 
 #. ---- the running composite ----------------------------------------------
 

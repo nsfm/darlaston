@@ -19,9 +19,8 @@ msgstr "retrying in {seconds}s"
 #. Preview resolution, in the status bar.
 msgid "shell.preview.tooltip"
 msgstr ""
-"Live preview resolution. Captures are always full resolution;\n"
-"this only trades preview detail for frame rate, and every\n"
-"per-pixel stage of the live loop scales with it."
+"Preview resolution. Captures are always full resolution.\n"
+"Smaller previews improve framerate."
 
 #. One entry in the resolution list: pixel dimensions and megapixels.
 msgid "shell.preview.resolution"
@@ -30,10 +29,7 @@ msgstr "{w}×{h}  {mp} MP"
 #. Frame rate, beside resolution.
 msgid "shell.rate.tooltip"
 msgstr ""
-"How many frames a second to ask the camera for.\n"
-"Frames we cannot analyse in time are still pulled over USB with\n"
-"the driver holding the interpreter, so asking for fewer beats\n"
-"discarding more. Watch the drop percentage to the right."
+"How many frames a second to ask the camera for."
 
 msgid "shell.rate.uncapped"
 msgstr "uncapped"
@@ -100,8 +96,8 @@ msgstr "no objectives yet"
 
 msgid "objective.unconfigured.tooltip"
 msgstr ""
-"Nothing has been put in this turret. Setup > Microscopes is where\n"
-"the objectives and how many positions there are get described."
+"Nothing has been put in this turret.\n"
+"Please set up your scope under Setup > Microscopes."
 
 #. Appended to the objective when a rotation was detected but never answered.
 msgid "objective.uncertain"
@@ -109,6 +105,5 @@ msgstr "  ?"
 
 msgid "objective.uncertain.tooltip"
 msgstr ""
-"A turret rotation was detected and never answered, so this may no longer "
-"be\nthe objective in the light path. Step it, or answer the next prompt, "
-"to be sure."
+"A turret rotation was detected, so this may no longer "
+"be the right objective. Please double check."

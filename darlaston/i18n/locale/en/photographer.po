@@ -8,10 +8,10 @@ msgid "photographer.name.label"
 msgstr "Name"
 
 msgid "photographer.name.placeholder"
-msgstr "your name, as you want it credited"
+msgstr "your name"
 
 msgid "photographer.licence.label"
-msgstr "Licence"
+msgstr "License"
 
 msgid "photographer.notice.label"
 msgstr "Notice"
@@ -91,5 +91,4 @@ msgstr "Copyright: {notice}"
 
 msgid "photographer.summary.detail.empty"
 msgstr ""
-"Nothing set, so captures carry no attribution, which is fine until you "
-"share one."
+"Nothing set, so captures carry no attribution."
