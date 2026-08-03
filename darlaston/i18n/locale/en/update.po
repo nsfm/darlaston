@@ -1,0 +1,33 @@
+# A newer version exists. Notify and hand off -- nothing here downloads
+# or installs anything, so the words must not promise that it will.
+
+#. The menu entry, which only appears when there is something to say.
+#. Never present otherwise: an "up to date" line that is there all the
+#. time is a line nobody reads and a menu one entry longer for ever.
+msgid "menu.setup.update"
+msgstr "Update available…"
+
+msgid "update.title"
+msgstr "Update available"
+
+msgid "update.heading"
+msgstr "A newer darlaston is out"
+
+#. Two version numbers, side by side, in the monospaced face.
+msgid "update.versions"
+msgstr "{current}  →  {latest}"
+
+#. Says what will happen, because the button opens a browser rather than
+#. installing anything, and a person who expects an installer and gets a
+#. web page has been misled by us.
+msgid "update.body"
+msgstr ""
+"Downloads for every platform are on the release page. Nothing is "
+"installed for you: pick the file for your machine, and replace this "
+"copy with it."
+
+msgid "update.open"
+msgstr "Open the release page"
+
+msgid "update.later"
+msgstr "Not now"

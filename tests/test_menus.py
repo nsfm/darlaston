@@ -20,8 +20,11 @@ def win(qapp):
 
 
 def entries(win, menu):
+    # Visible ones only. An entry that is not shown is not in the menu as
+    # far as anybody using it is concerned, and the update notice is
+    # deliberately absent until there is something to say.
     return [a.text() for a in win.toolbar.menus[menu].actions()
-            if not a.isSeparator()]
+            if not a.isSeparator() and a.isVisible()]
 
 
 def test_three_menus_on_one_axis(win):
@@ -65,6 +68,8 @@ def test_ellipsis_means_a_further_choice_follows(win):
         for a in menu.actions():
             if a.isSeparator() or a.menu():
                 continue
+            # Hidden entries are held to the rule too: they become visible
+            # later and nobody re-reads the label when they do.
             if a.isCheckable():
                 assert not a.text().endswith("…"), f"{name}/{a.text()}"
             else:

@@ -413,3 +413,156 @@ def test_sdk_verification_accepts_each_platform_build(monkeypatch, tmp_path):
         assert found == root, f"{plat}: found {found}"
         # And never the android build, whatever the platform.
         assert "android" not in str(found)
+
+
+def test_an_empty_enumeration_is_waiting_and_not_a_fault():
+    """The macOS bug, reproduced without macOS.
+
+    `usb.present` can only read sysfs, so off Linux it has to guess yes --
+    which means the session attempts an open, the SDK reports an empty
+    enumeration, and that used to arrive as `CameraProblem` with numbered
+    steps and a Copy button. Linux never saw it, because sysfs answered
+    first and the session showed a calm waiting screen instead.
+
+    Same drawer, same absent camera, two completely different screens.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.errors import NoCameraFound
+    from darlaston.camera.session import CameraSession
+
+    seen = []
+
+    class _Absent:
+        def open(self):
+            raise NoCameraFound("ToupTek-family camera")
+
+    session = CameraSession(lambda: _Absent(), on_status=seen.append,
+                            on_frame=lambda _f: None,
+                            is_present=lambda: True)      # what macOS says
+    session._try_connect()
+
+    assert seen, "nothing was published at all"
+    last = seen[-1]
+    assert last.state is CameraState.DISCONNECTED, \
+        f"an absent camera reported {last.state}, not a waiting state"
+    assert not last.steps, "waiting is not a fault and needs no instructions"
+    assert not last.detail, "and no explanation of a failure that did not fail"
+    assert last.message
+
+
+def test_a_retry_that_changes_nothing_says_nothing():
+    """The flash. Each cycle used to publish CONNECTING -- heading only,
+    no detail, no steps -- and then the failure again with all of it, so
+    the page collapsed and re-expanded every few seconds."""
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.session import CameraSession
+
+    seen = []
+
+    class _Broken:
+        def open(self):
+            raise RuntimeError("the camera is on fire")
+
+    session = CameraSession(lambda: _Broken(), on_status=seen.append,
+                            on_frame=lambda _f: None,
+                            is_present=lambda: True)
+    session.RETRY_BACKOFF = (0.0,)
+
+    for _ in range(4):
+        try:
+            session._try_connect()
+        except Exception as why:
+            session._fail(why)
+
+    connecting = [s for s in seen if s.state is CameraState.CONNECTING]
+    assert len(connecting) == 1, (
+        f"said 'connecting' {len(connecting)} times for one unchanging "
+        f"failure; each one collapses the page and the next expands it")
+
+
+def test_the_waiting_message_is_not_written_twice_in_english():
+    """It was, in two places in the session, duplicating a catalogue entry
+    that already said the same words. The kind of thing an i18n pass
+    misses because it is in the camera layer, not the interface."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent
+              / "darlaston" / "camera" / "session.py").read_text()
+    assert "Waiting for a camera" not in source
+    assert '_("session.waiting")' in source
+
+
+def test_the_advice_is_asked_for_rather_than_offered(qapp):
+    """The waiting screen stays calm and the advice is a click away.
+
+    It used to arrive as a fault -- red heading, numbered steps -- for
+    the ordinary state of having nothing plugged in yet, which is how
+    macOS came to show an error screen where Linux showed a calm one.
+    Removing it altogether lost real advice; putting it behind a question
+    keeps both.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.errors import NoCameraFound
+    from darlaston.camera.session import SessionStatus
+    from darlaston.i18n import _
+    from darlaston.ui.shell import WaitingPage
+
+    page = WaitingPage()
+
+    page.update_status(SessionStatus(CameraState.DISCONNECTED,
+                                     message=_("session.waiting")))
+    assert page.trouble.isVisibleTo(page), "no way to ask while waiting"
+    assert not page.steps.isVisibleTo(page), "offered without being asked"
+
+    # On a real fault the steps are already on screen, and a button
+    # offering to explain what is written above it makes the screen look
+    # less trustworthy rather than more.
+    problem = NoCameraFound("camera")
+    page.update_status(SessionStatus(
+        CameraState.ERROR, message=problem.heading, detail=problem.detail,
+        steps=problem.steps, kind=problem.kind))
+    assert page.steps.isVisibleTo(page)
+    assert not page.trouble.isVisibleTo(page), \
+        "offered to explain the instructions printed above it"
+
+
+def test_the_advice_has_one_source(qapp):
+    """The dialog reads its steps from `NoCameraFound` rather than
+    restating them. Two copies of the same advice is one copy going stale
+    with nobody knowing which."""
+    from darlaston.camera.errors import NoCameraFound
+    from darlaston.ui.shell import TroubleDialog
+    from PySide6 import QtWidgets
+
+    dialog = TroubleDialog()
+    shown = " ".join(w.text() for w in dialog.findChildren(QtWidgets.QLabel))
+    for step in NoCameraFound("camera").steps:
+        assert step in shown, f"the dialog has drifted from the error: {step}"
+    dialog.close()
+
+
+def test_a_slow_link_is_named_only_when_it_is_slow(qapp):
+    """A camera that is on the bus but negotiated USB 2.0 is a different
+    problem from no camera at all, and the one people spend longest
+    blaming the camera for."""
+    from PySide6 import QtWidgets
+
+    from darlaston.camera.usb import LinkInfo
+    from darlaston.ui.shell import TroubleDialog
+
+    def text_of(link):
+        dialog = TroubleDialog(link)
+        out = " ".join(w.text() for w in dialog.findChildren(QtWidgets.QLabel))
+        dialog.close()
+        return out
+
+    # Compared against the advice itself rather than a phrase from it:
+    # "USB 2.0" also appears in the numbered steps, so a substring check
+    # passes whether or not the link advice was added at all.
+    slow = LinkInfo(speed_mbps=480, port="1-2")
+    assert slow.advice and slow.advice in text_of(slow)
+
+    fast = LinkInfo(speed_mbps=5000, port="1-2")
+    assert fast.advice is None, "a healthy link has nothing to say"
+    assert slow.advice not in text_of(fast)
+    assert slow.advice not in text_of(None)

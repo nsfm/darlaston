@@ -105,6 +105,13 @@ class Settings:
     #: falls back to something that matches neither GNOME nor this
     #: program, so there we draw our own.
     window_frame: str = "auto"       # auto | ours | system
+    #: Ask GitHub, once per launch, whether a newer release exists. On by
+    #: default, because an adopter running a version with a fixed bug in
+    #: it is the failure this exists to prevent -- and switchable, because
+    #: a program used on an institution's network should never be the
+    #: reason somebody has to account for an outbound request they did not
+    #: choose to make.
+    check_for_updates: bool = True
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built
