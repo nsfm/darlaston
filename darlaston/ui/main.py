@@ -1848,18 +1848,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.focus.set_data(s.focus_trace, s.focus_fraction_of_peak)
             self.strip.set_live(s)
 
-    #: Set once the Windows frame has been taken. None everywhere else.
+    #: Whoever is drawing the frame: a `WindowsFrame`, a `SystemFrame`, or
+    #: None where the platform draws its own.
     _frame: object | None = None
 
     def nativeEvent(self, kind, message):
         """Non-client messages, when we own the frame.
 
-        Only reached on Windows, and only after NativeFrame.attach has
-        succeeded. Anything it does not claim falls through to Qt exactly
-        as before, so a message this does not understand behaves the way
-        it always did.
+        Only reached on Windows, and only after `WindowsFrame.attach` has
+        succeeded -- the `SystemFrame` used everywhere else answers Qt
+        events instead and has no `handle`. Anything not claimed falls
+        through to Qt exactly as before, so a message this does not
+        understand behaves the way it always did.
         """
-        if self._frame is not None and kind == b"windows_generic_MSG":
+        if (kind == b"windows_generic_MSG"
+                and hasattr(self._frame, "handle")):
             try:
                 import ctypes
                 from ctypes import wintypes
