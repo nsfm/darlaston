@@ -26,6 +26,10 @@ calibration/
 # build referenced a file that existed on one laptop and in no clone.
 !packaging/icons/*.png
 
+# README art, for the same reason and with a worse failure: an asset
+# that is not committed renders as a broken image for every reader.
+!assets/*.png
+
 # Written by setuptools-scm at build time, from the git tags.
 darlaston/_version.py
 
