@@ -135,13 +135,21 @@ def difference(one: bytes, two: bytes) -> tuple[float, int]:
 
 
 #: How far a stored image may sit from a freshly drawn one and still be
-#: the same mark. Two processors rendering the same path disagree by a
-#: level or two on antialiased edges and no more; the smallest deliberate
-#: change measured -- a fifth of a percent on one geometry constant --
-#: moves the mean thirty times this and the worst pixel to 19. So there
-#: is a wide gap to sit in, and this sits near the bottom of it.
-TOLERANCE_MEAN = 0.005
-TOLERANCE_MAX = 8
+#: the same mark. Both numbers are measured rather than picked.
+#:
+#: The worst pixel is the real discriminator. Two processors rendering
+#: the same path disagree by exactly **one** level on antialiased edges
+#: -- that is what a build machine reported against files written here --
+#: while the smallest deliberate change I could make, a fifth of a
+#: percent on one geometry constant, moves the worst pixel to 19. A
+#: nineteen-fold gap, and this sits near the bottom of it.
+#:
+#: The mean is the second opinion, for a change that is shallow but
+#: everywhere: a one-level shift of the brass moves no pixel far but
+#: moves nearly all of them. Observed noise is 0.0069 on the .ico, whose
+#: 16 px entries are mostly edge; the same geometry change reads 0.05.
+TOLERANCE_MEAN = 0.02
+TOLERANCE_MAX = 4
 
 
 def write(directory: Path = OUT) -> dict[Path, bytes]:

@@ -891,6 +891,12 @@ class WindowsFrame:
 
             non_client = message in (WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN,
                                      WM_NCLBUTTONUP)
+            if not (non_client or self._hot or self._down):
+                # A client-area move or release with nothing lit and
+                # nothing held cannot change anything, and working out
+                # where it landed costs a hit test. This runs for every
+                # mouse move over a window showing a live preview.
+                return False, 0
             # A non-client message carries the hit-test result in wParam
             # already. A client one carries client coordinates in lParam.
             region = (_REGION_OF.get(wparam, "") if non_client

@@ -853,3 +853,25 @@ def test_the_capture_is_released_on_every_path_that_clears_the_press(
     assert not frame._down and bar.state == ("", "")
     assert "ReleaseCapture" not in user32.calls, \
         "took the capture back off whoever the system just gave it to"
+
+
+def test_an_idle_client_move_costs_nothing(monkeypatch):
+    """This runs inside the window procedure for every mouse move over a
+    window showing a live preview. With nothing lit and nothing held, a
+    move in the client area cannot change anything, so it must not pay
+    for a hit test to find that out."""
+    from darlaston.ui.frame import CLOSE, WM_MOUSEMOVE, WM_NCMOUSEMOVE
+
+    frame, _bar, _user32, _fired = _machine(monkeypatch)
+    asked = []
+    real = frame._at_client
+    monkeypatch.setattr(frame, "_at_client",
+                        lambda lp: (asked.append(lp), real(lp))[1])
+
+    _client(frame, WM_MOUSEMOVE, 600, 400)
+    assert asked == [], "worked out where an idle move landed"
+
+    # But once something is lit it has to look, or the hover never clears.
+    _nc(frame, WM_NCMOUSEMOVE, CLOSE)
+    _client(frame, WM_MOUSEMOVE, 600, 400)
+    assert len(asked) == 1
