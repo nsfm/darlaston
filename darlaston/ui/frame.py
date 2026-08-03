@@ -976,7 +976,14 @@ class SystemFrame:
 
         window = self.window
         try:
+            # Before the window is up, the flag simply applies. After, Qt
+            # destroys the native window and builds another, so the
+            # geometry has to be put back by hand and the surface the live
+            # view draws on is rebuilt. Startup takes the first path; the
+            # menu toggle takes the second.
             was_visible = window.isVisible()
+            geometry = window.geometry()
+            maximised = window.isMaximized()
             window.setWindowFlag(
                 QtCore.Qt.WindowType.FramelessWindowHint, True)
             self.toolbar.show_caption_buttons()
@@ -1002,6 +1009,10 @@ class SystemFrame:
             QtWidgets.QApplication.instance().installEventFilter(self._filter)
             if was_visible:
                 window.show()          # flags only take on the next show
+                if maximised:
+                    window.showMaximized()
+                else:
+                    window.setGeometry(geometry)
             return True
         except Exception:
             return False

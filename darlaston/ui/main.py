@@ -2093,17 +2093,15 @@ def main() -> int:
     theme.load_fonts()
     theme.identify(app)                  # after the fonts: the mark is a letter
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
-    win.show()
-    # Needs a native handle, so after show(). On macOS this makes the
-    # title bar transparent and runs the content up under it, which leaves
-    # the traffic lights floating over the toolbar -- so the toolbar gets
-    # out of their way, but only if the restyle actually took.
-    if sys.platform == "darwin":
-        # macOS keeps its own frame and its own traffic lights; only the
-        # bar is restyled, and the toolbar steps aside for the lights.
-        if theme.match_frame(win):
-            theme.follow_window_controls(win, win.toolbar)
-    elif frame_wanted(win.settings.window_frame):
+    # Before show(), where the platform allows it. Changing a window flag
+    # on a window that is already up destroys the native window and makes
+    # a new one, which is a visible flash and, more to the point, tears
+    # down and rebuilds the surface the live view draws on. `winId()`
+    # creates the handle these need without showing anything.
+    #
+    # macOS is the exception and has to wait: its NSWindow does not exist
+    # until the window is shown, so `[view window]` before that is nil.
+    if sys.platform != "darwin" and frame_wanted(win.settings.window_frame):
         # Ours, or the platform's, depending on the desktop and the
         # setting. Falling back is silent and safe: a window with the
         # system's own frame is what every version until now shipped.
@@ -2112,8 +2110,16 @@ def main() -> int:
         # The menu was built before the window had a handle to reframe,
         # so the tick catches up here.
         win.chrome_action.setChecked(win._frame is not None)
-    else:
+    elif sys.platform != "darwin":
         theme.match_frame(win)
+
+    win.show()
+
+    if sys.platform == "darwin":
+        # macOS keeps its own frame and its own traffic lights; only the
+        # bar is restyled, and the toolbar steps aside for the lights.
+        if theme.match_frame(win):
+            theme.follow_window_controls(win, win.toolbar)
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and
     # Ctrl-C does nothing. A timer that does nothing at all gives the
