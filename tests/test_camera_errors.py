@@ -490,3 +490,79 @@ def test_the_waiting_message_is_not_written_twice_in_english():
               / "darlaston" / "camera" / "session.py").read_text()
     assert "Waiting for a camera" not in source
     assert '_("session.waiting")' in source
+
+
+def test_the_advice_is_asked_for_rather_than_offered(qapp):
+    """The waiting screen stays calm and the advice is a click away.
+
+    It used to arrive as a fault -- red heading, numbered steps -- for
+    the ordinary state of having nothing plugged in yet, which is how
+    macOS came to show an error screen where Linux showed a calm one.
+    Removing it altogether lost real advice; putting it behind a question
+    keeps both.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.errors import NoCameraFound
+    from darlaston.camera.session import SessionStatus
+    from darlaston.i18n import _
+    from darlaston.ui.shell import WaitingPage
+
+    page = WaitingPage()
+
+    page.update_status(SessionStatus(CameraState.DISCONNECTED,
+                                     message=_("session.waiting")))
+    assert page.trouble.isVisibleTo(page), "no way to ask while waiting"
+    assert not page.steps.isVisibleTo(page), "offered without being asked"
+
+    # On a real fault the steps are already on screen, and a button
+    # offering to explain what is written above it makes the screen look
+    # less trustworthy rather than more.
+    problem = NoCameraFound("camera")
+    page.update_status(SessionStatus(
+        CameraState.ERROR, message=problem.heading, detail=problem.detail,
+        steps=problem.steps, kind=problem.kind))
+    assert page.steps.isVisibleTo(page)
+    assert not page.trouble.isVisibleTo(page), \
+        "offered to explain the instructions printed above it"
+
+
+def test_the_advice_has_one_source(qapp):
+    """The dialog reads its steps from `NoCameraFound` rather than
+    restating them. Two copies of the same advice is one copy going stale
+    with nobody knowing which."""
+    from darlaston.camera.errors import NoCameraFound
+    from darlaston.ui.shell import TroubleDialog
+    from PySide6 import QtWidgets
+
+    dialog = TroubleDialog()
+    shown = " ".join(w.text() for w in dialog.findChildren(QtWidgets.QLabel))
+    for step in NoCameraFound("camera").steps:
+        assert step in shown, f"the dialog has drifted from the error: {step}"
+    dialog.close()
+
+
+def test_a_slow_link_is_named_only_when_it_is_slow(qapp):
+    """A camera that is on the bus but negotiated USB 2.0 is a different
+    problem from no camera at all, and the one people spend longest
+    blaming the camera for."""
+    from PySide6 import QtWidgets
+
+    from darlaston.camera.usb import LinkInfo
+    from darlaston.ui.shell import TroubleDialog
+
+    def text_of(link):
+        dialog = TroubleDialog(link)
+        out = " ".join(w.text() for w in dialog.findChildren(QtWidgets.QLabel))
+        dialog.close()
+        return out
+
+    # Compared against the advice itself rather than a phrase from it:
+    # "USB 2.0" also appears in the numbered steps, so a substring check
+    # passes whether or not the link advice was added at all.
+    slow = LinkInfo(speed_mbps=480, port="1-2")
+    assert slow.advice and slow.advice in text_of(slow)
+
+    fast = LinkInfo(speed_mbps=5000, port="1-2")
+    assert fast.advice is None, "a healthy link has nothing to say"
+    assert slow.advice not in text_of(fast)
+    assert slow.advice not in text_of(None)

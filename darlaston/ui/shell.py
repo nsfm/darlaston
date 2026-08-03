@@ -12,6 +12,7 @@ from ..camera.base import CameraState
 from ..camera.session import FRAMERATES
 from ..i18n import _
 from . import icons, theme
+from .framed import FramedDialog
 
 
 class Dot(QtWidgets.QWidget):
@@ -575,6 +576,65 @@ def _wraps(label: QtWidgets.QLabel) -> None:
     label.setSizePolicy(policy)
 
 
+class TroubleDialog(FramedDialog):
+    """Why a camera might not be showing up, when somebody asks.
+
+    The advice is read from `NoCameraFound` rather than written again
+    here. That error is the one place this project says what to try when
+    nothing answers, and a second copy in a dialog is a second copy to
+    keep in step -- which, in practice, means one of them going stale and
+    nobody knowing which.
+    """
+
+    def __init__(self, link=None, parent=None) -> None:
+        super().__init__(parent, width=430)
+        self.setWindowTitle(_("shell.trouble.title"))
+
+        from ..camera.errors import NoCameraFound
+
+        problem = NoCameraFound(_("shell.trouble.what"))
+
+        heading = QtWidgets.QLabel(_("shell.trouble.title"))
+        heading.setProperty("role", "heading")
+
+        body = QtWidgets.QLabel(problem.detail)
+        body.setWordWrap(True)
+        body.setProperty("role", "body")
+
+        items = "".join(
+            f"<tr><td valign='top' style='padding-right:8px'>{i}.</td>"
+            f"<td style='padding-bottom:6px'>{step}</td></tr>"
+            for i, step in enumerate(problem.steps, 1))
+        steps = QtWidgets.QLabel(f"<table>{items}</table>")
+        steps.setWordWrap(True)
+        steps.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        steps.setProperty("role", "body")
+
+        col = self.content
+        col.addWidget(heading)
+        col.addWidget(body)
+        col.addSpacing(4)
+        col.addWidget(steps)
+
+        # Only when there is a camera on the bus and it came up slow --
+        # which is a different problem from not finding one at all, and
+        # the one people spend longest blaming the camera for.
+        if link is not None and getattr(link, "advice", None):
+            slow = QtWidgets.QLabel(link.advice)
+            slow.setWordWrap(True)
+            slow.setProperty("role", "key")
+            col.addSpacing(6)
+            col.addWidget(slow)
+
+        close = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Close)
+        close.rejected.connect(self.reject)
+        close.accepted.connect(self.reject)
+        col.addSpacing(12)
+        col.addWidget(close)
+        self.finish()
+
+
 class WaitingPage(QtWidgets.QWidget):
     """No camera, connecting, or failed to open.
 
@@ -625,6 +685,20 @@ class WaitingPage(QtWidgets.QWidget):
         self.install_sdk = QtWidgets.QPushButton(_("shell.waiting.install"))
         self.install_sdk.clicked.connect(self.install_sdk_requested)
         self.install_sdk.hide()
+        # Asked for, not offered. The advice used to arrive as a fault
+        # -- red heading, numbered steps -- for the ordinary state of
+        # having nothing plugged in yet, which is how macOS came to show
+        # an error screen where Linux showed a calm one. Behind a
+        # question, the calm screen stays calm and the advice is still
+        # a click away for the person who needs it.
+        self.trouble = QtWidgets.QPushButton(_("shell.waiting.trouble"))
+        # Styled like the button beside it, deliberately. Both are quiet
+        # secondary things offered while nothing is wrong, and giving the
+        # question its own look would make it the loudest thing on a
+        # screen whose whole job is to be calm.
+        self.trouble.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.trouble.clicked.connect(self._troubleshoot)
+
         self.copy_btn = QtWidgets.QPushButton(_("shell.waiting.copy"))
         self.copy_btn.setProperty("role", "seg")
         self.copy_btn.clicked.connect(self._copy)
@@ -635,6 +709,7 @@ class WaitingPage(QtWidgets.QWidget):
         buttons.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         buttons.addWidget(self.install_sdk)
         buttons.addWidget(self.synthetic)
+        buttons.addWidget(self.trouble)
         buttons.addWidget(self.copy_btn)
         row = QtWidgets.QWidget()
         row.setStyleSheet("background: transparent;")
@@ -678,6 +753,13 @@ class WaitingPage(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(
             1500, lambda: self.copy_btn.setText(_("shell.waiting.copy")))
 
+    def _troubleshoot(self) -> None:
+        TroubleDialog(self._link, self).exec()
+
+    #: The last link report, so the dialog can add the cable advice when
+    #: there is a camera on the bus and it came up slow.
+    _link = None
+
     def update_status(self, status) -> None:
         faulted = status.state is CameraState.ERROR
         self.heading.setProperty("role", "fault" if faulted else "heading")
@@ -717,6 +799,11 @@ class WaitingPage(QtWidgets.QWidget):
         else:
             self.advice.hide()
         self.pulse.set_running(status.state is not CameraState.ERROR)
+        self._link = link
+        # Only while waiting. On a fault the steps are already on screen,
+        # and a button offering to explain what is written above it is
+        # a button that makes the screen look less trustworthy.
+        self.trouble.setVisible(not faulted and not steps)
 
 
 class _Pulse(QtWidgets.QWidget):
