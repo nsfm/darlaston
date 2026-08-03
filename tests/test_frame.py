@@ -274,3 +274,61 @@ def test_the_caption_strip_is_the_same_colour_as_the_bar(qapp):
     left = image.pixelColor(200, 4).getRgb()[:3]
     right = image.pixelColor(image.width() - 4, 4).getRgb()[:3]
     assert left == right, f"strip {right} does not match bar {left}"
+
+
+def test_the_mac_titlebar_asks_qt_rather_than_appkit(qapp):
+    """The two settings Qt derives from window flags have to be set as
+    window flags.
+
+    On Qt 6.9 and later `QCocoaWindow::windowStyleMask` computes
+    `NSWindowStyleMaskFullSizeContentView` from `ExpandedClientAreaHint`
+    and no longer preserves a hand-set bit, and `setWindowFlags`
+    reassigns `titlebarAppearsTransparent` from
+    `NoTitleBarBackgroundHint`. Both fullscreen handlers call
+    `setWindowFlags`, so anything set through AppKit instead survives
+    until the first green button and no longer.
+
+    Runs everywhere: these are Qt flags, and only the title-text call
+    underneath them is macOS-only.
+    """
+    from PySide6 import QtCore, QtWidgets
+
+    from darlaston.ui import theme
+
+    window = QtWidgets.QWidget()
+    window.show()
+    assert theme._mac_unify_titlebar(window)
+
+    flags = window.windowHandle().flags()
+    assert flags & QtCore.Qt.WindowType.ExpandedClientAreaHint
+    assert flags & QtCore.Qt.WindowType.NoTitleBarBackgroundHint
+    # Qt 6.8 gave macOS safe areas, and a layout that respects them puts
+    # the content straight back below the title bar it was run under.
+    assert not window.testAttribute(
+        QtCore.Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea)
+    window.close()
+
+
+def test_the_traffic_light_inset_goes_away_in_fullscreen(qapp):
+    """macOS moves the lights into the drop-down overlay in fullscreen, so
+    an inset that stayed would be a hole with nothing in it."""
+    from PySide6 import QtCore, QtWidgets
+
+    from darlaston.ui import theme
+    from darlaston.ui.shell import ToolBar
+
+    window = QtWidgets.QWidget()
+    bar = ToolBar()
+    QtWidgets.QVBoxLayout(window).addWidget(bar)
+    window.show()
+    theme.follow_window_controls(window, bar)
+    assert bar._row.getContentsMargins()[0] == theme.MACOS_LIGHTS
+
+    window.setWindowState(QtCore.Qt.WindowState.WindowFullScreen)
+    qapp.processEvents()
+    assert bar._row.getContentsMargins()[0] == 0, "inset outlived the lights"
+
+    window.setWindowState(QtCore.Qt.WindowState.WindowNoState)
+    qapp.processEvents()
+    assert bar._row.getContentsMargins()[0] == theme.MACOS_LIGHTS
+    window.close()

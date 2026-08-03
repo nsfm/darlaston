@@ -2096,7 +2096,7 @@ def main() -> int:
         # macOS keeps its own frame and its own traffic lights; only the
         # bar is restyled, and the toolbar steps aside for the lights.
         if theme.match_frame(win):
-            win.toolbar.inset_for_window_controls(theme.MACOS_LIGHTS)
+            theme.follow_window_controls(win, win.toolbar)
     elif frame_wanted(win.settings.window_frame):
         # Ours, or the platform's, depending on the desktop and the
         # setting. Falling back is silent and safe: a window with the

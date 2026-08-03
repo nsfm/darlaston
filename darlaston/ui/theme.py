@@ -239,10 +239,27 @@ _DWM_DARK = (20, 19)
 #: How far the traffic lights reach across the top left of a macOS
 #: window, plus a little air. The toolbar is inset by this so the wordmark
 #: does not sit under them once the title bar is transparent.
+#:
+#: A measurement, not a specification. Apple publishes no figure for it --
+#: not in the human interface guidelines and not in the headers -- and has
+#: moved the buttons before, in Big Sur. The runtime answer is
+#: `NSMaxX([window standardWindowButton:NSWindowZoomButton].frame)`, which
+#: returns an NSRect: 32 bytes, so it needs `objc_msgSend_stret` on Intel
+#: and the plain call on Apple silicon, which is a two-architecture ctypes
+#: problem in exchange for about six points of accuracy. Measured extent
+#: runs 70 to 75 across Big Sur through Sequoia, so this errs wide and the
+#: cost of being wrong is a little more air rather than a hidden wordmark.
+#:
+#: `safeAreaMargins` does not answer this. It reports the *title bar's
+#: height* as a top margin; the lights' reach across is a left margin that
+#: macOS does not report at all.
 MACOS_LIGHTS = 78
 
-#: NSWindowStyleMaskFullSizeContentView, and NSWindowTitleHidden.
-_NS_FULL_SIZE_CONTENT = 1 << 15
+#: NSWindowTitleHidden.
+#:
+#: Distinct from setting an empty title: hiding the title is also what
+#: vertically centres the traffic lights in the bar. An empty string
+#: leaves them where a title would have pushed them.
 _NS_TITLE_HIDDEN = 1
 
 #: Set this to anything to leave the frame exactly as the platform drew
@@ -264,54 +281,130 @@ def _mac_unify_titlebar(window) -> bool:
     custom toolbar actually does. The window keeps its real title bar and
     every gesture that comes with it; the bar is simply made transparent,
     its title hidden, and the content view told it may extend the whole
-    height. The traffic lights stay exactly where a Mac user reaches for
-    them.
+    height.
 
-    Qt has no API for any of it, so it is three Objective-C messages
-    through ctypes. No new dependency: libobjc is part of the system, and
-    `winId()` on macOS is already an NSView pointer.
+    **Two of the three are Qt's own API and must be**, on Qt 6.9 and
+    later. `ExpandedClientAreaHint` is what Qt now derives
+    `NSWindowStyleMaskFullSizeContentView` from, and
+    `NoTitleBarBackgroundHint` is what it derives
+    `titlebarAppearsTransparent` from. Setting either by hand through
+    AppKit works and does not last: `QCocoaWindow::setWindowFlags`
+    reassigns both from the Qt flags, and both native fullscreen handlers
+    call it to restore the style mask. So the window would come back out
+    of fullscreen with an opaque title bar and no title in it. Before 6.9
+    Qt preserved a hand-set bit deliberately -- that was the fix for
+    QTBUG-69975 -- and 6.9 removed the preservation once the flags
+    existed to replace it.
+
+    **The third is not Qt's**, and is done here. `titleVisibility`
+    appears nowhere in the Cocoa plugin in any release from 6.2 to dev,
+    so nothing recomputes it and one message settles it for good.
+
+    The remaining call is a read-nothing, set-once `objc_msgSend` through
+    a private prototype: `ctypes` caches one function object per name on
+    the library, and assigning `argtypes` to the shared one is process-
+    wide mutable state that anything else calling into libobjc would
+    race with.
     """
+    from PySide6 import QtCore
+
+    handle = window.windowHandle()
+    if handle is None:
+        return False
+
+    handle.setFlags(handle.flags()
+                    | QtCore.Qt.WindowType.ExpandedClientAreaHint
+                    | QtCore.Qt.WindowType.NoTitleBarBackgroundHint)
+
+    # Qt 6.8 gave macOS safe-area margins, and a widget layout then insets
+    # itself by the title bar -- so the content runs under the bar and the
+    # layout immediately puts it back below, which looks exactly like
+    # nothing happened. Clearing this on the top level is what stops that.
+    # Only the top level: since QTBUG-133215 the attribute defaults on for
+    # top levels alone, so children need no help.
+    window.setAttribute(
+        QtCore.Qt.WidgetAttribute.WA_ContentsMarginsRespectsSafeArea, False)
+
+    _mac_hide_title(window)
+    return True
+
+
+def _mac_hide_title(window) -> bool:
+    """Hide the title text, which is the one part Qt leaves alone."""
     import ctypes
     import ctypes.util
+    import sys
 
+    # Checked before the library is even looked for. `find_library("objc")`
+    # succeeds on a Linux box with GNUstep installed and hands back a
+    # runtime with no `objc_msgSend` in it -- a real machine, since that is
+    # what this was written on.
+    if sys.platform != "darwin":
+        return False
     path = ctypes.util.find_library("objc")
     if not path:
         return False
-    objc = ctypes.cdll.LoadLibrary(path)
-
+    try:
+        objc = ctypes.cdll.LoadLibrary(path)
+        send = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+    except (OSError, AttributeError):
+        return False
     objc.sel_registerName.restype = ctypes.c_void_p
     objc.sel_registerName.argtypes = [ctypes.c_char_p]
 
-    def send(receiver, selector, *args, restype=ctypes.c_void_p, argtypes=()):
-        """One objc_msgSend call, with its signature declared.
-
-        The signature has to be set per call rather than once: objc_msgSend
-        is variadic, and on arm64 a variadic call passes arguments
-        differently from a normal one. Declaring the real types is what
-        makes the same code correct on both architectures.
-        """
-        fn = objc.objc_msgSend
-        fn.restype = restype
-        fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, *argtypes]
-        return fn(ctypes.c_void_p(receiver),
-                  ctypes.c_void_p(objc.sel_registerName(selector)), *args)
-
-    view = int(window.winId())
-    if not view:
+    view = ctypes.c_void_p(int(window.winId()))
+    if not view.value:
         return False
-    ns_window = send(view, b"window")
+
+    # A prototype per signature, rather than assigning to the cached
+    # `objc.objc_msgSend`. Declaring every argument is also what makes the
+    # call non-variadic, which is what it has to be: objc_msgSend is a
+    # trampoline into a method that reads its arguments from registers,
+    # and a variadic call on arm64 would put them on the stack instead.
+    # A *partial* argtypes is worse than none -- CPython treats a call
+    # with more arguments than argtypes as variadic.
+    send_p = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p,
+                              ctypes.c_void_p)(send)
+    send_i = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p,
+                              ctypes.c_long)(send)
+
+    ns_window = send_p(view,
+                       ctypes.c_void_p(objc.sel_registerName(b"window")))
     if not ns_window:
         return False
-
-    send(ns_window, b"setTitlebarAppearsTransparent:", ctypes.c_bool(True),
-         restype=None, argtypes=[ctypes.c_bool])
-    send(ns_window, b"setTitleVisibility:", ctypes.c_long(_NS_TITLE_HIDDEN),
-         restype=None, argtypes=[ctypes.c_long])
-    mask = send(ns_window, b"styleMask", restype=ctypes.c_ulong)
-    send(ns_window, b"setStyleMask:",
-         ctypes.c_ulong(mask | _NS_FULL_SIZE_CONTENT),
-         restype=None, argtypes=[ctypes.c_ulong])
+    send_i(ctypes.c_void_p(ns_window),
+           ctypes.c_void_p(objc.sel_registerName(b"setTitleVisibility:")),
+           ctypes.c_long(_NS_TITLE_HIDDEN))
     return True
+
+
+def follow_window_controls(window, toolbar) -> None:
+    """Keep the toolbar clear of the traffic lights, including when there
+    are none.
+
+    In native fullscreen macOS takes the title bar out of the layout and
+    moves the traffic lights into the overlay that slides down with the
+    menu bar. They are no longer above the toolbar, so an inset that
+    stayed put would be a hole in the top left with nothing in it, and
+    the hole would come and go as the pointer neared the top edge.
+
+    Driven from Qt's window state rather than an AppKit notification:
+    `QCocoaWindow` reports both fullscreen transitions through it, and it
+    is the same signal on every platform even though only one uses it.
+    """
+    handle = window.windowHandle()
+    if handle is None:
+        return
+
+    from PySide6 import QtCore
+
+    def apply(state=None) -> None:
+        full = bool(window.windowState()
+                    & QtCore.Qt.WindowState.WindowFullScreen)
+        toolbar.inset_for_window_controls(0 if full else MACOS_LIGHTS)
+
+    handle.windowStateChanged.connect(apply)
+    apply()
 
 
 def match_frame(window) -> bool:
@@ -322,9 +415,9 @@ def match_frame(window) -> bool:
     light-themed machine gets a white strip across the top of it. One
     documented DWM attribute settles that.
 
-    **macOS** gets its title bar made transparent, with the content run up
-    underneath -- see `_mac_unify_titlebar`. The window keeps its traffic
-    lights and every native gesture.
+    **macOS** gets its title bar made transparent, with the content run
+    up underneath -- see `_mac_unify_titlebar`. The window keeps its
+    traffic lights and every native gesture.
 
     **X11 and Wayland** are left alone: decorations belong to the window
     manager there by design, and taking them over would be arguing with
