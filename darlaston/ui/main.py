@@ -1888,6 +1888,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             took = self._frame.detach()
             self._frame = None
+            # The caption coming back is the platform's, drawn in the
+            # system's light or dark setting rather than ours. The mirror
+            # of what take_native_frame does on the way in.
+            theme.match_frame(self)
         if not took and ours:
             # Could not take it. Say so by putting the tick back rather
             # than leaving a checked box over a window that Windows or

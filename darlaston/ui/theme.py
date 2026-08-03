@@ -402,6 +402,12 @@ def follow_window_controls(window, toolbar) -> None:
         full = bool(window.windowState()
                     & QtCore.Qt.WindowState.WindowFullScreen)
         toolbar.inset_for_window_controls(0 if full else MACOS_LIGHTS)
+        # Re-asserted here, not because Qt recomputes it -- it never
+        # touches titleVisibility, in any release -- but because Qt
+        # destroys and rebuilds the NSWindow on some transitions, and a
+        # *new* one starts with the title visible. Free, since this is
+        # already connected to the signal those transitions raise.
+        _mac_hide_title(window)
 
     handle.windowStateChanged.connect(apply)
     apply()

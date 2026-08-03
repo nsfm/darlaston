@@ -567,3 +567,289 @@ def test_a_right_click_on_a_caption_button_is_not_swallowed(qapp):
     close.mousePressEvent(event)
     assert not event.isAccepted(), "the right click stopped here"
     assert not close.down and fired == []
+
+
+# ---- the Windows button state machine -------------------------------------
+#
+# The half of the frame no machine here can run. It is a pure state machine
+# over (message, wParam, lParam) with two dependencies -- the Win32 calls
+# and the toolbar -- so with both faked the whole press/drag/release matrix
+# pins on any platform. This is where the two stuck-state bugs lived, and
+# reading the code is what failed to catch them.
+
+class _FakeUser32:
+    """Records the calls that matter and answers the rest plausibly."""
+
+    def __init__(self):
+        self.captured = False
+        self.calls = []
+
+    def SetCapture(self, _hwnd):
+        self.captured = True
+        self.calls.append("SetCapture")
+        return 0
+
+    def ReleaseCapture(self):
+        self.calls.append("ReleaseCapture")
+        released, self.captured = self.captured, False
+        return int(released)
+
+    def TrackMouseEvent(self, _request):
+        self.calls.append("TrackMouseEvent")
+        return 1
+
+    def GetDpiForWindow(self, _hwnd):
+        return 96
+
+    def IsZoomed(self, _hwnd):
+        return 0
+
+
+class _FakeBar:
+    """Just enough toolbar: the geometry and the drawn state."""
+
+    #: Three 46px buttons ending at 1200, and the menus along the left.
+    GEOMETRY = (((1062, 46), (1108, 46), (1154, 46)), ((8, 330),))
+
+    def __init__(self):
+        self.state = ("", "")
+        self.hidden = False
+
+    def caption_geometry(self):
+        return self.GEOMETRY
+
+    def set_caption_state(self, hot, down):
+        self.state = (hot, down)
+
+    def height(self):
+        return 36
+
+    def hide_caption_buttons(self):
+        self.hidden = True
+
+
+def _machine(monkeypatch):
+    """A WindowsFrame with the platform faked out from under it."""
+    from darlaston.ui import frame as F
+
+    user32 = _FakeUser32()
+    monkeypatch.setattr(F, "_win32", lambda: (user32, object()))
+
+    class _Window:
+        def width(self):
+            return 1200
+
+        def height(self):
+            return 800
+
+        def devicePixelRatioF(self):
+            return 1.0
+
+        def isMaximized(self):
+            return False
+
+    bar = _FakeBar()
+    frame = F.WindowsFrame(_Window(), bar)
+    frame.hwnd = 0x1234
+    monkeypatch.setattr(frame, "_hwnd_t", lambda: 0x1234)
+    monkeypatch.setattr(frame, "_track_mouse",
+                        lambda: user32.TrackMouseEvent(None))
+    fired = []
+    monkeypatch.setattr(frame, "_activate", fired.append)
+    return frame, bar, user32, fired
+
+
+def _nc(frame, message, region):
+    from darlaston.ui.frame import _HT
+
+    return frame.handle(message, _HT[region], 0)
+
+
+def _client(frame, message, x, y):
+    return frame.handle(message, 0, ((y & 0xFFFF) << 16) | (x & 0xFFFF))
+
+
+def test_a_caption_button_press_and_release_closes_and_lets_go(monkeypatch):
+    from darlaston.ui.frame import CLOSE, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP
+
+    frame, bar, user32, fired = _machine(monkeypatch)
+
+    assert _nc(frame, WM_NCLBUTTONDOWN, CLOSE) == (True, 0)
+    assert bar.state == ("", CLOSE)
+    assert user32.captured, "the press did not take the capture"
+
+    assert _nc(frame, WM_NCLBUTTONUP, CLOSE) == (True, 0)
+    assert fired == [CLOSE]
+    assert bar.state == (CLOSE, "")
+    assert not user32.captured, \
+        "the capture leaked -- every successful click would leak one"
+
+
+def test_a_press_dragged_off_an_edge_does_not_stick(monkeypatch):
+    """The one that reading the code missed.
+
+    Capture does not turn non-client messages into client ones: the hit
+    test still decides, and it is ours. So dragging up off the top edge
+    reports HTTOP and the release arrives as WM_NCLBUTTONUP with a region
+    that is not a button at all. A guard of `region in BUTTONS` on the up
+    message drops it, and the button draws pressed for ever.
+    """
+    from darlaston.ui.frame import (CLOSE, TOP, WM_NCLBUTTONDOWN,
+                                    WM_NCLBUTTONUP, WM_NCMOUSEMOVE)
+
+    for escape in (TOP, "right", "bottom", "topright"):
+        frame, bar, user32, fired = _machine(monkeypatch)
+        _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+        _nc(frame, WM_NCMOUSEMOVE, escape)
+        assert bar.state == ("", CLOSE), \
+            f"dragged onto {escape} and the button stayed lit"
+
+        _nc(frame, WM_NCLBUTTONUP, escape)
+        assert fired == [], f"released on {escape} and it fired anyway"
+        assert bar.state == ("", ""), f"stuck pressed after {escape}"
+        assert not user32.captured, f"capture leaked via {escape}"
+
+
+def test_a_press_dragged_into_the_video_does_not_stick(monkeypatch):
+    """The other direction: over the client area the messages *are*
+    client ones, in client coordinates, and they have to clear it too."""
+    from darlaston.ui.frame import (CLOSE, WM_LBUTTONUP, WM_MOUSEMOVE,
+                                    WM_NCLBUTTONDOWN)
+
+    frame, bar, user32, fired = _machine(monkeypatch)
+    _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+    _client(frame, WM_MOUSEMOVE, 600, 400)
+    assert bar.state == ("", CLOSE)
+
+    _client(frame, WM_LBUTTONUP, 600, 400)
+    assert fired == []
+    assert bar.state == ("", "") and not user32.captured
+
+
+def test_dragging_back_onto_the_button_still_fires(monkeypatch):
+    """The press was cancelled by leaving, not destroyed. Coming back and
+    releasing is a click, which is what every other button does."""
+    from darlaston.ui.frame import (CLOSE, WM_LBUTTONUP, WM_MOUSEMOVE,
+                                    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP,
+                                    WM_NCMOUSEMOVE)
+
+    frame, bar, _user32, fired = _machine(monkeypatch)
+    _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+    _client(frame, WM_MOUSEMOVE, 600, 400)      # off into the video
+    assert bar.state == ("", CLOSE)
+    _nc(frame, WM_NCMOUSEMOVE, CLOSE)           # and back
+    assert bar.state == (CLOSE, CLOSE)
+    _nc(frame, WM_NCLBUTTONUP, CLOSE)
+    assert fired == [CLOSE]
+
+
+def test_only_the_pressed_button_lights_while_pressed(monkeypatch):
+    """Dragging from close onto minimise used to draw minimise hot and
+    close pressed at the same time: two buttons lit for one press."""
+    from darlaston.ui.frame import (CLOSE, MINIMISE, WM_NCLBUTTONDOWN,
+                                    WM_NCMOUSEMOVE)
+
+    frame, bar, _user32, _fired = _machine(monkeypatch)
+    _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+    _nc(frame, WM_NCMOUSEMOVE, MINIMISE)
+    assert bar.state == ("", CLOSE), "two buttons lit for one press"
+
+
+def test_hover_arrives_and_leaves(monkeypatch):
+    from darlaston.ui.frame import (CAPTION, CLOSE, WM_NCMOUSELEAVE,
+                                    WM_NCMOUSEMOVE)
+
+    frame, bar, user32, _fired = _machine(monkeypatch)
+    _nc(frame, WM_NCMOUSEMOVE, CLOSE)
+    assert bar.state == (CLOSE, "")
+    assert "TrackMouseEvent" in user32.calls, \
+        "nothing asked to be told when the pointer leaves"
+
+    # Off the button but still in the bar.
+    _nc(frame, WM_NCMOUSEMOVE, CAPTION)
+    assert bar.state == ("", "")
+
+    # And straight out of the non-client area entirely.
+    _nc(frame, WM_NCMOUSEMOVE, CLOSE)
+    assert bar.state == (CLOSE, "")
+    assert frame.handle(WM_NCMOUSELEAVE, 0, 0) == (False, 0), \
+        "Windows still wants this message"
+    assert bar.state == ("", "")
+    assert not frame._tracking, "the request has to be re-armed after a leave"
+
+
+def test_a_move_over_the_video_clears_a_stale_hover(monkeypatch):
+    """Belt and braces for the leave message. If WM_NCMOUSELEAVE ever did
+    not arrive on the crossing from HTCLOSE to HTCLIENT inside one window
+    -- which is inference rather than documentation -- an ordinary client
+    move still puts the button out."""
+    from darlaston.ui.frame import CLOSE, WM_MOUSEMOVE, WM_NCMOUSEMOVE
+
+    frame, bar, _user32, _fired = _machine(monkeypatch)
+    _nc(frame, WM_NCMOUSEMOVE, CLOSE)
+    assert bar.state == (CLOSE, "")
+    _client(frame, WM_MOUSEMOVE, 600, 400)
+    assert bar.state == ("", "")
+
+
+def test_losing_the_capture_lets_go_of_the_button(monkeypatch):
+    from darlaston.ui.frame import CLOSE, WM_CAPTURECHANGED, WM_NCLBUTTONDOWN
+
+    frame, bar, _user32, fired = _machine(monkeypatch)
+    _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+    assert frame.handle(WM_CAPTURECHANGED, 0, 0) == (False, 0)
+    assert bar.state == ("", "") and fired == []
+
+
+def test_a_move_is_never_swallowed(monkeypatch):
+    """This runs inside the window procedure for every mouse move over the
+    window. Consuming one takes it away from whatever is underneath."""
+    from darlaston.ui.frame import (CLOSE, WM_MOUSEMOVE, WM_NCLBUTTONDOWN,
+                                    WM_NCMOUSEMOVE)
+
+    frame, _bar, _user32, _fired = _machine(monkeypatch)
+    assert _nc(frame, WM_NCMOUSEMOVE, CLOSE)[0] is False
+    assert _client(frame, WM_MOUSEMOVE, 600, 400)[0] is False
+    _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+    assert _client(frame, WM_MOUSEMOVE, 600, 400)[0] is False, \
+        "swallowed mid-press too"
+
+
+def test_the_capture_is_released_on_every_path_that_clears_the_press(
+        monkeypatch):
+    """The invariant, stated once. Every way a press can end must leave
+    the capture let go, or it leaks into whatever Qt does next."""
+    from darlaston.ui.frame import (CLOSE, TOP, WM_CAPTURECHANGED,
+                                    WM_LBUTTONUP, WM_NCLBUTTONDOWN,
+                                    WM_NCLBUTTONUP)
+
+    def ends_with(finish):
+        frame, bar, user32, _fired = _machine(monkeypatch)
+        _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+        assert user32.captured
+        finish(frame)
+        assert not frame._down, "the press outlived its ending"
+        assert bar.state[1] == "", "still drawn pressed"
+        return user32.captured
+
+    assert not ends_with(lambda f: _nc(f, WM_NCLBUTTONUP, CLOSE))
+    assert not ends_with(lambda f: _nc(f, WM_NCLBUTTONUP, TOP))
+    assert not ends_with(lambda f: _client(f, WM_LBUTTONUP, 600, 400))
+    assert not ends_with(lambda f: f.detach())
+
+    # WM_CAPTURECHANGED is the exception, and it is an exception about
+    # what the message means rather than about the invariant: it arrives
+    # *after* the system has handed the capture to the window named in
+    # lParam. Releasing then would take it off them. So the capture is
+    # already gone by the time this runs -- which is what the fake is
+    # made to do here -- and all that is left is to stop drawing pressed.
+    def lose_it(f):
+        user32.captured = False
+        f.handle(WM_CAPTURECHANGED, 0, 0)
+
+    frame, bar, user32, _fired = _machine(monkeypatch)
+    _nc(frame, WM_NCLBUTTONDOWN, CLOSE)
+    lose_it(frame)
+    assert not frame._down and bar.state == ("", "")
+    assert "ReleaseCapture" not in user32.calls, \
+        "took the capture back off whoever the system just gave it to"
