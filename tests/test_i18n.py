@@ -183,6 +183,10 @@ def test_the_platform_icons_match_the_mark_that_is_drawn(qapp):
     wants a path before anything of ours runs. That makes drift possible,
     which is what this catches: change the mark without regenerating and
     the shipped app disagrees with the running one.
+
+    Compared as pixels rather than bytes -- see make_icons -- because two
+    processors take different paths through Qt's raster engine and
+    disagree in the last bit of a few antialiased edges.
     """
     import subprocess
     import sys
@@ -194,8 +198,43 @@ def test_the_platform_icons_match_the_mark_that_is_drawn(qapp):
         capture_output=True, text=True, cwd=root,
         env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen",
              "PYTHONPATH": str(root)})
+    # stdout carries the measured difference whether it passed or not,
+    # which is how anybody knows the tolerance is still the right size.
     assert done.returncode == 0, (
-        f"the icon files no longer match the mark:\n{done.stderr}")
+        f"the icon files no longer match the mark:\n"
+        f"{done.stdout}\n{done.stderr}")
+
+
+def test_everything_the_build_reads_is_actually_in_the_repository():
+    """A packaging input that exists only on the machine that made it is
+    not an input, and the failure is a build that works for one person.
+
+    This happened: `.gitignore` excludes `*.png` for photographs, which
+    silently swallowed the mark, and the AppImage step referenced a file
+    no clone had. `git add` says so and it is easy to miss; a build
+    machine says so three minutes later and it is not.
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    needed = ["packaging/icons/darlaston.png",     # the AppImage icon
+              "packaging/icons/darlaston.ico",     # Windows
+              "packaging/icons/darlaston.icns"]    # macOS
+    for name in needed:
+        assert (root / name).exists(), f"{name} is missing on disk"
+
+    tracked = subprocess.run(["git", "ls-files", "--", *needed],
+                             capture_output=True, text=True, cwd=root)
+    if tracked.returncode != 0:
+        import pytest
+        pytest.skip("not a git checkout")
+    have = set(tracked.stdout.split())
+    missing = [name for name in needed if name not in have]
+    assert not missing, (
+        f"on disk but not in the repository: {missing}. "
+        f"Probably caught by a .gitignore rule -- check with "
+        f"`git check-ignore -v <path>`.")
 
 
 def test_the_frame_restyle_is_harmless_where_it_does_not_apply(qapp):
