@@ -247,8 +247,13 @@ ABS_AUTOHIDE = 0x00000001
 _ABE = (LEFT, TOP, RIGHT, BOTTOM)
 
 SM_CXSIZEFRAME = 32
-SM_CYSIZEFRAME = 33
 SM_CXPADDEDBORDER = 92
+#: SM_CYSIZEFRAME, the vertical one, is deliberately absent. It is equal
+#: to SM_CXSIZEFRAME in every stock Windows theme, `hit_region` carries a
+#: single border for both axes, and a constant defined and never read is
+#: a promise the code does not keep -- it reads as though the two axes
+#: are handled separately when they are not. If a theme ever separates
+#: them, `Frame.border` is what has to become two numbers first.
 
 
 def border_thickness(dpi: int = 96) -> int:
