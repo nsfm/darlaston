@@ -103,6 +103,21 @@ class ToolBar(QtWidgets.QFrame):
         self._row.addSpacing(4)
         self._row.addStretch(1)
 
+    def inset_for_window_controls(self, pixels: int) -> None:
+        """Start the toolbar to the right of the platform's own buttons.
+
+        Only reached on macOS, and only once the title bar has actually
+        been made transparent. The traffic lights then float over this
+        bar rather than sitting in a strip above it, so without this the
+        wordmark is underneath them.
+
+        Applied here rather than at construction because it depends on
+        whether the restyle worked, which is not known until the window
+        has a native handle.
+        """
+        left, top, right, bottom = self._row.getContentsMargins()
+        self._row.setContentsMargins(pixels, top, right, bottom)
+
     def add_menu(self, name: str, title: str) -> QtWidgets.QMenu:
         """A popup rather than a plain button, so these can nest as more
         arrives without every name having to change.

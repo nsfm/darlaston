@@ -196,3 +196,48 @@ def test_the_platform_icons_match_the_mark_that_is_drawn(qapp):
              "PYTHONPATH": str(root)})
     assert done.returncode == 0, (
         f"the icon files no longer match the mark:\n{done.stderr}")
+
+
+def test_the_frame_restyle_is_harmless_where_it_does_not_apply(qapp):
+    """It reaches past Qt into DWM on Windows and AppKit on macOS, so the
+    one thing every platform must agree on is that a frame it could not
+    restyle is a cosmetic disappointment and not a crash."""
+    import sys
+
+    from PySide6 import QtWidgets
+
+    from darlaston.ui import theme
+
+    window = QtWidgets.QWidget()
+    window.show()
+    changed = theme.match_frame(window)
+    if sys.platform not in ("darwin",) and not sys.platform.startswith("win"):
+        assert changed is False, "restyled a frame that belongs to the WM"
+    window.close()
+
+
+def test_the_native_frame_can_be_asked_for(qapp, monkeypatch):
+    """An escape hatch, because this reaches into AppKit and a future
+    macOS is allowed to disagree with it."""
+    from PySide6 import QtWidgets
+
+    from darlaston.ui import theme
+
+    monkeypatch.setenv(theme.NATIVE_FRAME_ENV, "1")
+    window = QtWidgets.QWidget()
+    window.show()
+    assert theme.match_frame(window) is False
+    window.close()
+
+
+def test_the_toolbar_can_step_aside_for_window_controls(qapp):
+    """On macOS the traffic lights float over the toolbar once the title
+    bar is transparent, so the wordmark has to start to their right."""
+    from darlaston.ui.shell import ToolBar
+
+    bar = ToolBar()
+    before = bar._row.getContentsMargins()
+    bar.inset_for_window_controls(78)
+    after = bar._row.getContentsMargins()
+    assert after[0] == 78, "left margin did not move"
+    assert after[1:] == before[1:], "only the left margin should change"

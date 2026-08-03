@@ -236,35 +236,126 @@ def identify(app) -> None:
 _DWM_DARK = (20, 19)
 
 
+#: How far the traffic lights reach across the top left of a macOS
+#: window, plus a little air. The toolbar is inset by this so the wordmark
+#: does not sit under them once the title bar is transparent.
+MACOS_LIGHTS = 78
+
+#: NSWindowStyleMaskFullSizeContentView, and NSWindowTitleHidden.
+_NS_FULL_SIZE_CONTENT = 1 << 15
+_NS_TITLE_HIDDEN = 1
+
+#: Set this to anything to leave the frame exactly as the platform drew
+#: it. An escape hatch, because this reaches past Qt into AppKit and a
+#: future macOS is allowed to disagree with it.
+NATIVE_FRAME_ENV = "DARLASTON_NATIVE_FRAME"
+
+
+def _mac_unify_titlebar(window) -> bool:
+    """Make the title bar transparent and run the content up under it.
+
+    macOS draws a grey strip above the window saying the application's
+    name, which on a program with its own toolbar is a second bar saying
+    less. The usual answer is to go frameless, and the usual cost is
+    reimplementing everything the frame does: full screen, zoom on double
+    click, snapping, the window menu, and the traffic lights themselves.
+
+    This is the other answer, and it is what every Mac application with a
+    custom toolbar actually does. The window keeps its real title bar and
+    every gesture that comes with it; the bar is simply made transparent,
+    its title hidden, and the content view told it may extend the whole
+    height. The traffic lights stay exactly where a Mac user reaches for
+    them.
+
+    Qt has no API for any of it, so it is three Objective-C messages
+    through ctypes. No new dependency: libobjc is part of the system, and
+    `winId()` on macOS is already an NSView pointer.
+    """
+    import ctypes
+    import ctypes.util
+
+    path = ctypes.util.find_library("objc")
+    if not path:
+        return False
+    objc = ctypes.cdll.LoadLibrary(path)
+
+    objc.sel_registerName.restype = ctypes.c_void_p
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+    def send(receiver, selector, *args, restype=ctypes.c_void_p, argtypes=()):
+        """One objc_msgSend call, with its signature declared.
+
+        The signature has to be set per call rather than once: objc_msgSend
+        is variadic, and on arm64 a variadic call passes arguments
+        differently from a normal one. Declaring the real types is what
+        makes the same code correct on both architectures.
+        """
+        fn = objc.objc_msgSend
+        fn.restype = restype
+        fn.argtypes = [ctypes.c_void_p, ctypes.c_void_p, *argtypes]
+        return fn(ctypes.c_void_p(receiver),
+                  ctypes.c_void_p(objc.sel_registerName(selector)), *args)
+
+    view = int(window.winId())
+    if not view:
+        return False
+    ns_window = send(view, b"window")
+    if not ns_window:
+        return False
+
+    send(ns_window, b"setTitlebarAppearsTransparent:", ctypes.c_bool(True),
+         restype=None, argtypes=[ctypes.c_bool])
+    send(ns_window, b"setTitleVisibility:", ctypes.c_long(_NS_TITLE_HIDDEN),
+         restype=None, argtypes=[ctypes.c_long])
+    mask = send(ns_window, b"styleMask", restype=ctypes.c_ulong)
+    send(ns_window, b"setStyleMask:",
+         ctypes.c_ulong(mask | _NS_FULL_SIZE_CONTENT),
+         restype=None, argtypes=[ctypes.c_ulong])
+    return True
+
+
 def match_frame(window) -> bool:
     """Ask the platform for a title bar that matches the program.
 
-    Windows draws the frame in the *system* light or dark setting, not the
-    application's, so a near-black program on a light-themed machine gets a
-    white title bar across the top of it. One documented DWM attribute
-    fixes that. Everywhere else this is a no-op: macOS follows the system
-    appearance and offers no supported way to disagree, and X11 and Wayland
-    decorations belong to the window manager by design.
+    **Windows** draws the frame in the *system* light or dark setting
+    rather than the application's, so a near-black program on a
+    light-themed machine gets a white strip across the top of it. One
+    documented DWM attribute settles that.
 
-    Returns whether anything was actually changed, for the test.
+    **macOS** gets its title bar made transparent, with the content run up
+    underneath -- see `_mac_unify_titlebar`. The window keeps its traffic
+    lights and every native gesture.
+
+    **X11 and Wayland** are left alone: decorations belong to the window
+    manager there by design, and taking them over would be arguing with
+    the desktop rather than fitting into it.
+
+    Returns whether anything was changed. Never raises: a frame that could
+    not be restyled is a cosmetic disappointment, and taking the window
+    down over it would not be.
     """
+    import os
     import sys
 
-    if not sys.platform.startswith("win"):
+    if os.environ.get(NATIVE_FRAME_ENV):
         return False
-    import ctypes
+    try:
+        if sys.platform == "darwin":
+            return _mac_unify_titlebar(window)
+        if not sys.platform.startswith("win"):
+            return False
+        import ctypes
 
-    handle = ctypes.c_void_p(int(window.winId()))
-    enabled = ctypes.c_int(1)
-    for attribute in _DWM_DARK:
-        try:
+        handle = ctypes.c_void_p(int(window.winId()))
+        enabled = ctypes.c_int(1)
+        for attribute in _DWM_DARK:
             ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 handle, ctypes.c_uint(attribute), ctypes.byref(enabled),
                 ctypes.sizeof(enabled))
-        except (AttributeError, OSError):
-            return False                 # no dwmapi: older than we support
-        if ok == 0:
-            return True
+            if ok == 0:
+                return True
+    except Exception:
+        return False
     return False
 
 

@@ -1995,7 +1995,12 @@ def main() -> int:
     theme.identify(app)                  # after the fonts: the mark is a letter
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
     win.show()
-    theme.match_frame(win)               # needs a native handle, so after show
+    # Needs a native handle, so after show(). On macOS this makes the
+    # title bar transparent and runs the content up under it, which leaves
+    # the traffic lights floating over the toolbar -- so the toolbar gets
+    # out of their way, but only if the restyle actually took.
+    if theme.match_frame(win) and sys.platform == "darwin":
+        win.toolbar.inset_for_window_controls(theme.MACOS_LIGHTS)
 
     # Qt blocks in C++, so Python never gets to run its SIGINT handler and
     # Ctrl-C does nothing. A timer that does nothing at all gives the
