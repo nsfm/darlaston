@@ -262,10 +262,10 @@ MACOS_LIGHTS = 78
 #: leaves them where a title would have pushed them.
 _NS_TITLE_HIDDEN = 1
 
-#: Set this to anything to leave the frame exactly as the platform drew
-#: it. An escape hatch, because this reaches past Qt into AppKit and a
-#: future macOS is allowed to disagree with it.
-NATIVE_FRAME_ENV = "DARLASTON_NATIVE_FRAME"
+#: Re-exported. It lives in `frame` now, because it has to be consulted
+#: before the takeover as well as before the restyling, and `frame` is
+#: what the takeover goes through.
+from .frame import NATIVE_FRAME_ENV  # noqa: E402
 
 
 def _mac_unify_titlebar(window) -> bool:

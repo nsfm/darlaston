@@ -35,6 +35,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
+from types import SimpleNamespace
 
 # ---- what the geometry can decide ------------------------------------------
 
@@ -119,6 +120,12 @@ def hit_region(x: int, y: int, frame: Frame) -> str:
     return CLIENT
 
 
+#: Desktop left showing at an edge that carries an auto-hiding taskbar,
+#: in physical pixels, so it can still see the pointer arrive. Chromium's
+#: shipped `kAutoHideTaskbarThicknessPx`.
+AUTOHIDE_GAP = 2
+
+
 def maximised_insets(border: int, autohide: frozenset = frozenset()
                      ) -> tuple[int, int, int, int]:
     """How far to pull the client area in when maximised, per edge.
@@ -132,23 +139,58 @@ def maximised_insets(border: int, autohide: frozenset = frozenset()
 
     **An auto-hiding taskbar.** It reveals itself when the pointer
     reaches its screen edge, and it cannot see the pointer through a
-    window that covers that edge. One pixel is enough to leave it: the
-    taskbar's own detection strip is thinner than that, and a single
-    line of desktop at one edge of a maximised window is not something
-    anybody notices. Nothing at all, and the taskbar simply stops
-    working while this program is open, which reads as Windows being
-    broken rather than us.
+    window that covers that edge. Leave nothing and the taskbar simply
+    stops working while this program is open, which reads as Windows
+    being broken rather than us.
+
+    `AUTOHIDE_GAP` rather than one pixel. The threshold is undocumented;
+    Chromium ships two for this exact job on a great many machines, and
+    being one pixel short is precisely the failure this exists to
+    prevent. Two lines of desktop along one edge of a maximised window
+    is still not something anybody notices.
     """
     left = top = right = bottom = border
     if LEFT in autohide:
-        left += 1
+        left += AUTOHIDE_GAP
     if TOP in autohide:
-        top += 1
+        top += AUTOHIDE_GAP
     if RIGHT in autohide:
-        right += 1
+        right += AUTOHIDE_GAP
     if BOTTOM in autohide:
-        bottom += 1
+        bottom += AUTOHIDE_GAP
     return left, top, right, bottom
+
+
+def unpack_point(lparam: int) -> tuple[int, int]:
+    """The two coordinates packed into a mouse message's lParam.
+
+    Signed, and that is the whole reason this exists. The documentation
+    is explicit that both "represent signed values because they can take
+    negative values on systems with multiple monitors" and that the
+    LOWORD and HIWORD macros must not be used. A monitor placed left of
+    or above the primary one gives negative screen coordinates, and read
+    unsigned they come back as roughly 65000 -- so the window behaves
+    normally on one screen and reports the pointer somewhere impossible
+    on the other.
+    """
+    import ctypes
+
+    return (ctypes.c_short(lparam & 0xFFFF).value,
+            ctypes.c_short((lparam >> 16) & 0xFFFF).value)
+
+
+def inset_rect(rect: tuple[int, int, int, int],
+               insets: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Pull a (left, top, right, bottom) rectangle in by four edge insets.
+
+    Four lines, separated out because they are the four lines that decide
+    whether a maximised window fits its screen, and a sign error in them
+    is a window that shrinks by twice the border every time it maximises.
+    Pure, so the arithmetic is tested without Windows.
+    """
+    left, top, right, bottom = rect
+    dl, dt, dr, db = insets
+    return left + dl, top + dt, right - dr, bottom - db
 
 
 # ---- the Win32 half --------------------------------------------------------
@@ -163,13 +205,30 @@ _HT = {
     BOTTOM: 15, BOTTOMLEFT: 16, BOTTOMRIGHT: 17,
 }
 
+#: The same table read backwards, to turn the wParam of a non-client mouse
+#: message into a region. Built once, and asserted to be a true inverse in
+#: the tests: a duplicated value in `_HT` would silently misroute a button
+#: rather than fail.
+_REGION_OF = {code: name for name, code in _HT.items()}
+
+WM_SETTINGCHANGE = 0x001A
 WM_NCCALCSIZE = 0x0083
 WM_NCHITTEST = 0x0084
 WM_NCMOUSEMOVE = 0x00A0
 WM_NCLBUTTONDOWN = 0x00A1
 WM_NCLBUTTONUP = 0x00A2
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONUP = 0x0202
+WM_CAPTURECHANGED = 0x0215
 WM_NCMOUSELEAVE = 0x02A2
 WM_DPICHANGED = 0x02E0
+WM_DISPLAYCHANGE = 0x007E
+
+#: TrackMouseEvent flags. TME_NONCLIENT is what makes it report leaving
+#: the *non-client* area, which is the only area we are told about.
+TME_LEAVE = 0x00000002
+TME_NONCLIENT = 0x00000010
+HOVER_DEFAULT = 0xFFFFFFFF
 
 #: DWMWA_WINDOW_CORNER_PREFERENCE, and DWMWCP_ROUND. Windows 11 rounds a
 #: standard frame for you; strip the frame and the rounding goes with it
@@ -253,8 +312,21 @@ def desktop_draws_it_well() -> bool:
     return False
 
 
+#: Set this to anything to leave the frame exactly as the platform drew
+#: it. The last way out for someone whose window will not come up, and it
+#: has to reach the whole takeover rather than only the restyling: it used
+#: to be read in `theme.match_frame` alone, so on Windows -- the one
+#: platform where the takeover is total and a tester would most need a
+#: normal window back -- setting it did nothing at all.
+NATIVE_FRAME_ENV = "DARLASTON_NATIVE_FRAME"
+
+
 def wanted(preference: str) -> bool:
     """Should this program draw its own frame?"""
+    import os
+
+    if os.environ.get(NATIVE_FRAME_ENV):
+        return False
     if preference == "system":
         return False
     if preference == "ours":
@@ -306,8 +378,72 @@ def _structs():
         _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT),
                     ("rcWork", RECT), ("dwFlags", wintypes.DWORD)]
 
-    return (ctypes, wintypes, RECT, NCCALCSIZE_PARAMS, MARGINS, POINT,
-            APPBARDATA, MONITORINFO)
+    class TRACKMOUSEEVENT(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("hwndTrack", wintypes.HWND),
+                    ("dwHoverTime", wintypes.DWORD)]
+
+    return SimpleNamespace(
+        ctypes=ctypes, wintypes=wintypes, RECT=RECT,
+        NCCALCSIZE_PARAMS=NCCALCSIZE_PARAMS, MARGINS=MARGINS, POINT=POINT,
+        APPBARDATA=APPBARDATA, MONITORINFO=MONITORINFO,
+        TRACKMOUSEEVENT=TRACKMOUSEEVENT)
+
+
+@lru_cache(maxsize=1)
+def _win32():
+    """user32 and shell32, with every signature we use declared.
+
+    ctypes defaults an undeclared `restype` to `c_int`. Every handle and
+    pointer-width value below is 64 bits, so left undeclared they are
+    truncated to a signed 32-bit int and sign-extended back -- which
+    happens to survive for the small values these calls return in
+    practice, and is exactly the kind of thing that works on the machine
+    it was written on.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    win = _structs()
+    user32, shell32 = ctypes.windll.user32, ctypes.windll.shell32
+
+    user32.MonitorFromWindow.restype = ctypes.c_void_p
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.MonitorFromRect.restype = ctypes.c_void_p
+    user32.MonitorFromRect.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+    user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p,
+                                       ctypes.POINTER(win.MONITORINFO)]
+    user32.ScreenToClient.restype = wintypes.BOOL
+    user32.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(win.POINT)]
+    user32.SetCapture.restype = wintypes.HWND
+    user32.SetCapture.argtypes = [wintypes.HWND]
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.ReleaseCapture.argtypes = []
+    user32.TrackMouseEvent.restype = wintypes.BOOL
+    user32.TrackMouseEvent.argtypes = [ctypes.POINTER(win.TRACKMOUSEEVENT)]
+    user32.IsZoomed.restype = wintypes.BOOL
+    user32.IsZoomed.argtypes = [wintypes.HWND]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, wintypes.UINT]
+    # UINT_PTR, per the documentation. Truncating this one loses nothing
+    # today because the states are single bits, but it is the same class
+    # of latent wrongness as the handles.
+    shell32.SHAppBarMessage.restype = ctypes.c_ssize_t
+    shell32.SHAppBarMessage.argtypes = [wintypes.DWORD,
+                                        ctypes.POINTER(win.APPBARDATA)]
+
+    # Windows 8.1 and earlier have neither. Declared only where present so
+    # the absence stays a plain AttributeError rather than a bad call.
+    if hasattr(user32, "GetDpiForWindow"):
+        user32.GetDpiForWindow.restype = wintypes.UINT
+        user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+    if hasattr(user32, "GetSystemMetricsForDpi"):
+        user32.GetSystemMetricsForDpi.restype = ctypes.c_int
+        user32.GetSystemMetricsForDpi.argtypes = [ctypes.c_int, wintypes.UINT]
+    return user32, shell32
 
 
 class WindowsFrame:
@@ -325,18 +461,70 @@ class WindowsFrame:
         self.hwnd = 0
         self._hot = ""          # region the pointer is over
         self._down = ""         # region the button went down on
+        self._tracking = False  # TrackMouseEvent armed for this entry
+        self._edges = None      # cached auto-hiding taskbar edges
 
     # -- what the geometry needs to know about right now ------------------
+
+    def dpi(self) -> int:
+        """This window's real DPI.
+
+        Not `logicalDpiX`. Qt normalises logical DPI to the base 96 and
+        puts the scale in `devicePixelRatio`, so on a 150% display it
+        reports 96 and `GetSystemMetricsForDpi` hands back the 96-DPI
+        border -- about 8 physical pixels where the true overhang is 12.
+        A maximised window then hangs off every edge of the screen by the
+        shortfall, cutting the top off the toolbar. Plenty of Windows
+        laptops ship at 125% or 150%, so that is close to a default
+        configuration.
+
+        `GetDpiForWindow` answers from Windows and needs no correction.
+        The fallback reconstructs it from the ratio, which is where Qt
+        put the same information.
+        """
+        try:
+            user32, _shell32 = _win32()
+            dpi = int(user32.GetDpiForWindow(self.hwnd))
+            if dpi:
+                return dpi
+        except Exception:
+            pass
+        return max(96, round(96 * (self.window.devicePixelRatioF() or 1.0)))
+
+    def border(self) -> int:
+        """Resize border, in *physical* pixels.
+
+        Which is what `WM_NCCALCSIZE` deals in. `frame()` converts it for
+        `hit_region`, which works in Qt's logical pixels. One formula, two
+        units, and the conversion said out loud -- there used to be two
+        formulas in this class that disagreed on scaled displays.
+        """
+        return border_thickness(self.dpi())
+
+    def maximised(self) -> bool:
+        """Ask Windows, not Qt.
+
+        `WM_NCCALCSIZE` is sent *during* the SetWindowPos that maximises
+        the window: WS_MAXIMIZE is already set, but Qt derives its own
+        window state from WM_SIZE, which arrives afterwards. So Qt still
+        says "not maximised" for the recalc that most needs the inset,
+        and the window comes up maximised with its toolbar clipped until
+        something forces another recalc.
+        """
+        try:
+            user32, _shell32 = _win32()
+            return bool(user32.IsZoomed(self.hwnd))
+        except Exception:
+            return bool(self.window.isMaximized())
 
     def frame(self) -> Frame:
         ratio = self.window.devicePixelRatioF() or 1.0
         buttons, reserved = self.toolbar.caption_geometry()
         return Frame(width=self.window.width(), height=self.window.height(),
                      bar=self.toolbar.height(),
-                     border=max(1, round(border_thickness(round(96 * ratio))
-                                         / ratio)),
+                     border=max(1, round(self.border() / ratio)),
                      buttons=buttons, reserved=reserved,
-                     maximised=self.window.isMaximized())
+                     maximised=self.maximised())
 
     # -- setting it up -----------------------------------------------------
 
@@ -344,7 +532,8 @@ class WindowsFrame:
         if not supported():
             return False
         try:
-            ctypes, _w, _R, _NC, MARGINS, _P, _A, _M = _structs()
+            win = _structs()
+            ctypes = win.ctypes
             self.hwnd = int(self.window.winId())
             if not self.hwnd:
                 return False
@@ -360,7 +549,7 @@ class WindowsFrame:
             # One pixel of frame, which is what keeps the drop shadow and
             # the DWM composition. Zero margins lose the shadow and the
             # window reads as flat against whatever is behind it.
-            margins = MARGINS(0, 0, 0, 1)
+            margins = win.MARGINS(0, 0, 0, 1)
             ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
                 ctypes.c_void_p(self.hwnd), ctypes.byref(margins))
 
@@ -388,9 +577,10 @@ class WindowsFrame:
         if not self.hwnd:
             return False
         try:
-            ctypes, _w, _R, _NC, MARGINS, _P, _A, _M = _structs()
+            win = _structs()
+            ctypes = win.ctypes
             hwnd, self.hwnd = self.hwnd, 0
-            margins = MARGINS(0, 0, 0, 0)
+            margins = win.MARGINS(0, 0, 0, 0)
             ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
                 ctypes.c_void_p(hwnd), ctypes.byref(margins))
             SWP_FRAMECHANGED = 0x0020
@@ -413,47 +603,86 @@ class WindowsFrame:
             return self._calc_size(wparam, lparam)
         if message == WM_NCHITTEST:
             return self._hit_test(lparam)
+        if message in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE, WM_DPICHANGED):
+            self.forget_edges()
+            return False, 0                  # Qt and Windows both want these
         if message in (WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP,
                        WM_NCMOUSELEAVE):
             return self._button_input(message, wparam)
+        if message in (WM_MOUSEMOVE, WM_LBUTTONUP, WM_CAPTURECHANGED):
+            return self._captured_input(message, lparam)
         return False, 0
 
-    def _autohide_edges(self) -> frozenset:
+    def autohide_edges(self, rect=None) -> frozenset:
         """Which edges of this window's monitor carry an auto-hiding bar.
 
+        Cached, because this is a synchronous `SendMessage` into Explorer
+        and the only caller is a message handler. Uncached it ran on
+        every recalc while maximised, which means the window blocks for
+        as long as Explorer takes to answer -- and if Explorer is wedged,
+        for as long as that lasts. Taskbars are reconfigured about never,
+        so `forget_edges` on WM_SETTINGCHANGE and WM_DISPLAYCHANGE is
+        plenty fresh.
+
         Asked per monitor, not globally: a second screen usually has no
-        taskbar at all, and pulling a pixel off a window there for one
+        taskbar at all, and pulling pixels off a window there for one
         that lives on the first screen would be a stripe of desktop
         nobody could explain.
+
+        `rect` is the proposed client rectangle, passed in during
+        WM_NCCALCSIZE. Windows does not reliably report the right monitor
+        for an HWND inside that message -- Chromium hit the same thing
+        and passes the rectangle for the same reason -- so the rectangle
+        is used when there is one and the window otherwise.
         """
+        if self._edges is not None:
+            return self._edges
+        self._edges = frozenset()
         try:
-            ctypes, _w, _R, _NC, _M, _P, APPBARDATA, MONITORINFO = _structs()
-            shell32 = ctypes.windll.shell32
-            if not (shell32.SHAppBarMessage(ABM_GETSTATE, None)
+            win = _structs()
+            ctypes = win.ctypes
+            user32, shell32 = _win32()
+
+            state = win.APPBARDATA()
+            state.cbSize = ctypes.sizeof(win.APPBARDATA)
+            # A zeroed struct with cbSize set, not NULL. The documentation
+            # says "you must specify the cbSize member"; NULL is
+            # undocumented, and if shell32 reads it the process dies with
+            # an access violation that `except Exception` cannot catch.
+            if not (shell32.SHAppBarMessage(ABM_GETSTATE, ctypes.byref(state))
                     & ABS_AUTOHIDE):
-                return frozenset()          # nothing auto-hides anywhere
+                return self._edges          # nothing auto-hides anywhere
 
             MONITOR_DEFAULTTONEAREST = 2
-            monitor = ctypes.windll.user32.MonitorFromWindow(
-                ctypes.c_void_p(self.hwnd), MONITOR_DEFAULTTONEAREST)
-            info = MONITORINFO()
-            info.cbSize = ctypes.sizeof(MONITORINFO)
-            if not ctypes.windll.user32.GetMonitorInfoW(
-                    ctypes.c_void_p(monitor), ctypes.byref(info)):
-                return frozenset()
+            if rect is not None:
+                monitor = user32.MonitorFromRect(ctypes.byref(rect),
+                                                 MONITOR_DEFAULTTONEAREST)
+            else:
+                monitor = user32.MonitorFromWindow(
+                    ctypes.c_void_p(self.hwnd), MONITOR_DEFAULTTONEAREST)
+            info = win.MONITORINFO()
+            info.cbSize = ctypes.sizeof(win.MONITORINFO)
+            if not user32.GetMonitorInfoW(ctypes.c_void_p(monitor),
+                                          ctypes.byref(info)):
+                return self._edges
 
             found = set()
             for index, edge in enumerate(_ABE):
-                data = APPBARDATA()
-                data.cbSize = ctypes.sizeof(APPBARDATA)
+                data = win.APPBARDATA()
+                data.cbSize = ctypes.sizeof(win.APPBARDATA)
                 data.uEdge = index
                 data.rc = info.rcMonitor
                 if shell32.SHAppBarMessage(ABM_GETAUTOHIDEBAREX,
                                            ctypes.byref(data)):
                     found.add(edge)
-            return frozenset(found)
+            self._edges = frozenset(found)
         except Exception:
-            return frozenset()
+            pass
+        return self._edges
+
+    def forget_edges(self) -> None:
+        """Ask again next time. The taskbar moved, or a screen did."""
+        self._edges = None
 
     def _calc_size(self, wparam: int, lparam: int):
         """Reclaim the caption strip, and only the caption strip.
@@ -462,6 +691,9 @@ class WindowsFrame:
         window, which is what puts our toolbar where the caption was. The
         resize borders then live *inside* the client and are handled by
         `hit_region`, which is why they have to be tested there.
+
+        The rectangles here are in **physical** pixels, so the inset is
+        `border()` rather than the logical figure `hit_region` works in.
 
         Maximised is the exception, for two reasons that add up. Windows
         grows the window rect by the resize border on every side when it
@@ -472,31 +704,40 @@ class WindowsFrame:
         `maximised_insets` works out both; it is a pure function, so the
         arithmetic is tested without needing Windows.
         """
-        if not wparam:
-            return False, 0
         try:
-            ctypes, _w, _R, NCCALCSIZE_PARAMS = _structs()[:4]
-            if self.window.isMaximized():
+            win = _structs()
+            ctypes = win.ctypes
+            if not self.maximised():
+                # The client area becomes the whole window, which is the
+                # entire point: it is what puts the toolbar where the
+                # caption was.
+                return True, 0
+
+            # wParam FALSE means lParam is a plain RECT rather than the
+            # three-rectangle structure. Rare, and falling through would
+            # let DefWindowProc subtract the standard frame -- the
+            # opposite of what the other branch does, for the same window.
+            if wparam:
                 params = ctypes.cast(
-                    lparam, ctypes.POINTER(NCCALCSIZE_PARAMS)).contents
-                left, top, right, bottom = maximised_insets(
-                    border_thickness(self.window.logicalDpiX()),
-                    self._autohide_edges())
-                params.rgrc[0].left += left
-                params.rgrc[0].top += top
-                params.rgrc[0].right -= right
-                params.rgrc[0].bottom -= bottom
+                    lparam, ctypes.POINTER(win.NCCALCSIZE_PARAMS)).contents
+                rect = params.rgrc[0]
+            else:
+                rect = ctypes.cast(lparam,
+                                   ctypes.POINTER(win.RECT)).contents
+
+            insets = maximised_insets(self.border(),
+                                      self.autohide_edges(rect))
+            (rect.left, rect.top, rect.right, rect.bottom) = inset_rect(
+                (rect.left, rect.top, rect.right, rect.bottom), insets)
             return True, 0
         except Exception:
             return False, 0
 
     def _hit_test(self, lparam: int):
         try:
-            ctypes, _w, _R, _NC, _M, POINT, _A, _Mi = _structs()
-            # lParam packs two signed 16-bit screen coordinates.
-            x = ctypes.c_short(lparam & 0xFFFF).value
-            y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
-            point = POINT(x, y)
+            win = _structs()
+            ctypes = win.ctypes
+            point = win.POINT(*unpack_point(lparam))
             ctypes.windll.user32.ScreenToClient(ctypes.c_void_p(self.hwnd),
                                                 ctypes.byref(point))
             ratio = self.window.devicePixelRatioF() or 1.0
@@ -506,6 +747,37 @@ class WindowsFrame:
         except Exception:
             return False, 0
 
+    def _track_mouse(self) -> None:
+        """Ask to be told when the pointer leaves the non-client area.
+
+        Without this `WM_NCMOUSELEAVE` is *never posted*: the message is
+        documented as going to the window "specified in a prior call to
+        TrackMouseEvent", and with no such call there is no leave message
+        and no way to know the pointer has gone. The close button then
+        stays lit bright red after the pointer moves off it into the
+        video, which is the common case rather than an edge one.
+
+        Re-armed on every leave, because generating the message cancels
+        the tracking that asked for it.
+        """
+        if self._tracking:
+            return
+        try:
+            win = _structs()
+            user32, _shell32 = _win32()
+            request = win.TRACKMOUSEEVENT()
+            request.cbSize = win.ctypes.sizeof(win.TRACKMOUSEEVENT)
+            request.dwFlags = TME_LEAVE | TME_NONCLIENT
+            request.hwndTrack = win.wintypes.HWND(self.hwnd)
+            request.dwHoverTime = HOVER_DEFAULT
+            self._tracking = bool(
+                user32.TrackMouseEvent(win.ctypes.byref(request)))
+        except Exception:
+            self._tracking = False
+
+    def _paint_state(self) -> None:
+        self.toolbar.set_caption_state(self._hot, self._down)
+
     def _button_input(self, message: int, wparam: int):
         """Drive the caption buttons from non-client messages.
 
@@ -514,40 +786,114 @@ class WindowsFrame:
         a button but never lights up is worse than no button. So hover and
         press are driven from here, and the toolbar is told what to draw.
         """
-        by_code = {v: k for k, v in _HT.items()}
-        region = by_code.get(wparam, "")
+        region = _REGION_OF.get(wparam, "")
         try:
             if message == WM_NCMOUSELEAVE:
-                self._hot = ""
-                self.toolbar.set_caption_state("", "")
-                return False, 0                  # Windows still wants it
+                self._tracking = False       # generating it cancelled it
+                if self._hot:
+                    self._hot = ""
+                    self._paint_state()
+                return False, 0              # Windows still wants it
             if message == WM_NCMOUSEMOVE:
+                self._track_mouse()
                 if region != self._hot:
                     self._hot = region if region in BUTTONS else ""
-                    self.toolbar.set_caption_state(self._hot, self._down)
+                    self._paint_state()
                 return False, 0
             if message == WM_NCLBUTTONDOWN and region in BUTTONS:
+                # Capture, because returning (True, 0) opts out of
+                # DefWindowProc's caption-button handling and that handling
+                # *is* a capture loop. Without it, press-and-drag-away
+                # sends the release to whatever is under the pointer, the
+                # up message never arrives, and the button draws pressed
+                # for good. Capture also restores the universal escape:
+                # drag off, release, nothing happens.
                 self._down = region
-                self.toolbar.set_caption_state(self._hot, self._down)
-                return True, 0                   # ours; do not let DefWindowProc
+                self._paint_state()
+                try:
+                    _win32()[0].SetCapture(self._hwnd_t())
+                except Exception:
+                    pass
+                return True, 0               # ours; not DefWindowProc's
             if message == WM_NCLBUTTONUP and region in BUTTONS:
-                fired, self._down = self._down, ""
-                self.toolbar.set_caption_state(self._hot, "")
-                if fired == region:
-                    self._activate(region)
+                self._release(region)
                 return True, 0
         except Exception:
             return False, 0
         return False, 0
 
+    def _hwnd_t(self):
+        return _structs().wintypes.HWND(self.hwnd)
+
+    def _captured_input(self, message: int, lparam: int):
+        """The other half of the press, which arrives as client messages.
+
+        While the mouse is captured Windows stops consulting the hit test
+        and delivers plain WM_MOUSEMOVE and WM_LBUTTONUP in *client*
+        coordinates -- so the same drag produces non-client messages
+        before the press and client ones after it.
+        """
+        if not self._down:
+            return False, 0
+        try:
+            if message == WM_CAPTURECHANGED:
+                # Something else took it. Let go of the visual state or the
+                # button stays pressed with nothing driving it.
+                self._down = self._hot = ""
+                self._paint_state()
+                return False, 0
+
+            region = self._at_client(lparam)
+            if message == WM_MOUSEMOVE:
+                over = region if region == self._down else ""
+                if over != self._hot:
+                    self._hot = over
+                    self._paint_state()
+                return True, 0
+            if message == WM_LBUTTONUP:
+                try:
+                    _win32()[0].ReleaseCapture()
+                except Exception:
+                    pass
+                self._release(region)
+                return True, 0
+        except Exception:
+            return False, 0
+        return False, 0
+
+    def _at_client(self, lparam: int) -> str:
+        """Region under a client-coordinate lParam."""
+        x, y = unpack_point(lparam)
+        ratio = self.window.devicePixelRatioF() or 1.0
+        return hit_region(round(x / ratio), round(y / ratio), self.frame())
+
+    def _release(self, region: str) -> None:
+        fired, self._down = self._down, ""
+        self._paint_state()
+        if fired and fired == region:
+            self._activate(region)
+
     def _activate(self, region: str) -> None:
+        """Do it, but not from here.
+
+        This runs on the stack of a native message. `close()` runs the
+        close event synchronously and can destroy the window, after which
+        the handler returns a result through a frame belonging to a dead
+        HWND; the show calls re-enter the window procedure (WM_NCCALCSIZE,
+        WM_SIZE) while this one is still running. Deferring to the next
+        turn of the event loop costs nothing and removes the whole class.
+        """
+        from PySide6 import QtCore
+
+        window = self.window
         if region == MINIMISE:
-            self.window.showMinimized()
+            QtCore.QTimer.singleShot(0, window.showMinimized)
         elif region == MAXIMISE:
-            (self.window.showNormal() if self.window.isMaximized()
-             else self.window.showMaximized())
+            QtCore.QTimer.singleShot(
+                0, lambda: (window.showNormal() if window.isMaximized()
+                            else window.showMaximized()))
         elif region == CLOSE:
-            self.window.close()
+            QtCore.QTimer.singleShot(0, window.close)
 
 
 #: Region to the Qt edge flags `startSystemResize` wants. Built lazily so
@@ -616,6 +962,7 @@ class SystemFrame:
         self.window = window
         self.toolbar = toolbar
         self._filter = None
+        self._shape = ""        # region the cursor is currently shaped for
 
     def frame(self) -> Frame:
         buttons, reserved = self.toolbar.caption_geometry()
@@ -686,13 +1033,18 @@ class SystemFrame:
         region = self._at(event)
 
         if kind == QtCore.QEvent.Type.MouseMove:
-            # Cursor only. The move is never consumed, or every widget
-            # under the pointer would stop seeing it.
-            name = self._CURSORS.get(region)
-            if name:
-                self.window.setCursor(getattr(QtCore.Qt.CursorShape, name))
-            else:
-                self.window.unsetCursor()
+            # Cursor only, and only when it changes. The move is never
+            # consumed, or every widget under the pointer would stop
+            # seeing it -- this filter is on the application, so that is
+            # every widget in the program.
+            if region != self._shape:
+                self._shape = region
+                name = self._CURSORS.get(region)
+                if name:
+                    self.window.setCursor(
+                        getattr(QtCore.Qt.CursorShape, name))
+                else:
+                    self.window.unsetCursor()
             return False
 
         handle = self.window.windowHandle()
@@ -739,6 +1091,7 @@ class SystemFrame:
             app.removeEventFilter(self._filter)
             self._filter = None
         self.window.unsetCursor()
+        self._shape = ""
         for button in self.toolbar.caption.values():
             try:
                 button.pressed.disconnect(self._activate)

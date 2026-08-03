@@ -1918,6 +1918,12 @@ class MainWindow(QtWidgets.QMainWindow):
             frame = WindowsFrame(self, self.toolbar)
             if not frame.attach():
                 return False
+            # Windows 11 still draws a thin DWM border around the window,
+            # in the *system* light or dark setting rather than ours. On a
+            # light-themed machine that is a pale hairline around a
+            # near-black program, and it is the one piece of the frame
+            # this does not paint itself.
+            theme.match_frame(self)
             self.toolbar.show_caption_buttons()
             # Once hit testing claims the strip, the pointer arrives as
             # non-client messages and Qt never sees a click there.

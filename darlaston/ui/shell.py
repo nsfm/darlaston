@@ -112,13 +112,22 @@ class CaptionButton(QtWidgets.QWidget):
         self.set_state(False, False)
 
     def mousePressEvent(self, event) -> None:
-        if event.button() is QtCore.Qt.MouseButton.LeftButton:
-            self.set_state(True, True)
+        # Left only, and anything else goes back where it came from. A
+        # swallowed right-click here is a window menu that works
+        # everywhere along the bar except over three buttons.
+        if event.button() is not QtCore.Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self.set_state(True, True)
 
     def mouseReleaseEvent(self, event) -> None:
+        if event.button() is not QtCore.Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
         fired = self.down
-        self.set_state(self.rect().contains(event.position().toPoint()), False)
-        if fired and self.rect().contains(event.position().toPoint()):
+        inside = self.rect().contains(event.position().toPoint())
+        self.set_state(inside, False)
+        if fired and inside:
             self.pressed.emit(self.kind)
 
     def set_state(self, hot: bool, down: bool) -> None:
@@ -204,6 +213,7 @@ class ToolBar(QtWidgets.QFrame):
         # the corner is where people flick to close a maximised window
         # without aiming.
         self._spare_margin: int | None = None
+        self._geometry = None
         self._caption_strip = QtWidgets.QWidget()
         self._caption_strip.setProperty("role", "caption")
         strip = QtWidgets.QHBoxLayout(self._caption_strip)
@@ -228,6 +238,7 @@ class ToolBar(QtWidgets.QFrame):
             self._spare_margin = right
         self._row.setContentsMargins(left, top, 0, bottom)
         self._caption_strip.show()
+        self.forget_geometry()
 
     def hide_caption_buttons(self) -> None:
         """Give the corner back, for when the platform draws them again."""
@@ -235,6 +246,7 @@ class ToolBar(QtWidgets.QFrame):
         self._row.setContentsMargins(left, top, self._spare_margin or 0,
                                      bottom)
         self._caption_strip.hide()
+        self.forget_geometry()
 
     def set_caption_state(self, hot: str, down: str) -> None:
         """Told from outside, because these get no mouse events."""
@@ -248,23 +260,63 @@ class ToolBar(QtWidgets.QFrame):
         the bar sits at its top left. Returned rather than assumed so the
         hit testing and the layout cannot disagree about where anything
         is: the frame asks, the layout answers.
+
+        Cached, because the callers are hit testing -- once per mouse
+        move over the window on Windows, and on Linux from an
+        application-wide event filter, which is every mouse move
+        anywhere. Twenty microseconds of tree walk is not much and it is
+        also not something a program showing a live camera preview should
+        spend on every pointer twitch. `forget_geometry` is called from
+        the three things that can move any of it.
         """
+        if self._geometry is None:
+            self._geometry = self._measure()
+        return self._geometry
+
+    def forget_geometry(self) -> None:
+        """Something moved. Measure again when next asked."""
+        self._geometry = None
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.forget_geometry()
+
+    def event(self, event) -> bool:
+        # A LayoutRequest is Qt saying a child's size hint changed, which
+        # is how a longer translated menu label reaches this without
+        # anything having to remember to say so.
+        if event.type() == QtCore.QEvent.Type.LayoutRequest:
+            self.forget_geometry()
+        return super().event(event)
+
+    def _measure(self):
         # Mapped into the bar's own coordinates rather than read off
         # `x()`, which is relative to whatever the button was parented
         # into. The strip is a nesting level deep.
+        # All three, always, in the order `hit_region` expects. A button
+        # that is not on screen contributes a zero-width span, which can
+        # never match a coordinate -- rather than being dropped, which
+        # would shift the ones after it onto the wrong names. And
+        # `isVisibleTo`, not `isHidden`: hiding the strip does not mark
+        # its children hidden, so `isHidden` said the buttons were still
+        # there after the frame had given them back to the platform.
         buttons = tuple(
-            (b.mapTo(self, QtCore.QPoint(0, 0)).x(), b.width())
+            (b.mapTo(self, QtCore.QPoint(0, 0)).x(),
+             b.width() if b.isVisibleTo(self) else 0)
             for b in (self.caption["minimise"], self.caption["maximise"],
-                      self.caption["close"])
-            if not b.isHidden())
-        # Everything from the left edge to the end of the last menu is
-        # clickable, so the drag must not claim it.
-        rightmost = self.wordmark.x() + self.wordmark.width()
+                      self.caption["close"]))
+        # Everything from the wordmark to the end of the last menu is
+        # clickable, so the drag must not claim it. From the wordmark and
+        # not from zero: the layout's own left margin is not a control,
+        # and reserving it made the first few pixels of the bar the one
+        # part of it a window cannot be dragged by.
+        left = self.wordmark.x()
+        rightmost = left + self.wordmark.width()
         for menu_button in self.findChildren(QtWidgets.QPushButton):
             if menu_button.property("role") == "menu":
                 rightmost = max(rightmost,
                                 menu_button.x() + menu_button.width())
-        return buttons, ((0, rightmost),)
+        return buttons, ((left, rightmost - left),)
 
     def inset_for_window_controls(self, pixels: int) -> None:
         """Start the toolbar to the right of the platform's own buttons.
@@ -280,6 +332,7 @@ class ToolBar(QtWidgets.QFrame):
         """
         left, top, right, bottom = self._row.getContentsMargins()
         self._row.setContentsMargins(pixels, top, right, bottom)
+        self.forget_geometry()
 
     def add_menu(self, name: str, title: str) -> QtWidgets.QMenu:
         """A popup rather than a plain button, so these can nest as more

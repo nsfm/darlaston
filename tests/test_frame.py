@@ -41,7 +41,15 @@ def test_each_caption_button_reports_itself():
     # The maximise button specifically: Windows 11 shows its snap-layouts
     # flyout only over a region that reports HTMAXBUTTON, and a custom
     # frame without it is quietly worse than the standard one.
-    assert hit_region(1121, 2 + 8, WINDOW) == MAXIMISE
+    #
+    # Asked below the resize border, and that is a decision rather than a
+    # convenience: the top `border` pixels of these buttons report the
+    # top edge, exactly as they do on a standard window, where the caption
+    # buttons sit below the frame rather than at y=0. It costs the flyout
+    # on the top few pixels of the button and keeps the top edge grabbable
+    # along its whole length.
+    assert hit_region(1121, WINDOW.border, WINDOW) == MAXIMISE
+    assert hit_region(1121, WINDOW.border - 1, WINDOW) == TOP
 
 
 def test_the_resize_edges_beat_everything():
@@ -60,16 +68,24 @@ def test_the_resize_edges_beat_everything():
 def test_a_maximised_window_has_no_edges_to_grab():
     """Windows will let you drag one, and the window then un-maximises to
     somewhere the person did not ask for."""
+    # Buttons at the right of *this* width. The fixture's are at 1080..1200
+    # in a 1200-wide window; reusing them here would leave a 720 px gap to
+    # the corner and quietly test the wrong thing in the one state where
+    # the corner matters most.
     full = Frame(width=1920, height=1080, bar=36, border=8,
-                 buttons=WINDOW.buttons, reserved=WINDOW.reserved,
-                 maximised=True)
+                 buttons=((1800, 40), (1840, 40), (1880, 40)),
+                 reserved=WINDOW.reserved, maximised=True)
     for point in ((2, 2), (960, 2), (1918, 1078), (2, 540)):
         got = hit_region(*point, full)
         assert got not in EDGES, f"{point} offered a resize edge while maximised"
     # The bar still drags, which is how a maximised window is restored.
     assert hit_region(700, 18, full) == CAPTION
-    # And the buttons still answer, since they moved with the width.
-    assert hit_region(1100, 18, full) == MINIMISE
+    assert hit_region(1820, 18, full) == MINIMISE
+    # The flick: with no edges in the way, the very corner closes. This is
+    # how a maximised window is closed without aiming, and it only works
+    # because the maximised branch skips the edge tests entirely.
+    assert hit_region(1919, 0, full) == CLOSE
+    assert hit_region(1919, 35, full) == CLOSE
 
 
 def test_the_body_of_the_window_is_left_alone():
@@ -91,10 +107,24 @@ def test_every_region_maps_to_a_hit_test_code():
 def test_the_border_is_wider_than_it_looks():
     """SM_CXSIZEFRAME alone is the visible frame and is too thin to grab;
     Windows adds SM_CXPADDEDBORDER, which is why a standard window's edge
-    is easier to hit than it appears."""
+    is easier to hit than it appears.
+
+    Off Windows there is no metric to read and this exercises the
+    fallback, so the fallback is what it asserts -- by value. It used to
+    assert only `>= 4` and monotonicity, both of which the fallback
+    satisfies on its own, which meant that on every machine that runs
+    these tests it asserted that a constant was a constant.
+    """
+    import sys
+
     from darlaston.ui.frame import border_thickness
 
     at96 = border_thickness(96)
+    if not sys.platform.startswith("win"):
+        assert at96 == 8, "the 96-DPI fallback"
+        assert border_thickness(192) == 16, "and it scales"
+        assert border_thickness(48) == 4, "with a floor, so it stays grabbable"
+        return
     assert at96 >= 4, at96
     # Scales with DPI, so a 4K screen does not get a two-pixel target.
     assert border_thickness(192) >= at96
@@ -130,15 +160,27 @@ def test_the_toolbar_and_the_frame_agree_on_where_things_are(qapp):
         assert x + w == nx, "a gap between buttons is a dead pixel column"
 
     # The reserved strip covers the wordmark and every menu, so dragging
-    # never swallows a click on them.
+    # never swallows a click on them. It starts *at* the wordmark: the
+    # layout margin to its left is not a control, and claiming it made the
+    # first few pixels of the bar the one part a window cannot be dragged
+    # by.
     (start, span), = reserved
-    assert start == 0 and span >= bar.wordmark.x() + bar.wordmark.width()
+    assert start == bar.wordmark.x() > 0
+    assert start + span >= bar.wordmark.x() + bar.wordmark.width()
 
     frame = Frame(width=bar.width(), height=800, bar=36, border=8,
                   buttons=buttons, reserved=reserved)
     assert hit_region(bar.wordmark.x() + 4, 18, frame) == CLIENT
     assert hit_region(buttons[2][0] + 4, 18, frame) == CLOSE
-    assert hit_region(span + 40, 18, frame) == CAPTION
+    assert hit_region(start + span + 40, 18, frame) == CAPTION
+    # The margin left of the wordmark drags like the rest of the bar. Only
+    # visible where the resize border is narrower than the margin -- at a
+    # border of 8 the whole margin is edge anyway, which is why this asks
+    # at 2.
+    thin = Frame(width=bar.width(), height=800, bar=36, border=2,
+                 buttons=buttons, reserved=reserved)
+    assert hit_region(start - 1, 18, thin) == CAPTION, \
+        "the layout margin should drag the window like the rest of the bar"
     bar.close()
 
 
@@ -237,23 +279,27 @@ def test_a_maximised_window_leaves_room_for_an_autohiding_taskbar():
     """It reveals itself when the pointer reaches its screen edge, and it
     cannot see the pointer through a window covering that edge.
 
-    Without the pixel, the taskbar simply stops working while this program
+    Without the gap, the taskbar simply stops working while this program
     is open, which reads as Windows being broken rather than as us."""
-    from darlaston.ui.frame import maximised_insets
+    from darlaston.ui.frame import AUTOHIDE_GAP, maximised_insets
+
+    gap = AUTOHIDE_GAP
+    assert gap >= 2, "Chromium ships two for this; one has no evidence"
 
     plain = maximised_insets(8)
     assert plain == (8, 8, 8, 8), "the frame overhang is per edge"
 
     at_bottom = maximised_insets(8, frozenset({BOTTOM}))
-    assert at_bottom == (8, 8, 8, 9)
-    # Only the edge that has one, so three edges do not lose a pixel for
-    # a taskbar that is not there.
+    assert at_bottom == (8, 8, 8, 8 + gap)
+    # Only the edge that has one, so three edges do not lose pixels for a
+    # taskbar that is not there.
     assert at_bottom[:3] == plain[:3]
 
     # A taskbar on the left, which plenty of people run.
-    assert maximised_insets(8, frozenset({LEFT})) == (9, 8, 8, 8)
+    assert maximised_insets(8, frozenset({LEFT})) == (8 + gap, 8, 8, 8)
     # And more than one, which is unusual but possible with several bars.
-    assert maximised_insets(8, frozenset({TOP, RIGHT})) == (8, 9, 9, 8)
+    assert maximised_insets(8, frozenset({TOP, RIGHT})) == \
+        (8, 8 + gap, 8 + gap, 8)
 
 
 def test_the_caption_strip_is_the_same_colour_as_the_bar(qapp):
@@ -332,3 +378,192 @@ def test_the_traffic_light_inset_goes_away_in_fullscreen(qapp):
     qapp.processEvents()
     assert bar._row.getContentsMargins()[0] == theme.MACOS_LIGHTS
     window.close()
+
+
+def test_a_packed_point_is_read_as_two_signed_numbers():
+    """A monitor left of or above the primary one gives negative screen
+    coordinates, and the documentation says so in as many words: both
+    fields "represent signed values because they can take negative values
+    on systems with multiple monitors". Read unsigned they come back near
+    65000, so the window works on one screen and puts the pointer
+    somewhere impossible on the other."""
+    from darlaston.ui.frame import unpack_point
+
+    assert unpack_point(0) == (0, 0)
+    assert unpack_point((300 << 16) | 100) == (100, 300)
+    # -1 in both halves, which is the all-ones word an unsigned read
+    # turns into 65535.
+    assert unpack_point(0xFFFFFFFF) == (-1, -1)
+    # A second monitor to the left: x negative, y positive.
+    assert unpack_point((50 << 16) | (0x10000 - 200)) == (-200, 50)
+    # The extremes of the range.
+    assert unpack_point((0x8000 << 16) | 0x8000) == (-32768, -32768)
+    assert unpack_point((0x7FFF << 16) | 0x7FFF) == (32767, 32767)
+
+
+def test_the_maximised_rectangle_is_pulled_in_and_not_pushed_out():
+    """The four lines that decide whether a maximised window fits its
+    screen. A sign error here is a window that shrinks by twice the
+    border every time it is maximised, or one that hangs off every edge."""
+    from darlaston.ui.frame import AUTOHIDE_GAP, BOTTOM, inset_rect, \
+        maximised_insets
+
+    screen = (0, 0, 1920, 1080)
+    assert inset_rect(screen, (8, 8, 8, 8)) == (8, 8, 1912, 1072)
+    # Each edge independently, so a transposition cannot hide.
+    assert inset_rect(screen, (1, 2, 3, 4)) == (1, 2, 1917, 1076)
+    # A monitor that does not start at the origin: the insets are
+    # relative to the rectangle, not to the desktop.
+    assert inset_rect((-1920, 0, 0, 1080), (8, 8, 8, 8)) == \
+        (-1912, 8, -8, 1072)
+    # And end to end, the way _calc_size uses it.
+    insets = maximised_insets(8, frozenset({BOTTOM}))
+    assert inset_rect(screen, insets) == (8, 8, 1912, 1080 - 8 - AUTOHIDE_GAP)
+
+
+def test_the_hit_test_codes_are_the_numbers_windows_uses():
+    """Pinned by value, not by presence. A typo turning HTCLOSE into 21
+    is HTHELP, which a presence check passes and which puts a question
+    mark cursor over the close button."""
+    from darlaston.ui.frame import _HT, _REGION_OF, BOTTOM, BOTTOMLEFT, \
+        BOTTOMRIGHT, CAPTION, CLIENT, CLOSE, LEFT, MAXIMISE, MINIMISE, \
+        RIGHT, TOP, TOPLEFT, TOPRIGHT
+
+    assert _HT == {
+        CLIENT: 1,          # HTCLIENT
+        CAPTION: 2,         # HTCAPTION
+        MINIMISE: 8,        # HTMINBUTTON
+        MAXIMISE: 9,        # HTMAXBUTTON -- the snap-layouts one
+        LEFT: 10,           # HTLEFT
+        RIGHT: 11,          # HTRIGHT
+        TOP: 12,            # HTTOP
+        TOPLEFT: 13,        # HTTOPLEFT
+        TOPRIGHT: 14,       # HTTOPRIGHT
+        BOTTOM: 15,         # HTBOTTOM
+        BOTTOMLEFT: 16,     # HTBOTTOMLEFT
+        BOTTOMRIGHT: 17,    # HTBOTTOMRIGHT
+        CLOSE: 20,          # HTCLOSE
+    }
+    # And the reverse map loses nothing, which it would if two regions
+    # ever shared a code -- silently, by misrouting a button press.
+    assert len(_REGION_OF) == len(_HT)
+    assert all(_REGION_OF[code] == name for name, code in _HT.items())
+
+
+def test_the_whole_bar_drags_when_there_are_no_buttons():
+    """The fallback: before the frame is taken, and on any platform that
+    never takes it, the bar is a drag strip with nothing claimed out of
+    its right-hand end."""
+    from darlaston.ui.frame import CAPTION, CLIENT, Frame, hit_region
+
+    bare = Frame(width=1200, height=800, bar=36, border=8, buttons=(),
+                 reserved=((8, 300),))
+    assert hit_region(1150, 18, bare) == CAPTION   # where a button was
+    assert hit_region(600, 18, bare) == CAPTION
+    assert hit_region(100, 18, bare) == CLIENT      # still a menu there
+    assert hit_region(600, 400, bare) == CLIENT
+
+
+def test_a_reserved_run_that_reaches_a_button_does_not_win():
+    """A longer translated menu label pushes the reserved run to the
+    right. Buttons are tested first, so the button keeps the pixel -- and
+    that ordering is the thing being pinned, since the alternative is a
+    close button that stops closing in one language."""
+    from darlaston.ui.frame import CLOSE, Frame, hit_region
+
+    crowded = Frame(width=1200, height=800, bar=36,
+                    border=8, buttons=((1062, 46), (1108, 46), (1154, 46)),
+                    reserved=((8, 1192),))       # runs under all three
+    assert hit_region(1160, 18, crowded) == CLOSE
+
+
+def test_a_menu_added_after_the_caption_strip_still_lands_on_the_left(qapp):
+    """The strip goes in after the stretch, so an insertion point of
+    "just before the last item" put every later menu on the far right,
+    past the window buttons. That happened once; nothing guarded it."""
+    from darlaston.ui.shell import ToolBar
+
+    bar = ToolBar()
+    bar.add_menu("Setup", "Setup")
+    bar.show_caption_buttons()
+    bar.add_menu("Capture", "Capture")      # the order that broke it
+    bar.resize(1200, 36)
+    bar.show()
+    qapp.processEvents()
+
+    buttons, ((start, span),) = bar.caption_geometry()
+    later = bar.menus["Capture"].menuAction()
+    for widget in bar.findChildren(type(bar.wordmark)):
+        if widget.text() == "Capture":
+            assert widget.x() + widget.width() <= buttons[0][0], \
+                "a menu ended up under the window buttons"
+            assert start <= widget.x() < start + span, \
+                "a menu ended up outside the strip that protects it"
+            break
+    else:
+        raise AssertionError("the menu button is not in the bar at all")
+    assert later is not None
+    bar.close()
+
+
+def test_a_caption_button_dragged_off_does_not_fire(qapp):
+    """The universal escape. Press, change your mind, drag away, release
+    -- and nothing happens. Losing it means a close button that cannot be
+    backed out of."""
+    from PySide6 import QtCore, QtGui
+
+    from darlaston.ui.shell import ToolBar
+
+    bar = ToolBar()
+    bar.show_caption_buttons()
+    close = bar.caption["close"]
+    close.resize(46, 36)
+    fired = []
+    close.pressed.connect(fired.append)
+
+    def event(kind, x, y, buttons):
+        point = QtCore.QPointF(x, y)
+        return QtGui.QMouseEvent(kind, point, point,
+                                 QtCore.Qt.MouseButton.LeftButton, buttons,
+                                 QtCore.Qt.KeyboardModifier.NoModifier)
+
+    press = QtCore.QEvent.Type.MouseButtonPress
+    release = QtCore.QEvent.Type.MouseButtonRelease
+    left = QtCore.Qt.MouseButton.LeftButton
+    none = QtCore.Qt.MouseButton.NoButton
+
+    close.mousePressEvent(event(press, 20, 18, left))
+    assert close.down
+    close.mouseReleaseEvent(event(release, 20, 200, none))   # dragged off
+    assert fired == [], "released outside the button and it fired anyway"
+    assert not close.down and not close.hot
+
+    # And the ordinary case still does.
+    close.mousePressEvent(event(press, 20, 18, left))
+    close.mouseReleaseEvent(event(release, 20, 18, none))
+    assert fired == ["close"]
+
+
+def test_a_right_click_on_a_caption_button_is_not_swallowed(qapp):
+    """It has to reach the window, or the system menu works everywhere
+    along the bar except over three buttons."""
+    from PySide6 import QtCore, QtGui
+
+    from darlaston.ui.shell import ToolBar
+
+    bar = ToolBar()
+    bar.show_caption_buttons()
+    close = bar.caption["close"]
+    close.resize(46, 36)
+    fired = []
+    close.pressed.connect(fired.append)
+
+    point = QtCore.QPointF(20, 18)
+    right = QtCore.Qt.MouseButton.RightButton
+    event = QtGui.QMouseEvent(QtCore.QEvent.Type.MouseButtonPress, point,
+                              point, right, right,
+                              QtCore.Qt.KeyboardModifier.NoModifier)
+    event.accept()
+    close.mousePressEvent(event)
+    assert not event.isAccepted(), "the right click stopped here"
+    assert not close.down and fired == []
