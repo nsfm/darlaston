@@ -144,6 +144,9 @@ class ProfileDialog(FramedDialog):
         else:
             self.response_result = got
             usable = got.usable
+            # `trustworthy` is the single rule. The window used to apply
+            # its own, stricter one when saving, so a sweep could be
+            # announced as measured and then silently stored as nothing.
             if not got.trustworthy:
                 # Dark, clipped, or not settling between steps. All three
                 # produce a table that looks like a measurement, so this

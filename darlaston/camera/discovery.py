@@ -105,9 +105,18 @@ def _toupcam() -> list[Camera]:
     out = []
     for i, dev in enumerate(devices):
         name = getattr(dev, "displayname", None) or f"camera {i + 1}"
-        model = getattr(dev, "model", None)
-        w = getattr(model, "res", [None])[0].width if model else 0
-        h = getattr(model, "res", [None])[0].height if model else 0
+        # Read defensively. `look()` is called from `main` at startup
+        # before any window exists, and this expression sat outside the
+        # try: a model with an empty `res` would take the application
+        # down rather than merely fail to list one camera.
+        w = h = 0
+        try:
+            model = getattr(dev, "model", None)
+            first = (getattr(model, "res", None) or [None])[0]
+            w = int(getattr(first, "width", 0) or 0)
+            h = int(getattr(first, "height", 0) or 0)
+        except Exception:
+            pass
         out.append(Camera(
             key=f"toupcam:{getattr(dev, 'id', i)}",
             kind="toupcam", name=str(name),
@@ -248,17 +257,30 @@ def _ximea() -> list[Camera]:
     return out
 
 
+def rank(camera: Camera) -> tuple:
+    """How likely this is the camera on the microscope. Bigger is better.
+
+    A single function so the order can be tested rather than described:
+    a test that reimplements this sort passes whatever the real one does.
+
+    Sensor size leads. Ranking "offers uncompressed" above it put a
+    640x360 infrared face-unlock sensor ahead of a 1920x1080 eyepiece
+    camera that only speaks MJPG -- and MJPG-only is the common cheap
+    microscope camera, the exact device this exists to support.
+    """
+    return (camera.width * camera.height, camera.uncompressed,
+            camera.controls > 0)
+
+
 def look() -> list[Camera]:
     """Every camera on the machine, the likeliest answer first.
 
-    Ordered by what a person would reach for: something that can hand us
-    uncompressed frames beats something that cannot, and after that the
-    bigger sensor wins. Neither is a filter -- an infrared face-unlock
-    sensor stays in the list, at the bottom, named as itself.
+    Ordered by `rank`. Nothing is filtered -- an infrared face-unlock
+    sensor stays in the list, at the bottom, named as itself -- so the
+    order is the only thing deciding what opens by default.
     """
     found = _toupcam() + _ximea() + _v4l2()
-    found.sort(key=lambda c: (c.uncompressed, c.controls > 0,
-                              c.width * c.height), reverse=True)
+    found.sort(key=rank, reverse=True)
     return found
 
 
@@ -302,8 +324,16 @@ def choose(cameras: list[Camera], remembered: str = "",
     """
     if remembered:
         for camera in cameras:
-            if camera.key == remembered:
-                return camera
+            if camera.key != remembered:
+                continue
+            # A port is a socket, not a camera. Without this a different
+            # device in the remembered socket is simply opened: the
+            # library correctly refuses to hand over the old calibration,
+            # but by then we are looking through the wrong camera.
+            if fingerprint and camera.fingerprint and \
+                    camera.fingerprint != fingerprint:
+                break
+            return camera
     if fingerprint:
         same = [c for c in cameras if c.fingerprint == fingerprint]
         if len(same) == 1:

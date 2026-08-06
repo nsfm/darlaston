@@ -175,6 +175,10 @@ class Response:
         levels = [l for _v, l in self.points]
         if max(levels) - min(levels) < MIN_SWING:
             return False
+        # A backstop the correlation cannot provide: two points that
+        # happen to be in order are not a curve.
+        if len(self.usable) < 3:
+            return False
         return self.agreement >= MIN_AGREEMENT
 
     @property
@@ -188,11 +192,25 @@ class Response:
         """
         if len(self.points) < 3:
             return 0.0
+        # Average ranks across ties. `sorted` is stable, so tied levels
+        # would otherwise take ranks in measurement order and a flat
+        # sweep with one jump in it scores a perfect 1.0 -- which is the
+        # noise-floor failure this was written to catch, wearing a
+        # different hat.
         order = sorted(range(len(self.points)),
                        key=lambda i: self.points[i][1])
-        ranks = [0] * len(order)
-        for rank, index in enumerate(order):
-            ranks[index] = rank
+        ranks = [0.0] * len(order)
+        start = 0
+        while start < len(order):
+            stop = start
+            while (stop + 1 < len(order)
+                   and self.points[order[stop + 1]][1]
+                   == self.points[order[start]][1]):
+                stop += 1
+            shared = (start + stop) / 2.0
+            for index in order[start:stop + 1]:
+                ranks[index] = shared
+            start = stop + 1
         n = len(ranks)
         mean = (n - 1) / 2.0
         top = sum((i - mean) * (r - mean) for i, r in enumerate(ranks))
@@ -331,9 +349,16 @@ def sweep_response(backend, values=None, progress=None) -> Response:
     span = info.exposure_range_us if info else None
     if span is None:
         return Response()
+    # Taken before anything moves. `plan_sweep` probes the camera, so
+    # reading this afterwards restored the last probe value rather than
+    # what the operator had set.
+    before = getattr(backend, "_exposure_us", None)
+
     if values is None:
         values = plan_sweep(backend, span)
         if not values:
+            if before is not None:
+                backend.set_exposure(before)
             return Response()
 
     def set_value(v):
@@ -345,7 +370,6 @@ def sweep_response(backend, values=None, progress=None) -> Response:
     # whatever exposure it happened to finish on has changed the thing it
     # was measuring, and the interface goes on showing the old number --
     # so the slider and the picture disagree and neither is wrong.
-    before = getattr(backend, "_exposure_us", None)
     try:
         return measure_response(backend.level, set_value, values)
     finally:

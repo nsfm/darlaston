@@ -191,3 +191,45 @@ def test_agreement_separates_dim_from_unsettled():
 
     assert dim.agreement > unsettled.agreement
     assert dim.trustworthy and not unsettled.trustworthy
+
+
+def test_a_flat_sweep_with_one_jump_is_not_a_curve():
+    """`sorted` is stable, so tied levels took ranks in measurement order
+    and a rank correlation read them as a perfect permutation. Forty-seven
+    readings at the noise floor and one at 200 scored 1.0 and were
+    accepted -- the same failure the guard was written for, wearing a
+    different hat."""
+    flat = Response(points=tuple(
+        [(v, 3.0) for v in range(1, 48)] + [(48, 200.0)]))
+    assert flat.agreement < 0.99, "ties still read as perfect agreement"
+    assert not flat.trustworthy
+
+    two_steps = Response(points=tuple(
+        [(v, 5.0) for v in range(1, 20)]
+        + [(v, 250.0) for v in range(20, 40)]))
+    assert not two_steps.trustworthy, "two levels is not a response curve"
+
+
+def test_the_sweep_restores_what_the_operator_had_set():
+    """`plan_sweep` probes the camera, so reading the exposure to restore
+    it *after* planning put back the last probe value rather than what
+    was there before."""
+    from darlaston.camera.profiling import sweep_response
+
+    class _Camera:
+        class info:
+            exposure_range_us = (100, 500_000)
+
+        def __init__(self):
+            self._exposure_us = 12_345          # what the operator had
+
+        def set_exposure(self, us):
+            self._exposure_us = int(us)
+
+        def level(self):
+            return min(255.0, self._exposure_us / 400.0)
+
+    cam = _Camera()
+    sweep_response(cam)
+    assert cam._exposure_us == 12_345, \
+        f"left the camera at {cam._exposure_us}, not where it found it"

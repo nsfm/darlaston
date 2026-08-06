@@ -280,8 +280,15 @@ class StillCapture:
                     out, bayer=not (mono or decoded), black=black,
                     white=white, neutral=shot)
                 if decoded:
+                    # The frame arrives BGR -- that is what OpenCV hands
+                    # back, and what the preview and the JPEG below both
+                    # expect -- while the DNG's linear planes are R, G, B.
+                    # Written straight through, red and blue came out
+                    # swapped in the raw and its embedded thumbnail while
+                    # the JPEG beside it was correct, so the two files
+                    # disagreed about which channel was red.
                     written = dng.write_linear_streamed(
-                        path, lambda s, c: out[s:s + c],
+                        path, lambda s, c: out[s:s + c, :, ::-1],
                         out.shape[0], out.shape[1], preview=preview,
                         black=black, white=white,
                         neutral=neutral or (1.0, 1.0, 1.0), meta=meta)

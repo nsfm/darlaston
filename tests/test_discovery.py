@@ -26,12 +26,17 @@ def test_the_likeliest_answer_comes_first():
     sealed = _cam("sealed", name="UVC Camera", width=1920, height=1080,
                   controls=0, uncompressed=False)
 
-    order = sorted([infrared, laptop, sealed, scope],
-                   key=lambda c: (c.uncompressed, c.controls > 0,
-                                  c.width * c.height), reverse=True)
+    from darlaston.camera.discovery import rank
+
+    order = sorted([infrared, laptop, sealed, scope], key=rank, reverse=True)
     assert order[0] is scope, "the biggest controllable sensor should lead"
-    assert sealed in order, "a sealed camera is still offered, just later"
-    assert order[-1] is sealed, "and it goes last, having neither"
+    # The sealed camera is the same size as the best one and loses only
+    # the tie-breaks. This test used to require it *last*, below a
+    # 640x360 infrared face-unlock sensor -- which is what the ranking
+    # then did, and which would have opened somebody's face by default
+    # on a laptop with a cheap eyepiece camera attached.
+    assert order[1] is sealed, "a sealed 1080p camera ranked below a webcam"
+    assert order[-1] is infrared, "the smallest sensor goes last"
 
 
 def test_one_camera_is_not_a_choice():
@@ -147,9 +152,10 @@ def test_a_camera_whose_cable_moved_is_still_the_same_camera():
     assert choose([moved, twin], remembered="v4l2:port-A",
                   fingerprint="abc123") is None
 
-    # And the port still wins when it is there.
+    # And a *stranger* in the remembered port does not win. A port is a
+    # socket; this used to open whatever was in it.
     assert choose([moved, other], remembered="v4l2:port-C",
-                  fingerprint="abc123") is other
+                  fingerprint="abc123") is moved
 
 
 def test_a_different_camera_in_the_same_socket_is_a_different_camera():
@@ -189,3 +195,96 @@ def test_a_different_camera_in_the_same_socket_is_a_different_camera():
     again = lib.remember_camera("usb-port-1", "Cheap Camera",
                                 fingerprint="bbb222")
     assert again.model == "Cheap Camera"
+
+
+def test_editing_a_camera_keeps_what_the_editor_cannot_show():
+    """The editor showed six fields and rebuilt the profile from those
+    six, so everything else was reset by construction -- the maker, the
+    fingerprint that stops one camera inheriting another's identity, and
+    the measured geometry and exposure response.
+
+    Clicking Save, or merely selecting a different row, threw away a
+    ten-minute profiling run. And the profiling dialog is opened from
+    inside that same still-open dialog, so Save was the very next click.
+    """
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    measured = CameraProfile(
+        serial="usb-port-1", name="Scope camera", model="HD USB Camera",
+        make="Acme Optics", fingerprint="abc123",
+        geometry=[{"width": 1920, "height": 1080}],
+        response=[[1, 8.0], [2, 16.0]], pixel_um=2.4)
+
+    editor = CameraEditor()
+    editor.load(measured)
+    built = editor.build()
+
+    assert built.make == "Acme Optics", "lost the manufacturer"
+    assert built.fingerprint == "abc123", "lost the identity guard"
+    assert built.geometry == measured.geometry, "lost the measured geometry"
+    assert built.response == measured.response, "lost the exposure curve"
+    assert built.model == "HD USB Camera"
+    # And what the editor *does* own still comes from the editor.
+    assert built.pixel_um == 2.4
+
+
+def test_a_legacy_entry_with_no_fingerprint_is_still_guarded():
+    """Every library written before fingerprints existed has none.
+    Requiring both sides to have one let exactly the guarded case
+    through: the old entry adopted the new camera's fingerprint and
+    reported itself satisfied for ever after."""
+    import tempfile
+    from dataclasses import replace
+    from pathlib import Path
+
+    from darlaston.session.model import Library
+
+    lib = Library(path=Path(tempfile.mkdtemp()) / "library.json")
+    legacy = lib.remember_camera("usb-port-1", "Expensive Camera")
+    assert not legacy.fingerprint, "not a legacy entry any more"
+    lib.cameras[legacy.serial] = replace(
+        lib.cameras[legacy.serial], name="My good camera",
+        geometry=[{"width": 1920, "height": 1080}])
+
+    arrived = lib.remember_camera("usb-port-1", "Cheap Camera",
+                                  fingerprint="bbb222")
+    assert arrived.name != "My good camera", \
+        "a legacy entry handed its identity to a different camera"
+    assert not arrived.geometry, \
+        "and handed over calibration measured on another device"
+
+
+def test_a_sealed_eyepiece_camera_outranks_a_face_unlock_sensor():
+    """Nothing is filtered, so the order is the only thing deciding what
+    opens by default. Ranking "offers uncompressed" above sensor size put
+    a 640x360 infrared sensor ahead of a 1920x1080 eyepiece camera that
+    only speaks MJPG -- and MJPG-only is the common cheap microscope
+    camera, the device this exists to support."""
+    from darlaston.camera.discovery import look
+
+    infrared = _cam("ir", name="Integrated IR", width=640, height=360,
+                    controls=1, uncompressed=True)
+    sealed = _cam("scope", name="UVC Camera", width=1920, height=1080,
+                  controls=0, uncompressed=False)
+    from darlaston.camera.discovery import rank
+
+    # The real ranking, not a copy of it living in the test. A test that
+    # reimplements the sort passes whatever the real one does.
+    order = sorted([infrared, sealed], key=rank, reverse=True)
+    assert order[0] is sealed, "would have opened the face-unlock sensor"
+
+
+def test_the_remembered_port_is_not_enough_on_its_own():
+    """A port is a socket. A different camera in it must not simply be
+    opened because the socket matches."""
+    # Two attached, so the one-camera fallback does not mask the point:
+    # with a single camera, opening it is right whatever it is.
+    stranger = _cam("v4l2:port-A", fingerprint="different")
+    spare = _cam("v4l2:port-Z", fingerprint="another")
+    assert choose([stranger, spare], remembered="v4l2:port-A",
+                  fingerprint="mine") is None
+    # The same camera back in its own socket is still itself.
+    mine = _cam("v4l2:port-A", fingerprint="mine")
+    assert choose([mine, spare], remembered="v4l2:port-A",
+                  fingerprint="mine") is mine

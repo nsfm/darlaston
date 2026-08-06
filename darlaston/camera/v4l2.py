@@ -431,16 +431,6 @@ class V4L2Backend(CameraBackend):
             # these cameras rarely publish it. Zero means "unknown", and
             # the scale bar refuses to draw rather than inventing one.
             Resolution(i, w, h, 0.0) for i, (w, h) in enumerate(sizes))
-        # The preview shows the field a capture will record, or framing
-        # on it is misleading. On this hardware the modes *crop*: at
-        # 1280x720 you are looking at the middle 44% of what a capture
-        # gets, which is the wrong way round for composing a shot.
-        #
-        # So the largest mode is the preview unless something else can
-        # show as much field for less bandwidth -- and on the camera this
-        # was written against, nothing can. It runs 30 fps there anyway.
-        self._select(0)
-
         # What this device really offers, rather than what a UVC camera
         # might. Measured on two cameras in one machine: sixteen controls
         # on one, none whatsoever on the other. Claiming a range we
@@ -472,6 +462,16 @@ class V4L2Backend(CameraBackend):
             software_trigger=True,
             fingerprint=found.get("fingerprint", ""),
         )
+
+        # After `_info`, deliberately. `_select` reads the resolution list
+        # from it, so choosing a mode first fell through to a hard-coded
+        # 1280x720 while recording index 0 -- and every frame was then
+        # upscaled to a full-resolution pool.
+        #
+        # The largest mode is the preview because these modes *crop*: at
+        # 1280x720 you see the middle 44% of what a capture records,
+        # which is the wrong way round for composing a shot.
+        self._select(0)
         return self._info
 
     def _has(self, *names: str) -> dict | None:
@@ -597,6 +597,8 @@ class V4L2Backend(CameraBackend):
         if streaming:
             self.stop_stream()
         with self._lock:
+            if self._cap is None:
+                return         # closed underneath us; not an error
             self._select(index)
         if streaming and on_frame is not None:
             self.start_stream(on_frame)
@@ -619,21 +621,19 @@ class V4L2Backend(CameraBackend):
     def _queue(self, what: str, value) -> None:
         """Ask for a control change without waiting for one.
 
-        When a stream is running the reader applies it between frames;
-        otherwise there is no reader and it is written here. Either way
-        the caller returns immediately, which is the point: this is
-        reached from a slider, on the interface thread.
+        Always queued first, under the small lock, so there is no window
+        where a stream starting or stopping loses the value or sends the
+        caller to the capture lock -- which the reader holds across a
+        whole frame read, and which is the freeze this exists to avoid.
+
+        Only when no reader is running does the caller apply it, and by
+        then the value is already recorded, so the two paths cannot
+        disagree about what was asked for.
         """
-        if self._running.is_set():
-            with self._pending_lock:
-                self._pending[what] = value
-            return
-        with self._lock:
-            if self._cap is not None:
-                try:
-                    self._write_control(what, value)
-                except Exception:
-                    pass
+        with self._pending_lock:
+            self._pending[what] = value
+        if not self._running.is_set():
+            self._apply_pending()
 
     def _write_control(self, what: str, value) -> None:
         """The actual writes. Called holding `_lock`, never from the UI."""
@@ -673,11 +673,17 @@ class V4L2Backend(CameraBackend):
                 return
 
     def get_exposure(self) -> int:
-        with self._lock:
-            if self._cap is None:
-                return self._exposure_us
-            value = self._cap.get(cv2.CAP_PROP_EXPOSURE)
-        return int(value * 100) if value and value > 0 else self._exposure_us
+        """What we last asked for, not what the device says.
+
+        Asking the device means taking the capture lock, which the reader
+        holds for a whole frame period -- so this froze the window from
+        two Qt slots, exactly as the setters used to. It was also called
+        once per frame from the reader itself, a lock round trip and an
+        ioctl for a number already in hand.
+
+        The value is ours: nothing else writes the exposure.
+        """
+        return self._exposure_us
 
     def get_gain(self) -> int:
         with self._lock:
@@ -701,11 +707,33 @@ class V4L2Backend(CameraBackend):
                                         daemon=True, name="v4l2-camera")
         self._thread.start()
 
+    def _drain_pending(self) -> None:
+        """Apply anything queued, now, on the caller's thread.
+
+        Called where the reader is about to stop or has stopped, so a
+        change made a moment ago is not simply discarded. That mattered
+        most before a capture: `grab_raw` stops the stream first, so an
+        exposure moved and then captured immediately was taken at the old
+        value while the frame's own metadata reported the new one.
+        """
+        self._apply_pending()
+
     def stop_stream(self) -> None:
         self._running.clear()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                # The reader is stuck in a long `read`. Leaving the
+                # handle behind and starting another would give two
+                # threads writing one buffer pool, so keep it and let
+                # `start_stream` refuse rather than double up.
+                return
             self._thread = None
+        # Whatever the interface queued while the reader was blocked in
+        # its last `read` is still waiting, and there is nobody left to
+        # apply it. Draining here is what stops a capture being taken at
+        # the previous exposure while reporting the new one.
+        self._drain_pending()
 
     def _loop(self, on_frame: Callable[[Frame], None]) -> None:
         while self._running.is_set():

@@ -467,8 +467,16 @@ class Library:
             self.save()
         else:
             known = self.cameras[serial]
-            if (fingerprint and known.fingerprint
-                    and fingerprint != known.fingerprint):
+            # A library written before fingerprints existed has none, so
+            # requiring both to be present let exactly the case this
+            # guards against through: the old entry adopted the new
+            # camera's fingerprint and reported itself satisfied for
+            # ever after. Where there is nothing to compare, the model
+            # string is what a legacy entry does have.
+            differs = (fingerprint != known.fingerprint
+                       if fingerprint and known.fingerprint
+                       else bool(model and known.model and model != known.model))
+            if differs:
                 # Same socket, different camera. Everything filed against
                 # this key belongs to the previous occupant -- including
                 # its measured geometry and response, which would then be

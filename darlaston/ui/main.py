@@ -617,7 +617,11 @@ class MainWindow(QtWidgets.QMainWindow):
             trusted = [asdict(g) for g in dialog.geometry_result if g.trusted]
             if trusted:
                 changed["geometry"] = trusted
-        if dialog.response_result and len(dialog.response_result.usable) >= 3:
+        if dialog.response_result is not None:
+            # The dialog already refused anything untrustworthy, and it
+            # said so on screen. Applying a second, different rule here
+            # is how a run gets announced as measured and stored as
+            # nothing.
             changed["response"] = [list(p)
                                    for p in dialog.response_result.points]
         if not changed:
@@ -625,8 +629,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         updated = replace(self.setup.camera, **changed)
-        self.library.cameras[updated.serial] = updated
-        self.library.save()
+        # Through `file_camera`, not past it. Writing to `library.cameras`
+        # directly is the anti-pattern that function's docstring names.
+        self.library.file_camera(updated)
         self.setup.camera = updated
         # Measuring drove the exposure and the resolution all over the
         # place. Even having put them back, the sliders should read from
@@ -653,19 +658,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_camera(self, camera) -> None:
         """Swap to a different camera without a restart.
 
-        The same shape as switching to the synthetic one: stop, rebuild,
-        start. Everything downstream reads from the session, so nothing
-        else has to know it changed.
+        In place, through `retarget`. Building a *new* session here would
+        leave capture, calibration and the opportunist holding the old
+        stopped one -- they are each handed the session at construction
+        and keep it -- so a capture would report "no camera connected"
+        over a live preview.
         """
         from ..camera.discovery import backend_for
 
-        self.session.stop()
         self._synced = False
         self._make_backend = lambda: backend_for(camera)
-        self.session = CameraSession(self._make_backend,
-                                     self.bridge.status.emit,
-                                     self.pipeline.submit)
-        self.session.start()
+        self.session.retarget(self._make_backend)
 
     def _fit_controls_to(self, info) -> None:
         """Show only the controls this camera really has.
@@ -694,6 +697,14 @@ class MainWindow(QtWidgets.QMainWindow):
             low, high = span
             if widget is self.gain:
                 widget.setRange(int(low), int(high))
+            else:
+                # The exposure slider is logarithmic in microseconds, so
+                # the device's range has to be mapped through the same
+                # function the handle uses. It kept a hard-coded range
+                # before, which the docstring above already argued
+                # against for the other control.
+                widget.setRange(self._us_to_slider(int(low)),
+                                self._us_to_slider(int(high)))
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera

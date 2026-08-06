@@ -409,19 +409,30 @@ class CameraEditor(QtWidgets.QWidget):
                 w.blockSignals(False)
 
     def build(self) -> CameraProfile:
+        """The edited camera: what was typed, over everything else.
+
+        `replace` rather than a fresh `CameraProfile`, and that is the
+        whole point. Listing the fields to keep meant every field this
+        editor does not show was silently reset -- the manufacturer, the
+        fingerprint that stops one camera inheriting another's identity,
+        and the measured geometry and exposure response. Clicking Save,
+        or merely selecting a different row, threw away a ten-minute
+        profiling run. Anything added to `CameraProfile` in future would
+        have joined them without a word.
+        """
+        from dataclasses import replace
+
         base = self._camera or CameraProfile(serial="")
-        return CameraProfile(
-            serial=base.serial,
+        return replace(
+            base,
             # English on purpose, as the stand's default name is: it is the
             # model's own default and it goes to the library file, where a
             # camera would otherwise be named after whatever language
             # happened to be set the day it was last edited.
             name=self.name.text().strip() or "Camera",
-            model=base.model,
             relay=self.relay.text().strip(),
             relay_factor=self.relay_factor.value(),
-            pixel_um=self.pixel_um.value(),
-            last_scope=base.last_scope)
+            pixel_um=self.pixel_um.value())
 
 
 class _LibraryDialog(QtWidgets.QDialog):

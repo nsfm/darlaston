@@ -881,3 +881,37 @@ def test_the_dng_omits_a_maker_it_does_not_know(tmp_path):
     assert make_tag(named) is not None, "a known maker is written"
     assert make_tag(unknown) is None, \
         "claimed a manufacturer for a camera that never named one"
+
+
+def test_a_decoded_capture_puts_red_where_the_dng_says_red_is(tmp_path):
+    """A UVC camera hands back BGR -- that is what OpenCV returns, and
+    what the preview and the sidecar JPEG both expect -- while the DNG's
+    linear planes are R, G, B.
+
+    Written straight through, red and blue came out swapped in the raw
+    and its embedded thumbnail while the JPEG beside it was correct, so
+    the two files disagreed about which channel was red.
+    """
+    import numpy as np
+
+    from darlaston.process import dng
+    from darlaston.process.metadata import CaptureMetadata
+    from darlaston.process.wiggle import _read_linear
+
+    h, w = 32, 32
+    bgr = np.zeros((h, w, 3), dtype=np.uint16)
+    bgr[..., 0], bgr[..., 1], bgr[..., 2] = 100, 200, 3000   # B, G, R
+
+    path = tmp_path / "red.dng"
+    dng.write_linear_streamed(
+        path, lambda s, c: bgr[s:s + c, :, ::-1], h, w,
+        preview=np.zeros((8, 8, 3), np.uint8),
+        meta=CaptureMetadata(model="t"), white=4095)
+
+    # `_read_linear` returns BGR, so the bright channel must come back at
+    # index 2 -- where it started.
+    back = _read_linear(path)
+    means = [float(back[..., i].mean()) for i in range(3)]
+    assert means[2] > means[0], \
+        f"red and blue are swapped in the raw: B,G,R = {means}"
+    assert round(means[2]) == 3000 and round(means[0]) == 100
