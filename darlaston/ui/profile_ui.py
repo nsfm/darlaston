@@ -144,7 +144,11 @@ class ProfileDialog(FramedDialog):
         else:
             self.response_result = got
             usable = got.usable
-            if len(usable) < 3:
+            if not got.trustworthy:
+                # Dark, clipped, or not settling between steps. All three
+                # produce a table that looks like a measurement, so this
+                # keeps nothing rather than storing one.
+                self.response_result = None
                 self.note.setText(_("profile.response.nothing"))
                 return
             self.note.setText(_("profile.response.done",

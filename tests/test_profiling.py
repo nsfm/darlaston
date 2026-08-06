@@ -107,3 +107,60 @@ def test_a_sweep_records_what_it_was_told():
     got = measure_response(lambda: level["v"], set_value, [1, 2, 5])
     assert seen == [1, 2, 5], "did not sweep what it was given"
     assert got.points == ((1, 3.0), (2, 6.0), (5, 15.0))
+
+
+def test_a_dark_field_is_not_a_response_curve():
+    """The failure that actually happened. Run against an unlit field,
+    the first fourteen readings were all level 3 and the rest jumped
+    151, 26, 24, 74 with no relation to exposure. The longest accidental
+    monotonic run through that noise was twelve steps, and it was stored
+    as though it meant something."""
+    dark = Response(points=tuple((v, 3.0) for v in range(1, 40)))
+    assert not dark.trustworthy, "a flat noise floor read as a measurement"
+
+    real = Response(points=tuple((v, min(255.0, v * 8.0))
+                                 for v in range(1, 40)))
+    assert real.trustworthy
+
+
+def test_readings_that_move_without_the_control_are_refused():
+    """What an unsettled sweep looks like: plenty of swing, no order."""
+    import random
+
+    rng = random.Random(7)
+    noisy = Response(points=tuple((v, rng.uniform(20, 160))
+                                  for v in range(1, 40)))
+    assert not noisy.trustworthy, "stored noise as a response curve"
+
+
+def test_the_sweep_is_planned_from_the_field_not_from_the_range():
+    """Sweeping a fixed range regardless of illumination is what put
+    fourteen noise-floor readings at the front of a real table."""
+    from darlaston.camera.profiling import plan_sweep
+
+    class _Bright:
+        """Responds early: clipped by exposure 20."""
+
+        def __init__(self):
+            self.value = 1
+
+        def set_exposure(self, us):
+            self.value = us // 100
+
+        def level(self):
+            return min(255.0, self.value * 14.0)
+
+    planned = plan_sweep(_Bright(), (100, 500_000))
+    assert planned, "found no usable range on a field that responds"
+    assert max(planned) < 200, \
+        f"kept sweeping to {max(planned)} long after it clipped"
+
+    class _Dark:
+        def set_exposure(self, us):
+            pass
+
+        def level(self):
+            return 3.0
+
+    assert plan_sweep(_Dark(), (100, 500_000)) == [], \
+        "planned a sweep of a field that never responds"

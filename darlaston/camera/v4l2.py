@@ -597,6 +597,10 @@ class V4L2Backend(CameraBackend):
             # UVC, not 0. Setting the value first silently does nothing.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
             self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, microseconds // 100))
+            # The next frames still carry the old exposure. `set_gain`
+            # flushed and this did not, which is how a photometric sweep
+            # came back reading one exposure while asking about another.
+            self._flush()
 
     def set_gain(self, percent: int) -> None:
         """Map our percentage onto whatever scale this device uses.

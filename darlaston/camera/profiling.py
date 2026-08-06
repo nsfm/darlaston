@@ -72,6 +72,12 @@ TRUSTED = 0.60
 #: so this sits well above noise and well below any real structure.
 MIN_TEXTURE = 5.0
 
+#: How much the picture has to move across a whole exposure sweep before
+#: the sweep is telling us anything. A dark field sits at the noise floor
+#: and a clipped one sits at the ceiling; both give a flat table that
+#: looks like a measurement.
+MIN_SWING = 40.0
+
 #: Scales worth trying. Cameras downsample by simple ratios, so this is
 #: a short list rather than a search -- and anything not on it comes back
 #: as untrusted rather than as a confident wrong answer.
@@ -143,6 +149,27 @@ class Response:
                 run.append(point)
         return tuple(best if len(best) >= len(run) else run)
 
+    @property
+    def trustworthy(self) -> bool:
+        """Did this sweep actually see a camera respond?
+
+        Three ways it does not, all of which produced confident-looking
+        tables before this existed:
+
+        * the field is dark, so every reading is the noise floor;
+        * the field is clipped, so every reading is the ceiling;
+        * the readings move but not with the control, which is what a
+          sweep looks like when the exposure has not settled between
+          steps -- measured once as 151, 26, 24, 74 across four
+          consecutive settings.
+        """
+        if len(self.points) < 6:
+            return False
+        levels = [l for _v, l in self.points]
+        if max(levels) - min(levels) < MIN_SWING:
+            return False
+        return len(self.usable) >= max(6, len(self.points) // 8)
+
     def value_for(self, level: float) -> int | None:
         """The lowest control value that reaches this brightness.
 
@@ -196,6 +223,50 @@ def sweep_geometry(backend, progress=None) -> list[ModeGeometry]:
     return measure_geometry(reference, frames)
 
 
+def plan_sweep(backend, span, points: int = 48) -> list:
+    """Find the exposures worth measuring on *this* field.
+
+    Sweeping a fixed range regardless of the illumination is what
+    produced a table whose first fourteen entries were all the noise
+    floor. So probe coarsely first, find where the picture actually
+    moves between dark and clipped, and spend the samples there.
+
+    Returns an empty list when the field never responds, which is the
+    honest answer for a lamp that is off.
+    """
+    low, high = max(1, span[0] // 100), max(2, span[1] // 100)
+    high = min(high, 2000)
+
+    # A logarithmic probe, so a field needing 3 and a field needing 900
+    # both get found in a handful of reads.
+    probe, value = [], low
+    while value <= high and len(probe) < 14:
+        backend.set_exposure(int(value) * 100)
+        probe.append((int(value), float(backend.level())))
+        value = max(value + 1, value * 2)
+
+    levels = [l for _v, l in probe]
+    if max(levels) - min(levels) < MIN_SWING:
+        return []                       # nothing responded; do not pretend
+
+    # The useful span runs from the last setting still near the floor to
+    # the first one that has clearly stopped climbing.
+    floor, ceiling = min(levels), max(levels)
+    start = probe[0][0]
+    stop = probe[-1][0]
+    for value, level in probe:
+        if level <= floor + (ceiling - floor) * 0.05:
+            start = value
+        if level >= floor + (ceiling - floor) * 0.95:
+            stop = value
+            break
+    if stop <= start:
+        start, stop = probe[0][0], probe[-1][0]
+
+    step = max(1, (stop - start) // points)
+    return list(range(start, stop + 1, step))
+
+
 def sweep_response(backend, values=None, progress=None) -> Response:
     """Step the exposure and record what the picture did.
 
@@ -206,13 +277,10 @@ def sweep_response(backend, values=None, progress=None) -> Response:
     span = info.exposure_range_us if info else None
     if span is None:
         return Response()
-    # The control speaks in 100 us units, which the frame-rate knee
-    # confirmed to about 7%. Sampled densely at the short end, where the
-    # discontinuities were, and sparsely after.
     if values is None:
-        low, high = max(1, span[0] // 100), min(span[1] // 100, 400)
-        values = list(range(low, min(64, high))) + \
-            list(range(64, high, max(1, (high - 64) // 16)))
+        values = plan_sweep(backend, span)
+        if not values:
+            return Response()
 
     def set_value(v):
         if progress:
