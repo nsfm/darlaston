@@ -162,6 +162,26 @@ class CameraSession:
                                         name="camera-session")
         self._thread.start()
 
+    def retarget(self, make_backend) -> None:
+        """Point this session at a different camera, in place.
+
+        **The object identity is the whole point.** `StillCapture`, the
+        calibration service and the opportunist are each handed this
+        session when the window is built and hold it for the life of the
+        program. Building a *new* session to switch cameras leaves all
+        three pointing at the old one, which by then has no backend -- so
+        the preview runs from the new camera while a capture reports "no
+        camera connected" from the old.
+
+        That was a real bug and an old one: switching to the synthetic
+        camera did it too, long before there was more than one real
+        camera to switch between.
+        """
+        self.stop()
+        self._make_backend = make_backend
+        self._attempt = 0
+        self.start()
+
     def stop(self) -> None:
         self._running.clear()
         if self._thread is not None:

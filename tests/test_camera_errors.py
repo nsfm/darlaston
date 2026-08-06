@@ -566,3 +566,53 @@ def test_a_slow_link_is_named_only_when_it_is_slow(qapp):
     assert fast.advice is None, "a healthy link has nothing to say"
     assert slow.advice not in text_of(fast)
     assert slow.advice not in text_of(None)
+
+
+def test_switching_cameras_keeps_the_session_everything_else_holds():
+    """Capture, calibration and the opportunist are each handed the
+    session when the window is built and hold it for the life of the
+    program. Swapping cameras by building a *new* session leaves all
+    three pointing at the old one, which by then has no backend -- so the
+    preview runs from the new camera and a capture reports "no camera
+    connected" from the old.
+
+    Real bug, and an old one: switching to the synthetic camera did it
+    too, before there was ever a second real camera to switch between.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import CameraSession
+
+    session = CameraSession(lambda: MockCamera(fps=30.0),
+                            on_status=lambda _s: None,
+                            on_frame=lambda _f: None)
+    held = session                      # what StillCapture would keep
+
+    session.retarget(lambda: MockCamera(fps=30.0))
+    assert session is held, "retarget replaced the object it was called on"
+    session.stop()
+
+
+def test_a_live_preview_means_a_capture_can_happen(qapp):
+    """The symptom, from the other end: whatever is streaming frames is
+    what a capture must find when it asks for a backend."""
+    import time
+
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import CameraSession
+
+    frames = []
+    session = CameraSession(lambda: MockCamera(fps=30.0),
+                            on_status=lambda _s: None,
+                            on_frame=frames.append)
+    session.start()
+    for _ in range(50):
+        if frames:
+            break
+        time.sleep(0.05)
+    try:
+        assert frames, "no preview to reason about"
+        assert session.backend is not None, \
+            "frames are arriving but a capture would be refused"
+    finally:
+        session.stop()

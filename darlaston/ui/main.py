@@ -637,12 +637,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
-        self.session.stop()
+
         self._synced = False
-        self.session = CameraSession(lambda: MockCamera(fps=30.0),
-                                     self.bridge.status.emit,
-                                     self.pipeline.submit)  # always present
-        self.session.start()
+        # In place. Building a new session here left capture, calibration
+        # and the opportunist holding the old one, so the preview ran and
+        # a capture answered "no camera connected".
+        self.session.retarget(lambda: MockCamera(fps=30.0))
 
     # ---- controls --------------------------------------------------------
 
