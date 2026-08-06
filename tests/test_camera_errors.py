@@ -643,3 +643,52 @@ def test_a_camera_that_will_not_open_says_which_kind_of_no(monkeypatch):
     problem = v4l2._why_it_would_not_open("/dev/video9", "Some Camera")
     assert isinstance(problem, CameraBusy)
     assert "another program" in problem.detail
+
+
+def test_setting_a_control_does_not_wait_for_frames():
+    """Nate's report: a long exposure froze the whole window for 200 to
+    2000 milliseconds at a time.
+
+    `set_exposure` is a Qt slot on the interface thread, and it held the
+    session lock while reading frames to flush the stale ones. A frame
+    read costs a frame period, so at a half-second exposure three of them
+    is a second and a half of dead window -- measured at 1600 ms before
+    this, and 22 ms after.
+
+    Waiting for a control to land belongs to code that needs a settled
+    frame. `level()` does it, and nothing on the interface thread calls
+    that.
+    """
+    from darlaston.camera.v4l2 import V4L2Backend
+
+    reads = []
+
+    class _Cap:
+        def set(self, *_a):
+            return True
+
+        def get(self, *_a):
+            return 0.0
+
+        def read(self):
+            reads.append("read")
+            return True, None
+
+        def grab(self):
+            reads.append("grab")
+            return True
+
+    backend = V4L2Backend()
+    backend._cap = _Cap()
+    backend._controls = {
+        "Exposure Time, Absolute": {"min": 1, "max": 5000, "step": 1,
+                                    "default": 157, "name": "", "id": 0},
+        "Gain": {"min": 0, "max": 100, "step": 1, "default": 0,
+                 "name": "", "id": 0},
+    }
+
+    backend.set_exposure(500_000)
+    assert not reads, f"set_exposure read {len(reads)} frames on the caller"
+
+    backend.set_gain(150)
+    assert not reads, f"set_gain read {len(reads)} frames on the caller"

@@ -606,10 +606,16 @@ class V4L2Backend(CameraBackend):
             # UVC, not 0. Setting the value first silently does nothing.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
             self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, microseconds // 100))
-            # The next frames still carry the old exposure. `set_gain`
-            # flushed and this did not, which is how a photometric sweep
-            # came back reading one exposure while asking about another.
-            self._flush()
+            # Deliberately not flushed here. The next frames do still
+            # carry the old exposure, and a *measurement* has to wait for
+            # that -- but this is also what a slider calls, on the
+            # interface thread, while holding the session lock. Reading
+            # three frames costs three frame periods, which at a half
+            # second exposure is a second and a half of frozen window.
+            #
+            # Waiting belongs to the code that needs a settled frame, and
+            # `level()` does it. Interactively, a couple of stale frames
+            # is a picture catching up, which is what every camera does.
 
     def set_gain(self, percent: int) -> None:
         """Map our percentage onto whatever scale this device uses.
@@ -628,7 +634,6 @@ class V4L2Backend(CameraBackend):
             value = found["min"] + max(0, int(percent) - 100)
             self._cap.set(cv2.CAP_PROP_GAIN,
                           min(found["max"], max(found["min"], value)))
-            self._flush()
 
     def _flush(self) -> None:
         """Throw away the frames still carrying the old setting."""
@@ -721,12 +726,17 @@ class V4L2Backend(CameraBackend):
         return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     def level(self) -> float:
-        """The mean level of a settled frame, for a photometric sweep."""
+        """The mean level of a settled frame, for a photometric sweep.
+
+        This is where waiting for a control change belongs -- not in the
+        setter, which a slider calls on the interface thread. A frame
+        change lands on the third frame, measured in both directions, so
+        discarding `SETTLE_FRAMES` and reading the next is enough.
+        """
         with self._lock:
             if self._cap is None:
                 raise RuntimeError("camera is not open")
-            for _ in range(SETTLE_FRAMES):
-                self._cap.read()
+            self._flush()
             ok, image = self._cap.read()
         return float(image.mean()) if ok and image is not None else 0.0
 
