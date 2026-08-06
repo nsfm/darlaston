@@ -120,3 +120,35 @@ msgstr "Not seeing your camera?"
 #. the two say the same thing about the same situation.
 msgid "shell.trouble.what"
 msgstr "camera"
+
+#. Asked when the window is closed while a long job is still writing a
+#. file. {jobs} is a list of what is running, one per line.
+msgid "shell.quit.busy.title"
+msgstr "Still working"
+
+msgid "shell.quit.busy.body"
+msgstr ""
+"Closing now abandons work that is partway through writing a file:\n"
+"\n"
+"{jobs}\n"
+"\n"
+"The file it leaves behind will be incomplete."
+
+msgid "shell.quit.busy.wait"
+msgstr "Keep working"
+
+msgid "shell.quit.busy.quit"
+msgstr "Close anyway"
+
+#. Each of the long jobs, named in the question above.
+msgid "shell.quit.job.stitch"
+msgstr "stitching a mosaic"
+
+msgid "shell.quit.job.merge"
+msgstr "merging a stack"
+
+msgid "shell.quit.job.render"
+msgstr "rendering a mosaic"
+
+msgid "shell.quit.job.timelapse"
+msgstr "running a timelapse"

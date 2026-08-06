@@ -321,10 +321,40 @@ def test_a_camera_can_be_forgotten(qapp, tmp_path):
     assert dialog.list.count() == 2
     assert dialog.editor.isHidden() is False
 
-    library.remove_camera("WEBCAM-1")
+    # Through the dialog's own copy, which is what the button touches.
+    dialog._library.remove_camera("WEBCAM-1")
     dialog._reload("TP2112071101")
     assert dialog.list.count() == 1
+    dialog._save()
     assert list(Library(tmp_path / "library.json").cameras) == ["TP2112071101"]
+    assert list(library.cameras) == ["TP2112071101"], (
+        "the window is still holding the old library after Save")
+
+
+def test_cancelling_the_camera_window_keeps_the_camera(qapp, tmp_path):
+    """Remove reached straight into the application's own Library. It wrote
+    no file itself, which made it look safe -- but the object is shared, so
+    Cancel left the removal in memory and the next save from anywhere
+    committed it. A stand taken this way goes with its turret, its learned
+    brightness signatures and the calibration key every stored flat is
+    filed under."""
+    from darlaston.session.model import Library
+    from darlaston.ui.setup_ui import CameraDialog
+
+    library = Library(tmp_path / "library.json")
+    library.remember_camera("WEBCAM-1", "Integrated Camera")
+    library.remember_camera("TP2112071101", "E3ISPM20000KPA")
+
+    dialog = CameraDialog(library, "TP2112071101", None)
+    dialog._library.remove_camera("WEBCAM-1")
+    dialog.reject()
+
+    assert list(library.cameras) == ["WEBCAM-1", "TP2112071101"], (
+        "a cancelled removal survived in memory")
+    # And the next save from anywhere at all must not commit it either.
+    library.save()
+    assert list(Library(tmp_path / "library.json").cameras) == [
+        "WEBCAM-1", "TP2112071101"]
 
 
 def test_an_unplugged_camera_is_still_editable(qapp, tmp_path):

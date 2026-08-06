@@ -36,7 +36,7 @@ from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
                              ScopeProfile, Setup, Turret)
-from ..i18n import _, n_
+from ..i18n import N_, _, n_
 from ..session.settings import Settings
 from . import theme
 from .about import AboutDialog
@@ -60,6 +60,8 @@ from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .widgets import FocusGroup, Histogram, LiveView, ValueBar
+
+_log = logging.getLogger(__name__)
 
 
 class Bridge(QtCore.QObject):
@@ -2134,7 +2136,65 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session.stop()
         self.pipeline.stop()
 
+    #: Long jobs, by the name their thread is given, and the key that says
+    #: what they are. Each writes one file that takes minutes to produce --
+    #: the stitch dialog warns of up to 1.6 GB -- so abandoning one leaves
+    #: a partial file where a finished one should be.
+    LONG_JOBS = {
+        "stitch": N_("shell.quit.job.stitch"),
+        "stack-merge": N_("shell.quit.job.merge"),
+        "flythrough": N_("shell.quit.job.render"),
+        "plate": N_("shell.quit.job.render"),
+        "wiggle": N_("shell.quit.job.render"),
+        "arrange": N_("shell.quit.job.render"),
+    }
+
+    def _work_in_flight(self) -> list[str]:
+        """What is running that would be lost by closing now.
+
+        Read from the live threads rather than from a register kept
+        alongside them. A register is one more thing to update at every
+        `start()` and every early return, and the failure mode of getting
+        it wrong is silently losing the guard -- which is the state this
+        replaces.
+        """
+        alive = {t.name for t in threading.enumerate() if t.is_alive()}
+        said = []
+        for name, key in self.LONG_JOBS.items():
+            if name in alive and key not in said:
+                said.append(key)
+        if self.timelapse.running:
+            said.append(N_("shell.quit.job.timelapse"))
+        return [_(k) for k in said]
+
     def closeEvent(self, event) -> None:
+        """Ask before abandoning something that is partway through a file.
+
+        Every long job is a daemon thread, so quitting kills it wherever
+        it happens to be -- in the middle of a composite, with its strip
+        offsets not yet patched in. There is no join to wait on and adding
+        one would hang the close instead, so the honest thing is to say
+        what is running and let the operator decide.
+        """
+        busy = self._work_in_flight()
+        if busy:
+            ask = QtWidgets.QMessageBox(self)
+            ask.setWindowTitle(_("shell.quit.busy.title"))
+            ask.setText(_("shell.quit.busy.body",
+                          jobs="\n".join(f"    {b}" for b in busy)))
+            # Named for what they do rather than "OK" and "Cancel". At a
+            # question about losing work, "Cancel" is ambiguous about which
+            # thing is being cancelled.
+            stay = ask.addButton(_("shell.quit.busy.wait"),
+                                 QtWidgets.QMessageBox.ButtonRole.RejectRole)
+            ask.addButton(_("shell.quit.busy.quit"),
+                          QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+            ask.setDefaultButton(stay)
+            ask.exec()
+            if ask.clickedButton() is stay:
+                event.ignore()
+                return
+            _log.warning("closing while still running: %s", ", ".join(busy))
         self.shutdown()
         super().closeEvent(event)
 
@@ -2241,7 +2301,7 @@ def main() -> int:
     # until this exists every swallowed error goes to a handle that is not
     # there -- which is why a report could only ever be "it did not work".
     written = log.setup(logging.DEBUG if args.verbose else logging.INFO)
-    logging.getLogger(__name__).info(
+    _log.info(
         "darlaston %s starting on %s; logging to %s",
         __version__, sys.platform, written or "the console only")
 

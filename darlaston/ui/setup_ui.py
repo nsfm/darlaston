@@ -20,6 +20,8 @@ place to describe them rather than to pick between them.
 """
 from __future__ import annotations
 
+import copy
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
@@ -445,7 +447,17 @@ class _LibraryDialog(QtWidgets.QDialog):
 
     def __init__(self, library, parent=None, width: int = 680) -> None:
         super().__init__(parent)
-        self._library = library
+        # Edited on a copy, and merged back only by Save.
+        #
+        # Remove and New used to reach straight into the application's own
+        # Library. Neither wrote the file itself, which made it look safe
+        # -- but the object is shared, so Cancel left the change in memory
+        # and the next save from anywhere at all committed it. A removed
+        # stand takes its turret, its learned brightness signatures, and
+        # the calibration key every stored flat is filed under, so the
+        # thing being quietly kept was not a name in a list.
+        self._real = library
+        self._library = copy.deepcopy(library)
         self._selected: str | None = None
         self.setMinimumWidth(width)
 
@@ -461,6 +473,21 @@ class _LibraryDialog(QtWidgets.QDialog):
 
     def _switch(self, row: int) -> None:
         raise NotImplementedError
+
+    def _commit_to_library(self) -> None:
+        """Move the edited copy back onto the real one, and write it.
+
+        In place, on the object the window and everything it built are
+        holding -- rebinding `self._real` here would leave every one of
+        them pointing at the copy nobody merged into.
+        """
+        self._real.scopes = self._library.scopes
+        self._real.cameras = self._library.cameras
+        self._real.save()
+        # From here on the dialog is looking at what was saved, so a
+        # caller reading `selected` after `exec()` gets the live object
+        # rather than a copy that will not be updated again.
+        self._library = self._real
 
     def _save(self) -> None:
         raise NotImplementedError
@@ -607,7 +634,7 @@ class MicroscopeDialog(_LibraryDialog):
 
     def _save(self) -> None:
         self._commit()
-        self._library.save()
+        self._commit_to_library()
         self.accept()
 
 
@@ -828,7 +855,7 @@ class CameraDialog(_LibraryDialog):
 
     def _save(self) -> None:
         self._commit()
-        self._library.save()
+        self._commit_to_library()
         self.accept()
 
 
