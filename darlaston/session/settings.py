@@ -20,7 +20,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .model import config_dir
+from ..i18n import N_
+from .model import config_dir, known_fields, write_atomically
 
 
 def pictures_dir() -> Path:
@@ -224,16 +225,29 @@ class Settings:
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
         path = path or (config_dir() / "settings.json")
-        if path.exists():
-            try:
-                return cls(**json.loads(path.read_text()))
-            except (ValueError, TypeError):
-                pass          # a corrupt file must not stop the app opening
-        return cls()
+        if not path.exists():
+            return cls()
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return cls()      # a corrupt file must not stop the app opening
+        if not isinstance(raw, dict):
+            return cls()
+        try:
+            # Only the keys this version knows. Handing the whole file to
+            # the constructor made every schema change a reset: one key
+            # added by a newer build, or removed by a later one, raised
+            # TypeError and *every* setting went back to its default --
+            # capture folder, filename pattern, artist, the lot. Catching a
+            # corrupt file is deliberate; catching schema drift the same
+            # way was not.
+            return cls(**known_fields(cls, raw))
+        except (ValueError, TypeError):
+            return cls()
 
     def save(self, path: Path | None = None) -> None:
         path = path or (config_dir() / "settings.json")
-        path.write_text(json.dumps(asdict(self), indent=2) + "\n")
+        write_atomically(path, json.dumps(asdict(self), indent=2) + "\n")
 
 
 def _fill(pattern: str, tokens: dict[str, str]) -> str:
@@ -244,6 +258,25 @@ def _fill(pattern: str, tokens: dict[str, str]) -> str:
     # dropped, so a typo in a pattern is obvious in the filename.
     out = re.sub(r"_{2,}", "_", out).strip("_-")
     return out or "capture"
+
+
+def filename_problem(pattern: str) -> str | None:
+    """The message key for why this pattern would lose captures, or None.
+
+    `{seq}` is not decoration. Every other token is constant across a run
+    -- same subject, same objective, same illumination, same date -- so a
+    pattern without it resolves to one name and each capture silently
+    overwrites the one before. At speed, during a timelapse, that is a
+    whole night's work landing in a single file.
+
+    A key rather than a sentence, because this is shown in the interface
+    and everything shown there is translated.
+    """
+    if not pattern.strip():
+        return N_("capture.files.filename.empty")
+    if "{seq}" not in pattern:
+        return N_("capture.files.filename.needs_seq")
+    return None
 
 
 def next_sequence(folder: Path, pattern: str) -> int:

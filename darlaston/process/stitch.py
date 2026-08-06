@@ -650,6 +650,13 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
     try:
         meta = read_metadata(
             session.dir / session.tiles[len(session.tiles) // 2].filename)
+        # At the composite's pixel size, not the tile's. Every scale in
+        # that metadata is per pixel, and this image is `scale` times the
+        # size of the tile it was read from -- so passing it through
+        # unmodified told `plate` a composite pixel was a tile pixel and
+        # made every scale bar 1/scale too long.
+        if meta is not None:
+            meta = meta.derived(scale)
     except Exception:
         meta = None                    # provenance is a bonus, never a gate
     written = dng.write_linear_streamed(

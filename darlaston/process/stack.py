@@ -47,7 +47,7 @@ import numpy as np
 
 from ..capture.stack import StackSession
 from . import develop, dng
-from .stitch import read_bayer_dng, read_metadata
+from .stitch import read_bayer_dng, read_metadata, read_white_level
 
 #: Per-slice alignment beyond this many half-res pixels is not focus
 #: breathing, it is the stage having been bumped; the shift is refused and
@@ -364,13 +364,28 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     if n < 2:
         raise ValueError("a stack needs at least two slices")
 
-    raws, lumas = [], []
+    raws, lumas, whites = [], [], []
     for i, piece in enumerate(session.slices):
-        raw = read_bayer_dng(session.dir / piece.filename)
+        path = session.dir / piece.filename
+        raw = read_bayer_dng(path)
         raws.append(raw)
+        # What "full scale" means for this slice. Read rather than
+        # assumed: this used to take 12 bits as given, so on a 14-bit
+        # sensor every value above raw 4095 saturated in the blend --
+        # three quarters of the range gone, and gone quietly, because the
+        # result is a plausible image with its highlights welded shut.
+        whites.append(read_white_level(path))
         lumas.append(_luma_half(raw))
         if progress:
             progress("reading", i + 1, n)
+
+    # One domain for the blend. Slices come from one camera in one sitting
+    # and normally agree; when they do not, the deepest wins and the rest
+    # are scaled up to it, rather than a step in brightness halfway
+    # through the stack. Registration and the focus measure are unaffected
+    # -- both are scale-free -- so this only has to reach the blend.
+    peak = max(whites)
+    scales = [peak / w for w in whites]
 
     shifts = _register(lumas)
 
@@ -418,6 +433,8 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
             continue
         wgt = cv2.GaussianBlur(hat, (0, 0), feather) if feather > 0 else hat
         rgb = cv2.cvtColor(raw, cv2.COLOR_BayerGR2BGR).astype(np.float32)
+        if scales[i] != 1.0:
+            rgb *= scales[i]
         if abs(sx) > 0.01 or abs(sy) > 0.01:
             m = np.float32([[1, 0, -sx * 2], [0, 1, -sy * 2]])
             rgb = cv2.warpAffine(rgb, m, (w, h), flags=cv2.INTER_LINEAR,
@@ -428,12 +445,19 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
         if progress:
             progress("blending", i + 1, n)
 
-    # The blend of 12-bit slices lands back in 0..4095, and writing that
+    # The blend lands back in the slices' own domain, and writing that
     # against a 65535 white level shipped the composite four stops under --
-    # found by Nate having to push every stack +3 EV in post. Scaled x16
-    # into the declared range instead, which also keeps the sub-LSB
-    # precision the weighted blend just created, exactly as the
-    # frame-averaging path does.
+    # found by Nate having to push every stack +3 EV in post. Scaled into
+    # the declared range instead, which also keeps the sub-LSB precision
+    # the weighted blend just created, exactly as the frame-averaging path
+    # does.
+    #
+    # The factor is the ratio of the two white levels, not the constant 16
+    # it used to be. Sixteen is right only for a 12-bit sensor, and on a
+    # 14-bit one it multiplied a value that already reached 16383 -- so the
+    # clip below, which exists to catch rounding, silently became the
+    # highlight response for the top three quarters of the range.
+    gain = 65520.0 / peak
     if output == "bayer":
         # Sample the blended RGB back onto the GBRG grid. acc is BGR.
         mosaic = np.empty((h, w), np.float32)
@@ -441,9 +465,9 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
         mosaic[0::2, 1::2] = acc[0::2, 1::2, 0]      # B
         mosaic[1::2, 0::2] = acc[1::2, 0::2, 2]      # R
         mosaic[1::2, 1::2] = acc[1::2, 1::2, 1]      # G
-        result = np.clip(mosaic * 16.0 + 0.5, 0, 65520).astype(np.uint16)
+        result = np.clip(mosaic * gain + 0.5, 0, 65520).astype(np.uint16)
     else:
-        result = np.clip(acc * 16.0 + 0.5,
+        result = np.clip(acc * gain + 0.5,
                          0, 65520).astype(np.uint16)[:, :, ::-1]
     del acc
 
@@ -454,6 +478,10 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     try:
         meta = read_metadata(
             session.dir / session.slices[len(raws) // 2].filename)
+        # A merge, at the slices' own pixel size -- so no rescaling, but
+        # the source's unique id must not follow it here.
+        if meta is not None:
+            meta = meta.derived()
     except Exception:
         meta = None                    # provenance is a bonus, never a gate
     del raws

@@ -14,10 +14,15 @@ Two things this knows that a cron loop would not:
 
   * The dark master ages. This sensor has no cooling, and the store expires
     darks after eight hours -- a long run crosses that line and later frames
-    silently lose their calibration. The status carries a flag once the run
-    outlives the dark, so the UI can say so instead of nobody noticing.
+    silently lose their calibration. The status says so when it happens, so
+    the UI can report it instead of nobody noticing.
   * Disk. Forty megabytes a frame adds up; the status reports bytes written
     so far and the free space remaining on the capture volume.
+
+Neither of those matters as much as the third thing, which is simply
+counting honestly. A timelapse is unattended by definition: nobody is
+watching, and the only account of the night is the number in the status
+line. It has to be the number of photographs, not the number of attempts.
 """
 from __future__ import annotations
 
@@ -27,20 +32,20 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-#: The store's dark expiry, mirrored here so the status can warn when a run
-#: outlives its calibration. Kept in one place there; this is a display hint.
-DARK_MAX_AGE_S = 8 * 3600
-
 
 @dataclass(frozen=True)
 class TimelapseStatus:
     running: bool
-    shot: int                  # completed so far
+    shot: int                  # completed so far, and *kept*
     count: int                 # 0 means until stopped
     next_in: float             # seconds to the next trigger, 0 when firing
     written_bytes: int = 0
     free_bytes: int = 0
-    #: Set once the run has been going longer than a dark master stays valid.
+    #: Captures that started and did not produce a file.
+    failed: int = 0
+    #: Set once the calibration path has stopped applying a dark it was
+    #: applying earlier in this run -- which is what "the dark expired"
+    #: actually looks like from out here.
     dark_stale: bool = False
     message: str = ""
 
@@ -56,6 +61,8 @@ class TimelapseStatus:
             bits.append(f"{self.written_bytes / 1e9:.1f} GB written")
         if self.free_bytes and self.free_bytes < 5e9:
             bits.append(f"{self.free_bytes / 1e9:.1f} GB free")
+        if self.failed:
+            bits.append(f"{self.failed} failed")
         if self.dark_stale:
             bits.append("dark is stale -- reshoot it")
         return " · ".join(bits)
@@ -65,13 +72,20 @@ class Timelapse:
     """Runs a StillCapture on an interval. One at a time, stoppable."""
 
     def __init__(self, capture,
-                 on_status: Callable[[TimelapseStatus], None] | None = None,
-                 on_shot: Callable[[object], None] | None = None) -> None:
+                 on_status: Callable[[TimelapseStatus], None] | None = None
+                 ) -> None:
         self._capture = capture
         self._on_status = on_status or (lambda _s: None)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._written = 0
+        self._kept = 0
+        self._failed = 0
+        #: Whether the last capture had a dark applied, and whether any ever
+        #: did. Both are needed: a run with no dark at all must not be
+        #: reported as one whose dark went stale.
+        self._dark_now = False
+        self._dark_ever = False
 
     @property
     def running(self) -> bool:
@@ -82,7 +96,8 @@ class Timelapse:
         if self.running or interval_s <= 0:
             return False
         self._stop.clear()
-        self._written = 0
+        self._written = self._kept = self._failed = 0
+        self._dark_now = self._dark_ever = False
         self._thread = threading.Thread(
             target=self._loop,
             args=(float(interval_s), int(count), setup, subject, slide,
@@ -94,15 +109,50 @@ class Timelapse:
     def stop(self) -> None:
         self._stop.set()
 
-    def note_written(self, size_bytes: int) -> None:
-        """The capture result's file size, fed back for the disk readout."""
-        self._written += max(0, int(size_bytes))
+    def note_result(self, result) -> None:
+        """What a capture actually did, fed back from the result handler.
+
+        The loop cannot see this for itself. `trigger` returns True the
+        moment the shutter is claimed, and everything that can go wrong
+        afterwards -- a full disk, a camera that left the bus, a folder
+        that could not be created -- happens on the capture thread. So the
+        loop was counting *attempts*, and a run in which all forty
+        exposures failed still finished with "timelapse finished -- 40
+        frames". Nobody is watching a timelapse; that line is the only
+        account of the night, and it has to be true.
+
+        The dark comes through here too. Whether it is *still being
+        applied* is the honest question, and every result answers it.
+        Comparing elapsed run time against the expiry instead said "fresh"
+        for a dark shot seven hours and fifty minutes before the run --
+        which the store would refuse ten minutes in -- and "stale" for one
+        shot moments before it.
+        """
+        if not getattr(result, "ok", False):
+            self._failed += 1
+            return
+        self._kept += 1
+        applied = getattr(result, "applied", ()) or ()
+        self._dark_now = "dark" in applied
+        self._dark_ever = self._dark_ever or self._dark_now
+        path = getattr(result, "path", None)
+        if path:
+            try:
+                from pathlib import Path
+
+                self._written += max(0, Path(path).stat().st_size)
+            except OSError:
+                pass
 
     # ---- the loop --------------------------------------------------------
 
     def _loop(self, interval: float, count: int, setup, subject: str,
               slide: str, frames: int) -> None:
         t0 = time.monotonic()
+        # Attempts, not photographs. This drives the schedule -- shot k is
+        # due at t0 + k*interval -- and it is also the stopping rule, so a
+        # camera that fails every frame ends the run instead of retrying
+        # all night. What gets *reported* is `self._kept`.
         shot = 0
         while not self._stop.is_set() and (count == 0 or shot < count):
             # Start-to-start: no drift, and an overrun fires immediately.
@@ -111,11 +161,9 @@ class Timelapse:
                 wait = due - time.monotonic()
                 if wait <= 0:
                     break
-                self._emit(shot, count, wait, t0)
+                self._emit(count, wait)
                 if self._stop.wait(min(wait, 1.0)):
-                    self._emit(shot, count, 0, t0, done=True,
-                               message=f"timelapse stopped -- {shot} frames")
-                    return
+                    return self._finish(shot, count, "stopped")
             if not self._capture.trigger(setup, subject=subject, slide=slide,
                                          frames=frames):
                 # Something else is mid-capture; try again shortly rather
@@ -128,19 +176,39 @@ class Timelapse:
                     # Let the in-flight shot finish; it still counts.
                     while self._capture.busy:
                         time.sleep(0.1)
-                    shot += 1
-                    self._emit(shot, count, 0, t0, done=True,
-                               message=f"timelapse stopped -- {shot} frames")
-                    return
+                    return self._finish(shot + 1, count, "stopped")
             shot += 1
             # No "next in" after the final shot -- there is no next.
             left = (0.0 if count and shot >= count
                     else max(0.0, t0 + shot * interval - time.monotonic()))
-            self._emit(shot, count, left, t0)
-        self._emit(shot, count, 0, t0, done=True,
-                   message=f"timelapse finished -- {shot} frames")
+            self._emit(count, left)
+        self._finish(shot, count, "finished")
 
-    def _emit(self, shot: int, count: int, next_in: float, t0: float,
+    def _finish(self, attempts: int, count: int, verb: str) -> None:
+        """The last status line, once every verdict is actually in.
+
+        `StillCapture` releases its lock before the result reaches the
+        interface thread, so the loop can arrive here one frame ahead of
+        the last verdict. Waiting for the tally to reconcile is the
+        difference between a final count that is right and one that is
+        right most of the time.
+
+        Short when nothing is feeding results back at all. An embedding
+        that never calls `note_result` -- or a test harness -- would
+        otherwise pay the whole budget at the end of every run, waiting
+        for something that is never coming.
+        """
+        budget = 2.0 if (self._kept or self._failed) else 0.5
+        until = time.monotonic() + budget
+        while (self._kept + self._failed) < attempts and \
+                time.monotonic() < until:
+            time.sleep(0.02)
+        said = f"{self._kept} frames"
+        if self._failed:
+            said += f", {self._failed} failed"
+        self._emit(count, 0.0, done=True, message=f"timelapse {verb} -- {said}")
+
+    def _emit(self, count: int, next_in: float,
               done: bool = False, message: str = "") -> None:
         free = 0
         try:
@@ -151,7 +219,11 @@ class Timelapse:
         except OSError:
             pass
         self._on_status(TimelapseStatus(
-            running=not done, shot=shot, count=count, next_in=next_in,
+            running=not done, shot=self._kept, count=count, next_in=next_in,
             written_bytes=self._written, free_bytes=free,
-            dark_stale=(time.monotonic() - t0) > DARK_MAX_AGE_S,
+            failed=self._failed,
+            # A dark that was being applied and now is not. A run that
+            # never had one is not stale, it is uncalibrated, and saying
+            # "reshoot it" would be advice about a thing that never was.
+            dark_stale=self._dark_ever and not self._dark_now,
             message=message))

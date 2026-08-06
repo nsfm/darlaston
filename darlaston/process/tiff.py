@@ -337,7 +337,27 @@ class DngWriter:
             _Tag(STRIP_BYTE_COUNTS, LONG, [0] * strips),
         ]
 
-        with open(self.path, "wb") as out:
+        # Beside the target, then renamed over it. Everything that makes
+        # this file readable -- the strip offsets, the SubIFD pointer, the
+        # EXIF pointer -- is patched in at the very end, so a write that
+        # stops early leaves a file whose offsets are all still zero. That
+        # is worse than a short file: our own reader follows offset 0 into
+        # the header and returns whatever is there rather than refusing,
+        # so an interrupted capture came back as a plausible image made of
+        # nothing. The rename is atomic on one filesystem, and the part
+        # file is next to the target so it always is one.
+        target = Path(self.path)
+        tmp = target.with_name(target.name + ".part")
+        try:
+            self._write_to(tmp, ifd0, raw, strips, pv, rows, progress)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        tmp.replace(target)
+        return target
+
+    def _write_to(self, path, ifd0, raw, strips, pv, rows, progress):
+        with open(path, "wb") as out:
             out.write(struct.pack("<2sHI", b"II", 42, 8))
 
             ifd0_at = out.tell()
@@ -383,7 +403,6 @@ class DngWriter:
             out.write(struct.pack("<" + "I" * strips, *offsets))
             out.seek(pos_raw[STRIP_BYTE_COUNTS])
             out.write(struct.pack("<" + "I" * strips, *counts))
-        return self.path
 
 
 def make_preview(image: np.ndarray, *, bayer: bool, width: int = 320,

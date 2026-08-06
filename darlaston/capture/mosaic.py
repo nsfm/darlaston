@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .files import claim, discard
+
 
 @dataclass
 class Tile:
@@ -78,6 +80,12 @@ class MosaicSession:
         self.subject = subject
         self.tiles: list[Tile] = []
         self._meta: dict = {}
+        # Immediately, empty. Nothing wrote a manifest until the first tile
+        # was adopted, so a session interrupted before that -- or one where
+        # the first capture failed -- left a directory that `load` refuses
+        # to open, and the work in it could not be resumed or stitched. An
+        # empty manifest costs nothing and makes the directory legible.
+        self._save()
 
     # ---- building --------------------------------------------------------
 
@@ -91,9 +99,11 @@ class MosaicSession:
               frame: tuple[int, int]) -> Tile:
         """Move a finished capture into the session as the next tile."""
         index = len(self.tiles) + 1
-        filename = f"tile_{index:03d}.dng"
-        target = self.dir / filename
-        shutil.move(str(capture_path), target)
+        # The name that comes back, not the one asked for: `claim` steps
+        # aside rather than overwriting a frame the manifest has lost
+        # track of. See its docstring for how the two come apart.
+        target = claim(capture_path, self.dir / f"tile_{index:03d}.dng")
+        filename = target.name
         tile = Tile(index=index, filename=filename,
                     pos=(float(pos[0]), float(pos[1])) if pos else None,
                     frame=(int(frame[0]), int(frame[1])))
@@ -145,7 +155,7 @@ class MosaicSession:
         if tile.stack:
             shutil.rmtree(self.dir / tile.stack, ignore_errors=True)
         else:
-            (self.dir / tile.filename).unlink(missing_ok=True)
+            discard(self.dir / tile.filename)
         self._save()
         return tile
 

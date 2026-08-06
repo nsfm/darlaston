@@ -362,3 +362,33 @@ def test_an_unmeasurable_shift_asks_for_a_new_keyframe():
     pos, locked, rekey = t.anchor((0.0, 380.0), 0.9, (400, 400))
     assert not locked and rekey
     assert t.gated == before + 1
+
+
+def test_a_gated_jump_does_not_teleport_the_position_backwards():
+    """The frame after a rejected jump is measured against a *new*
+    keyframe, so the anchor has to have moved to the last position we
+    actually measured. Leaving it behind made the next frame compute
+    `old_anchor - small_offset`: the position jumped back by however far
+    the view had travelled since the last rekey, and said it was locked.
+    One fast crank re-origined the whole map."""
+    from darlaston.live.tracker import StageTracker
+
+    shape = (400, 400)
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    # Sixty pixels of travel: measurable, and not far enough to rekey, so
+    # the position and the anchor are deliberately apart when the jump
+    # arrives. That gap is the size of the teleport.
+    pos, _, rekey = t.anchor((60.0, 0.0), 0.9, shape)
+    assert pos == (-60.0, 0.0) and not rekey
+
+    held, locked, rekey = t.anchor((0.0, 380.0), 0.9, shape)
+    assert not locked and rekey, "an unmeasurable jump should gate"
+    assert held == pos, "the position moved on a rejected measurement"
+
+    # The caller takes a fresh keyframe here. Five more pixels of travel
+    # should read five pixels on from where we last knew we were.
+    after, locked, _ = t.anchor((5.0, 0.0), 0.9, shape)
+    assert locked
+    assert after == (-65.0, 0.0), (
+        f"position teleported to {after} instead of (-65.0, 0.0)")

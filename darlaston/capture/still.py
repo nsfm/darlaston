@@ -171,15 +171,33 @@ class StillCapture:
                 if moved_px is not None:
                     moved = moved_px > self.HOLD_STILL_PX
 
+            info = backend.info
+            # The sensor's own depth, not a constant. ToupTek's range runs
+            # 8, 10, 12, 14 and 16 bits across one identical API -- of 244
+            # microscopy models, 68 are 8-bit and 26 are 14/16-bit -- so a
+            # hardcoded 4095 mislabels an 8-bit sensor as under-exposed by
+            # four stops and clips a 16-bit one to a sixteenth of its
+            # range. The camera has always reported this; nothing read it.
+            #
+            # Read here rather than after calibration, because calibration
+            # needs it too: it used to clip to a constant 4095 while the
+            # tag declared the real level, so on a 14-bit camera the data
+            # was crushed two stops down with a hard plateau and the file
+            # said 16383. An *uncalibrated* frame from that camera was
+            # better than a calibrated one.
+            depth = (info.max_bit_depth if info and info.max_bit_depth
+                     else 12)
+            sensor_white = (1 << depth) - 1
+
             self._on_state("calibrating")
             corrected, applied, neutral, black = self._apply_calibration(
-                raw, setup, exposure_us, gain_pct, slide)
+                raw, setup, exposure_us, gain_pct, slide,
+                white_level=sensor_white)
             if frames > 1:
                 applied.append(f"avg{frames}")
 
             self._on_state("writing")
             path, sequence, when = self._destination(setup, subject)
-            info = backend.info
             # A monochrome sensor gets no CFA pattern at all. Roughly a
             # quarter of ToupTek's microscopy range is mono, and labelling
             # greyscale data with a Bayer pattern makes every developer
@@ -187,16 +205,6 @@ class StillCapture:
             mono = info is not None and not info.is_colour
             pattern = None if mono else (info.bayer_pattern if info
                                          else "GBRG")
-            # The sensor's own depth, not a constant. ToupTek's range runs
-            # 8, 10, 12, 14 and 16 bits across one identical API -- of 244
-            # microscopy models, 68 are 8-bit and 26 are 14/16-bit -- so a
-            # hardcoded 4095 mislabels an 8-bit sensor as under-exposed by
-            # four stops and clips a 16-bit one to a sixteenth of its
-            # range. The camera has always reported this; nothing read it.
-            depth = (info.max_bit_depth if info and info.max_bit_depth
-                     else 12)
-            sensor_white = (1 << depth) - 1
-
             meta = None
             if not self.white_balance:
                 # Neutral means "do not touch the channels": the raw arrives
@@ -274,6 +282,12 @@ class StillCapture:
             # frame that already exists on disk.
             want = self._settings.image_format
             raw_wanted = want != "jpeg" or self.raw_required
+            # Here rather than inside the DNG writer. It was only there, so
+            # with image_format="jpeg" -- the one path that never reaches
+            # the writer -- nothing created the folder, and every capture
+            # into a new date folder failed with a message that did not say
+            # why. First shot of the day, every day.
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
             written = None
             if raw_wanted:
                 preview = dng.make_preview(
@@ -333,7 +347,7 @@ class StillCapture:
             self._busy.release()
 
     def _apply_calibration(self, raw, setup, exposure_us: int, gain_pct: int,
-                           slide: str):
+                           slide: str, white_level: int = dng.WHITE_LEVEL):
         """Correct the frame with whatever the store has for this configuration.
 
         Deliberately partial: a dark with no flat is still worth having, and
@@ -343,6 +357,12 @@ class StillCapture:
         Black level is written as zero once a dark has been subtracted, because
         it has been -- leaving the original offset in the tag would make a
         developer subtract it twice.
+
+        `white_level` is the *sensor's*, and has to be, because the clip at
+        the end of `calibrate` is the frame's ceiling. Passing the 12-bit
+        constant here while writing the real level into the tag is how a
+        14-bit capture came out two stops dark with its highlights welded
+        flat.
         """
         applied: list[str] = []
         dark = flat = defects = None
@@ -379,7 +399,7 @@ class StillCapture:
             return raw, applied, neutral, black
 
         corrected = F.calibrate(raw, dark=dark, flat=flat, defects=defects,
-                                white_level=dng.WHITE_LEVEL)
+                                white_level=white_level)
         return corrected.astype(raw.dtype), applied, neutral, black
 
     def _destination(self, setup, subject: str) -> tuple[Path, int, object]:

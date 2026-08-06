@@ -133,7 +133,14 @@ class CalibrationService:
             with backend.grab_raw() as frame:
                 stack.append(frame.copy())
         master = F.average_frames(stack)
-        defects = F.defect_map(master)
+        # The sensor's own full scale. `defect_map`'s absolute floor is a
+        # fraction of it, so the 12-bit default made the floor 3% of the
+        # range on an 8-bit camera instead of 0.2% -- conservative rather
+        # than wrong, but it was quietly finding far fewer hot pixels than
+        # it should on exactly the cheap cameras that have the most.
+        info = getattr(backend, "info", None)
+        depth = getattr(info, "max_bit_depth", 0) or 12
+        defects = F.defect_map(master, white_level=(1 << depth) - 1)
 
         key = dark_key(exposure, gain)
         self.store.put("dark", key,

@@ -1100,11 +1100,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_capture_result(self, result: CaptureResult) -> None:
         self.shutter.set_result(result.summary,
                                 ok=result.ok and not result.moved)
-        if result.ok and self.timelapse.running:
-            try:
-                self.timelapse.note_written(result.path.stat().st_size)
-            except OSError:
-                pass
+        if self.timelapse.running:
+            # Every result, not only the good ones: counting the successes
+            # is the whole reason this is fed back, and a run that failed
+            # forty times used to report forty frames.
+            self.timelapse.note_result(result)
         # Not during a timelapse: an unattended run must never park itself
         # behind a modal question. The summary already says it moved.
         discarded = False

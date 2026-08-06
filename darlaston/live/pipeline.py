@@ -202,9 +202,25 @@ class LivePipeline:
             self._peaking_enabled = enabled
 
     def start_sweep(self) -> None:
-        """Begin accumulating coverage. Resets whatever was there."""
+        """Begin accumulating coverage, on a fresh accumulator.
+
+        A *new* object rather than `reset()` on the existing one. The
+        analysis thread takes its reference under the lock and then calls
+        `update` outside it -- which is right, because that call is the
+        expensive part and holding the lock across it would stall the
+        interface. But it means resetting in place tears the accumulator's
+        state out from under a frame that is already using it: `_peak`
+        becomes None between two lines that both expect an array, and the
+        blanket handler in the worker swallows the TypeError. The window
+        opens exactly when somebody presses "start sweep", which is the
+        one moment it is guaranteed to be pressed.
+
+        Replacing the object closes it. A frame in flight finishes against
+        the accumulator it started with, which is then discarded; the next
+        frame picks up this one.
+        """
         with self._lock:
-            self._coverage.reset()
+            self._coverage = FocusCoverage()
             self._sweeping = True
 
     def stop_sweep(self) -> None:
@@ -236,9 +252,21 @@ class LivePipeline:
 
     def reset_tracking(self) -> None:
         """New origin. Required when the objective changes -- magnification
-        changes the pixels-per-micron scale and old positions become lies."""
+        changes the pixels-per-micron scale and old positions become lies.
+
+        The keyframe goes with it. Resetting only the tracker left the
+        correlation reference on a frame from before the change, so the
+        first shift measured after "new origin" was the travel since that
+        older frame -- and the origin was planted up to a keyframe interval
+        away from the frame the operator pressed the button on. Worse after
+        an objective change, where the two frames are at different
+        magnifications and the shift between them means nothing at all.
+        """
         with self._lock:
             self._xy.reset()
+            self._key = None
+            self._key_pending = None
+            self._key_offset = (0.0, 0.0)
 
     # ---- the hold-still guard --------------------------------------------
     #
