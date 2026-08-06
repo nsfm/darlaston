@@ -112,13 +112,16 @@
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that
       is an archival artifact, and Victorian mounters drew them by hand.
-- [ ] **Nate's mosaic EXIF says 16×/0.4 and it was shot at 25×/0.65.**
-      Found while building the plate: every file in
-      `260729-230442_mosaic_tiles` records the wrong objective, so the
-      turret belief was stale for that whole session (the stack folders
-      from the same evening are correct). Worth finding out whether an
-      unanswered proposal, a missed detent, or the startup guess is
-      responsible — the optics metadata is only as good as that belief,
+- [ ] **? Did `260729-230442_mosaic_tiles` record the wrong objective?**
+      **Unverified, and stated here as fact for too long.** The claim is
+      that every file in it says 16×/0.4 and it was shot at 25×/0.65. Its
+      manifest does say 16×/0.4; nothing on disk records what it actually
+      was, Nate never said it, and no source for the original note
+      survives. It was then reused as ground truth -- including to
+      "correct" a measurement taken from the archive, which is exactly
+      backwards. Either find evidence or drop it. Worth finding out
+      whether an unanswered proposal, a missed detent, or the startup
+      guess is responsible — the optics metadata is only as good as that belief,
       and now the scale bar depends on it too.
 - [ ] **Down-then-back-up stacks.** Nate racks down through the subject
       and back up, so slice order revisits planes: the merge is untouched

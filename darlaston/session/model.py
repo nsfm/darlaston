@@ -105,6 +105,23 @@ class Turret:
     #: neither without being told which it is.
     capped: list[bool] = field(default_factory=list)
 
+    #: Has a person confirmed that `current` is really what is in the
+    #: light path?
+    #:
+    #: **Deliberately not persisted, and deliberately false on load.** The
+    #: position is saved, so a restored belief is whatever was true when
+    #: the application last closed -- and a nosepiece is a thing you turn
+    #: with your hand, on a bench, while the software is not running.
+    #: Restoring the number and the confidence together would be the
+    #: application asserting something it cannot know, which is exactly
+    #: how a whole session came to record 16x/0.4 for glass shot at
+    #: 25x/0.65.
+    #:
+    #: Nothing is refused because of this. It travels into the file
+    #: alongside the objective so that a reader can tell a checked number
+    #: from a carried-over one.
+    confirmed: bool = False
+
     def is_capped(self, index: int) -> bool:
         return (self.positions[index] is None if 0 <= index < len(self.positions)
                 else False) and index < len(self.capped) and bool(
@@ -346,6 +363,8 @@ def _turret_from(d: dict) -> Turret:
         # is padded rather than required: an old file means "nothing known
         # to be capped", not a load failure.
         capped=capped + [False] * (len(positions) - len(capped)),
+        # `confirmed` is not read back on purpose -- see the field. A
+        # saved position is a memory, not an observation.
     )
 
 

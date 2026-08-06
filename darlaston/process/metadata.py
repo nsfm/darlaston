@@ -138,7 +138,11 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
 
     bits = [f"{scope.name}"]
     if obj:
-        bits.append(obj.label)
+        # The human-readable line says so too, because this is the line a
+        # person skims in a file browser months later, and "which lens was
+        # this?" is the question they are asking when they do.
+        bits.append(obj.label if scope.turret.confirmed
+                    else f"{obj.label} (unconfirmed)")
     if scope.optovar and scope.optovar_factor != 1.0:
         bits.append(f"Optovar {scope.optovar_factor:g}×")
     bits.append(setup.illumination.display)
@@ -151,6 +155,17 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     fields = {
         "scope": scope.name,
         "objective": obj.label if obj else "",
+        # The objective is kept whether or not anybody checked it: it is
+        # usually right, and dropping it would throw away a good guess to
+        # avoid admitting it is a guess. What is added is the admission.
+        #
+        # A separate field rather than a mark inside the objective string,
+        # because that string is parsed -- by us, and by whoever reads
+        # these files in ten years. "40x/0.65 (unconfirmed)" is not an
+        # objective label, it is an objective label with a note stapled
+        # to it, and the staple ends up in somebody's axis titles.
+        "objective_confirmed": ("1" if (obj and scope.turret.confirmed)
+                                else "0" if obj else ""),
         # Empty rather than "1" when there is no changer fitted: a stand
         # without one has no such setting, and recording a value implies it
         # was looked at and found to be at unity.

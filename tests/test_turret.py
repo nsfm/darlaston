@@ -631,3 +631,50 @@ def test_the_objective_position_is_written_on_every_change(tmp_path):
     again = Library(path)
     assert again.scope_or_default("z").turret.current == 3, \
         "the last objective is the best guess for the next launch"
+
+
+def test_the_file_says_whether_anybody_checked(qapp):
+    """A capture used to assert an objective with no record of whether it
+    had been confirmed or merely carried over. The value is kept either
+    way -- it is usually right, and dropping a good guess to avoid
+    admitting it is a guess helps nobody -- but the admission travels
+    with it."""
+    from darlaston.process.metadata import from_setup
+    from darlaston.session.model import (CameraProfile, Objective,
+                                         ScopeProfile, Setup, Turret)
+
+    turret = Turret(positions=[Objective(magnification=25.0, na=0.65)],
+                    current=0)
+    setup = Setup(camera=CameraProfile(serial="X", pixel_um=2.4),
+                  scope=ScopeProfile(id="s", name="Zeiss", turret=turret))
+
+    assert turret.confirmed is False, "a fresh belief is nobody's word"
+    shot = dict(exposure_us=8300, gain_pct=100)
+
+    unchecked = from_setup(setup, **shot)
+    assert "objective=25x/0.65" in unchecked.comment, "the guess is kept"
+    # Written as a string on purpose: the comment is built with `if v`, so
+    # a falsy 0 would be dropped and "not confirmed" would be
+    # indistinguishable from "never asked".
+    assert "objective_confirmed=0" in unchecked.comment
+    assert "unconfirmed" in unchecked.description
+
+    turret.confirmed = True
+    checked = from_setup(setup, **shot)
+    assert "objective=25x/0.65" in checked.comment
+    assert "objective_confirmed=1" in checked.comment
+    assert "unconfirmed" not in checked.description
+
+
+def test_a_saved_turret_comes_back_unconfirmed():
+    """The position is persisted and the confidence deliberately is not.
+    A nosepiece is a thing you turn with your hand, on a bench, while the
+    software is not running -- so a restored belief is a memory, not an
+    observation, however good a memory it usually is."""
+    from darlaston.session.model import _turret_from
+
+    saved = {"positions": [{"magnification": 16.0, "na": 0.4}],
+             "current": 0, "capped": [False]}
+    back = _turret_from(saved)
+    assert back.current == 0, "the position is remembered"
+    assert back.confirmed is False, "the certainty is not"

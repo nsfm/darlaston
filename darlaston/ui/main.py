@@ -707,15 +707,24 @@ class MainWindow(QtWidgets.QMainWindow):
         a guess -- mark it, because it keys every calibration lookup and
         goes into every file.
         """
-        if self.proposal.answered_explicitly:
-            self.objective.set_uncertain(False)
-        else:
-            self.objective.set_uncertain(True)
+        self._believe(self.proposal.answered_explicitly)
+
+    def _believe(self, confirmed: bool) -> None:
+        """Say how sure we are, in one place.
+
+        The widget draws it and the model carries it into the file. They
+        used to be one thing -- a flag on the widget -- which meant the
+        capture path could not see it and every file went out asserting an
+        objective with no idea whether anybody had checked.
+        """
+        self.objective.set_uncertain(not confirmed)
+        if self.setup is not None:
+            self.setup.scope.turret.confirmed = confirmed
 
     def _accept_turret(self, payload) -> None:
         if self.setup is None:
             return
-        self.objective.set_uncertain(False)
+        self._believe(True)
         index, level = payload
         self._learn_rotation_sign(int(index))
         # A confirmation is the only trustworthy label we ever get, so it is
@@ -743,6 +752,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.proposal.hide()
         self._learn_rotation_sign(int(index))
         self.setup.scope.turret.current = int(index)
+        # Reaching for the stepper is a person saying which objective it
+        # is, which is the only thing that ever makes this certain.
+        self._believe(True)
         self._on_objective_changed()
 
     def _learn_rotation_sign(self, actual: int) -> None:
