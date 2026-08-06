@@ -35,7 +35,7 @@ msgstr "Running. Progress is in the status bar."
 
 #. {size} is gigabytes, already rounded to one decimal.
 msgid "timelapse.estimate.detail.hourly"
-msgstr "About {size} GB per hour until stopped."
+msgstr "About {size} GB per hour."
 
 #. {size} is gigabytes, {span} how long the run will take, both already
 #. worded and rounded.
@@ -47,8 +47,7 @@ msgstr "About {size} GB over {span}."
 #. after that are corrected against a stale one.
 msgid "timelapse.estimate.detail.long"
 msgstr ""
-"About {size} GB over {span}.  Longer than a dark master lives, so reshoot "
-"it midway or expect later frames uncalibrated."
+"About {size} GB over {span}. Sensor calibration may drift."
 
 #. How long a run takes. {count} is a number that is already rounded and may
 #. be fractional, as "1.5", which is why there is no plural form to pick.

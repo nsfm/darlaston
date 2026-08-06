@@ -11,9 +11,7 @@ msgstr "Which camera is on the microscope?"
 #. cameras: because hiding them would eventually hide the right one.
 msgid "camera.pick.body"
 msgstr ""
-"Everything darlaston can see is listed, likeliest first. Built-in and "
-"infrared cameras are included rather than hidden, so nothing can go "
-"missing."
+"Every camera darlaston can see is listed here."
 
 msgid "camera.pick.size"
 msgstr "{width}×{height} ({mp} MP)"

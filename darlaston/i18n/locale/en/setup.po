@@ -19,7 +19,7 @@ msgstr "empty"
 #. known. Two dashes rather than a word, because the box is 78 px wide and
 #. the whole row of them has to stay readable as a column.
 msgid "setup.objective.na.state.unknown"
-msgstr "--"
+msgstr "-"
 
 #. An example of an objective's optical design, in the box that asks for
 #. one. A real name rather than a description, because it is what is

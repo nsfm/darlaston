@@ -39,9 +39,8 @@ msgstr "{state}…"
 
 msgid "capture.average.tooltip"
 msgstr ""
-"Average several exposures into one file.\n"
-"Noise falls as the square root: ×16 is two stops cleaner.\n"
-"Hold still for the whole burst. Motion between frames ghosts the average."
+"Average several exposures into one file to reduce\n"
+"noise. Hold still for the whole burst."
 
 msgid "capture.average.action.single"
 msgstr "single frame"

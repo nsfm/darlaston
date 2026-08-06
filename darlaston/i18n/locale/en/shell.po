@@ -52,7 +52,7 @@ msgstr ""
 "A 40-tile mosaic at 30 slices each is about 47 GB of raw frames."
 
 msgid "shell.disk.tooltip.unknown"
-msgstr "Room left where captures are written."
+msgstr "Space left where captures are written."
 
 #. Shown only when white balance is off, because that is the unusual state.
 msgid "shell.wb_off.label"
@@ -89,7 +89,7 @@ msgstr "Copied"
 #. a turret nobody has described yet reads differently from being parked
 #. on an empty position of one that was.
 msgid "objective.none"
-msgstr "--"
+msgstr "-"
 
 msgid "objective.unconfigured"
 msgstr "no objectives yet"
@@ -116,7 +116,7 @@ msgstr "Not seeing your camera?"
 msgid "shell.trouble.title"
 msgstr "Not seeing your camera?"
 
-#. Goes into "No {what} found" -- the same sentence the error uses, so
+#. Goes into "No {what} found" - the same sentence the error uses, so
 #. the two say the same thing about the same situation.
 msgid "shell.trouble.what"
 msgstr "camera"

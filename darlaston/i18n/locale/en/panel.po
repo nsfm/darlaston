@@ -10,9 +10,8 @@ msgstr "Drag to resize"
 #. illumination is the right thing to adjust anyway.
 msgid "rail.no_exposure"
 msgstr ""
-"This camera does not let darlaston set the exposure.\n"
-"Set the brightness on the microscope instead: the lamp, and the field "
-"and condenser diaphragms."
+"This camera does not let darlaston set exposure time.\n"
+"Set the brightness on the microscope instead."
 
 msgid "rail.no_gain"
-msgstr "This camera does not let darlaston set the gain."
+msgstr "This camera does not let darlaston control gain."
