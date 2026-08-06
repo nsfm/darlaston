@@ -51,6 +51,12 @@ class Camera:
     uncompressed: bool = False
     detail: str = ""               #: one line, for underneath the name
     node: str = ""                 #: /dev/videoN, where that applies
+    #: A hash of what the device says about itself: its name, formats,
+    #: sizes and control names. Identifies a *model in a configuration*,
+    #: not an instance -- two identical cameras share one. Its job is to
+    #: recognise a camera whose cable has been moved, where the port key
+    #: no longer matches and the device would otherwise be a stranger.
+    fingerprint: str = ""
 
     @property
     def megapixels(self) -> float:
@@ -78,6 +84,7 @@ def _v4l2() -> list[Camera]:
             uncompressed=uncompressed,
             detail="/".join(usable),
             node=found["node"],
+            fingerprint=found.get("fingerprint", ""),
         ))
     return out
 
@@ -274,16 +281,31 @@ def backend_for(camera: Camera):
         f"no backend for a {camera.kind} camera yet")
 
 
-def choose(cameras: list[Camera], remembered: str = "") -> Camera | None:
+def choose(cameras: list[Camera], remembered: str = "",
+           fingerprint: str = "") -> Camera | None:
     """Which one to open, or None when a person has to say.
 
-    Remembered wins. Failing that, one camera is not a choice and asking
-    about it would be ceremony. More than one is a genuine question and
-    guessing at it is how somebody ends up photographing their own face
-    for ten minutes before working out why.
+    Three questions, in order of how sure they make us:
+
+    1. **The same port.** Nothing has moved; this is the camera.
+    2. **The same fingerprint, and only one of it.** The cable has been
+       moved to another socket. The port key no longer matches, but a
+       camera publishing exactly the same name, formats, sizes and
+       controls, with no other candidate, is that camera -- and treating
+       it as a stranger would orphan everything written about it.
+    3. **Only one camera at all.** Not a choice, and asking would be
+       ceremony.
+
+    Otherwise None: more than one candidate is a real question, and
+    guessing is how somebody ends up photographing their own face for ten
+    minutes before working out why.
     """
     if remembered:
         for camera in cameras:
             if camera.key == remembered:
                 return camera
+    if fingerprint:
+        same = [c for c in cameras if c.fingerprint == fingerprint]
+        if len(same) == 1:
+            return same[0]
     return cameras[0] if len(cameras) == 1 else None

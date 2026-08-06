@@ -116,6 +116,9 @@ class Settings:
     #: nobody has said, and the application picks the likeliest and shows
     #: which -- rather than asking before it has done anything useful.
     camera_choice: str = ""
+    #: The chosen camera's fingerprint, so a cable moved to another
+    #: socket is recognised rather than treated as a stranger.
+    camera_fingerprint: str = ""
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built

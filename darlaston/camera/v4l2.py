@@ -195,6 +195,39 @@ def identity(node: str) -> str:
     return _key_from(bus, node)
 
 
+def fingerprint(found: dict) -> str:
+    """A short hash of everything this camera says about itself.
+
+    Not a serial. Two identical cameras produce the same fingerprint, so
+    this identifies a *model in a configuration* rather than a specific
+    device -- which is exactly what is wanted alongside the port, because
+    the port identifies the instance and nothing identifies both.
+
+    The point is the case where somebody moves the cable. The port key
+    changes, the camera looks like a stranger, and the description they
+    wrote is orphaned. With a fingerprint we can say "this is the same
+    kind of camera you called X, on a different port" and offer to carry
+    the description over -- which is a question worth asking, where
+    silently forgetting is not.
+
+    Built from what the device publishes and a person cannot change: its
+    name, its formats, its sizes, and the names of its controls. Values
+    are deliberately excluded, since exposure and gain move constantly
+    and a fingerprint that changes when you adjust a slider is no use.
+    """
+    import hashlib
+
+    parts = [
+        found.get("card", ""),
+        found.get("driver", ""),
+        ",".join(sorted(found.get("formats") or [])),
+        ",".join(f"{w}x{h}" for w, h in sorted(found.get("sizes") or [])),
+        ",".join(sorted(c["name"] for c in (found.get("controls") or []))),
+    ]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
 def _key_from(bus: str, node: str) -> str:
     """Compose the key. Separated out so it can be asked directly.
 
@@ -296,6 +329,7 @@ def enumerate_cameras() -> list[dict]:
         found["controls"] = controls(node)
         found["usable"] = usable_formats(found)
         found["key"] = identity(node)
+        found["fingerprint"] = fingerprint(found)
         out.append(found)
     # Biggest first, and a device that offers nothing we can decode goes
     # last however large its sensor.

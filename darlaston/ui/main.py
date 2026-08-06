@@ -600,11 +600,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if not key or key == self.settings.camera_choice:
             return
         self.settings.camera_choice = key
-        self.settings.save()
         for camera in look():
             if camera.key == key:
+                # Kept alongside the port, so moving the cable is
+                # recoverable rather than a forgetting.
+                self.settings.camera_fingerprint = camera.fingerprint
+                self.settings.save()
                 self._open_camera(camera)
                 return
+        self.settings.save()
 
     def _open_camera(self, camera) -> None:
         """Swap to a different camera without a restart.
@@ -2198,7 +2202,8 @@ def main() -> int:
         from ..camera.discovery import backend_for, choose, look
 
         seen = look()
-        picked = choose(seen, Settings.load().camera_choice)
+        _kept = Settings.load()
+        picked = choose(seen, _kept.camera_choice, _kept.camera_fingerprint)
         if picked is None and seen:
             # Several attached and nobody has said which. Open the
             # likeliest, so there is a picture to look at, and let the

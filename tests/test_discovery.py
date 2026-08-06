@@ -126,3 +126,27 @@ def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp):
     # one: our old floor of 100 was this camera's ceiling.
     assert win.gain.minimum() == 100 and win.gain.maximum() == 200
     win.shutdown()
+
+
+def test_a_camera_whose_cable_moved_is_still_the_same_camera():
+    """The port key is the best identity available and it breaks the
+    moment somebody moves the cable. A device publishing exactly the same
+    name, formats, sizes and controls, with no other candidate, is that
+    camera -- and treating it as a stranger orphans everything written
+    about it."""
+    moved = _cam("v4l2:port-B", fingerprint="abc123")
+    other = _cam("v4l2:port-C", fingerprint="different")
+
+    # The remembered port is gone, but the fingerprint is unmistakable.
+    assert choose([moved, other], remembered="v4l2:port-A",
+                  fingerprint="abc123") is moved
+
+    # Two of the same model, though, is a genuine question again: the
+    # fingerprint identifies a model, not an instance.
+    twin = _cam("v4l2:port-D", fingerprint="abc123")
+    assert choose([moved, twin], remembered="v4l2:port-A",
+                  fingerprint="abc123") is None
+
+    # And the port still wins when it is there.
+    assert choose([moved, other], remembered="v4l2:port-C",
+                  fingerprint="abc123") is other
