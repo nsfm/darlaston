@@ -59,6 +59,26 @@ _VIDIOC_ENUM_FMT = (3 << 30) | (64 << 16) | (ord("V") << 8) | 2
 _VIDIOC_ENUM_FRAMESIZES = (3 << 30) | (44 << 16) | (ord("V") << 8) | 74
 _CAP_VIDEO_CAPTURE = 0x00000001
 _FRMSIZE_DISCRETE = 1
+_VIDIOC_QUERYCTRL = (3 << 30) | (68 << 16) | (ord("V") << 8) | 36
+#: Walk the control list rather than guessing at identifiers.
+_CTRL_FLAG_NEXT = 0x80000000
+_CTRL_FLAG_DISABLED = 0x0001
+
+#: Formats we will not stream, whatever the device says it can do.
+#:
+#: H.264 is the trap: OpenCV accepts `CAP_PROP_FOURCC` for it and returns
+#: True, then hands back frames nothing can decode. Measured on a
+#: 0ac8:3420, which advertises H264 first and would therefore win any
+#: naive "take the first format" negotiation.
+REFUSED_FOURCC = ("H264", "HEVC", "MPG4", "MJPGH264")
+
+#: Preferred in this order. Uncompressed first, because MJPG chroma
+#: subsampling and ringing land exactly on the fine detail this program
+#: exists to record -- a diatom's striae are a few pixels wide. The cost
+#: is measured and real: on a USB 2.0 industrial camera at 1920x1080,
+#: YUYV gave 5.0 fps against MJPG's 9.3. So the *preview* may still
+#: choose speed; this is the order for a capture.
+PREFERRED_FOURCC = ("Y16 ", "GREY", "YUYV", "UYVY", "YU12", "MJPG")
 
 
 def _fourcc(value: int) -> str:
@@ -125,13 +145,108 @@ def _sizes(fh, pixelformat: int, limit: int = 24) -> list[tuple[int, int]]:
     return sorted(set(found), reverse=True)
 
 
+def identity(node: str) -> str:
+    """A key for this camera that survives a replug.
+
+    `/dev/videoN` renumbers, and the cameras that most need identifying
+    are the ones least able to say who they are: measured on two here,
+    one reports a serial of "0000" and the other reports no serial, no
+    manufacturer and no product string at all. So the serial is not
+    usable and the name is not unique.
+
+    The physical port is. `bus_info` from QUERYCAP is the same thing
+    `/dev/v4l/by-path` encodes, and it holds across replug and reboot for
+    as long as the camera stays in the same socket. Moving the cable
+    breaks it, which is the honest limit -- and the reason the caller
+    should offer "is this the one you called X?" rather than silently
+    forgetting.
+    """
+    try:
+        fh = open(node, "rb", buffering=0)
+    except OSError:
+        return node
+    with fh:
+        buf = bytearray(104)
+        try:
+            fcntl.ioctl(fh, _VIDIOC_QUERYCAP, buf, True)
+        except OSError:
+            return node
+        bus = bytes(buf[48:80]).split(b"\0")[0].decode("ascii", "replace")
+    return bus or node
+
+
+def controls(node: str) -> list[dict]:
+    """Every control the driver advertises for this device.
+
+    Empty is a real answer, not a failure. Cameras that expose nothing at
+    all exist and are not rare: measured on a 0ac8:3420, whose USB
+    descriptors declare `bmControls = 0x0000` for both the camera
+    terminal and the processing unit, so `uvcvideo` registers no controls
+    at probe time and no amount of asking will produce any. A second
+    camera on the same machine, costing less, advertises sixteen.
+
+    Which is the whole reason this exists: capability has to be asked
+    for, per device, at runtime. It cannot be assumed from the class of
+    device, the price, or the vendor.
+    """
+    found = []
+    try:
+        fh = open(node, "rb", buffering=0)
+    except OSError:
+        return found
+    with fh:
+        cid = _CTRL_FLAG_NEXT
+        while len(found) < 128:
+            buf = bytearray(68)
+            struct.pack_into("<I", buf, 0, cid)
+            try:
+                fcntl.ioctl(fh, _VIDIOC_QUERYCTRL, buf, True)
+            except OSError:
+                break            # EINVAL ends the walk; anything else, stop
+            got, kind = struct.unpack_from("<II", buf, 0)
+            name = bytes(buf[8:40]).split(b"\0")[0].decode("ascii", "replace")
+            low, high, step, default, flags = struct.unpack_from("<iiiiI",
+                                                                 buf, 40)
+            if not flags & _CTRL_FLAG_DISABLED and not name.endswith(
+                    "Controls"):
+                # The "User Controls"/"Camera Controls" entries are class
+                # headers, not settings. Keeping them would put two
+                # unusable rows in front of somebody.
+                found.append({"id": got, "name": name, "min": low,
+                              "max": high, "step": step, "default": default})
+            cid = got | _CTRL_FLAG_NEXT
+    return found
+
+
+def usable_formats(found: dict) -> list[str]:
+    """The device's formats, best first, with the undecodable ones gone."""
+    offered = [f for f in found["formats"] if f.strip() not in REFUSED_FOURCC]
+    rank = {name.strip(): i for i, name in enumerate(PREFERRED_FOURCC)}
+    return sorted(offered, key=lambda f: rank.get(f.strip(), 99))
+
+
 def enumerate_cameras() -> list[dict]:
-    """Every V4L2 capture device on the machine, largest first."""
+    """Every V4L2 capture device, the biggest sensor first.
+
+    Sorted by what the device can actually deliver, not by node number.
+    It used to claim "largest first" in this docstring and return them in
+    `/dev/videoN` order, which on a real machine put a 1920x1080 camera
+    behind a 640x360 infrared face-unlock sensor -- so anything picking
+    the first entry picked the wrong device.
+    """
     out = []
     for node in sorted(glob.glob("/dev/video*")):
         found = describe(node)
-        if found and found["sizes"]:
-            out.append(found)
+        if not (found and found["sizes"]):
+            continue
+        found["controls"] = controls(node)
+        found["usable"] = usable_formats(found)
+        found["key"] = identity(node)
+        out.append(found)
+    # Biggest first, and a device that offers nothing we can decode goes
+    # last however large its sensor.
+    out.sort(key=lambda d: (bool(d["usable"]),
+                            d["sizes"][0][0] * d["sizes"][0][1]), reverse=True)
     return out
 
 
