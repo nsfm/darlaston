@@ -167,8 +167,15 @@ class CameraSession:
                                         name="camera-session")
         self._thread.start()
 
-    def retarget(self, make_backend) -> None:
+    def retarget(self, make_backend, is_present=None) -> None:
         """Point this session at a different camera, in place.
+
+        The liveness check comes with it. It is specific to one device --
+        one `/dev/video` node, one USB vendor id -- so leaving the old
+        one behind means watching the camera we just stopped using and
+        reporting *it* as disconnected. None means "no cheap check", which
+        is the right answer for the synthetic camera and for any backend
+        whose absence only its own errors can report.
 
         **The object identity is the whole point.** `StillCapture`, the
         calibration service and the opportunist are each handed this
@@ -184,6 +191,7 @@ class CameraSession:
         """
         self.stop()
         self._make_backend = make_backend
+        self._is_present = is_present or (lambda: True)
         self._attempt = 0
         self.start()
 

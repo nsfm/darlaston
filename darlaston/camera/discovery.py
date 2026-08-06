@@ -292,7 +292,13 @@ def backend_for(camera: Camera):
     """
     if camera.kind == "v4l2":
         from .v4l2 import V4L2Backend
-        return V4L2Backend(node=camera.node)
+        # The key and fingerprint, not just the node. A session rebuilds
+        # its backend from this record on every reconnect, and a replug
+        # can renumber /dev/video -- so a backend that knows only where
+        # the camera was reconnects for ever to a node that is gone.
+        return V4L2Backend(node=camera.node,
+                           key=camera.key.removeprefix("v4l2:"),
+                           fingerprint=camera.fingerprint)
     if camera.kind == "toupcam":
         from .toupcam import ToupcamBackend
         return ToupcamBackend()
@@ -301,6 +307,35 @@ def backend_for(camera: Camera):
         return MockCamera(fps=30.0)
     raise NotImplementedError(
         f"no backend for a {camera.kind} camera yet")
+
+
+def presence_for(camera: Camera):
+    """A cheap way to ask whether this camera is still on the bus.
+
+    The session asks once a second, for ever, on its supervisor thread.
+    `look()` is far too expensive to be that answer: it opens every
+    `/dev/video*` node, runs QUERYCAP, walks the format and frame-size
+    lists, issues up to 128 QUERYCTRL ioctls and hashes the result -- per
+    device, once a second, *including the node currently streaming*.
+
+    Presence is a much smaller question than identity. A camera that
+    leaves the bus takes its node with it, so a stat answers it. That is
+    exactly what `usb.present` already does from sysfs for the ToupTek
+    path; this is the same idea for the other two access models.
+
+    None means "no cheap check exists", which the session reads as
+    always-present and falls back to the backend's own errors.
+    """
+    if camera.kind == "v4l2" and camera.node:
+        import os.path
+
+        return lambda: os.path.exists(camera.node)
+    if camera.kind == "toupcam":
+        from . import usb
+        return usb.present
+    if camera.kind == "ximea":
+        return ximea_attached
+    return None
 
 
 def choose(cameras: list[Camera], remembered: str = "",

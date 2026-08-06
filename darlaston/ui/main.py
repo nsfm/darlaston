@@ -653,6 +653,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.settings.save()
                 self._open_camera(camera)
                 return
+        # Chosen but not found -- unplugged between the menu opening and
+        # the click. The fingerprint has to go with the key: left behind
+        # it describes the *previous* camera, and `choose` matches on it
+        # when the port key misses, so the next start would open that one
+        # and file it under this key's name.
+        self.settings.camera_fingerprint = ""
         self.settings.save()
 
     def _open_camera(self, camera) -> None:
@@ -664,11 +670,13 @@ class MainWindow(QtWidgets.QMainWindow):
         and keep it -- so a capture would report "no camera connected"
         over a live preview.
         """
-        from ..camera.discovery import backend_for
+        from ..camera.discovery import backend_for, presence_for
 
         self._synced = False
         self._make_backend = lambda: backend_for(camera)
-        self.session.retarget(self._make_backend)
+        # And the liveness check, which is per device: without it the
+        # session goes on watching the camera we just switched away from.
+        self.session.retarget(self._make_backend, presence_for(camera))
 
     def _fit_controls_to(self, info) -> None:
         """Show only the controls this camera really has.
@@ -2244,14 +2252,18 @@ def main() -> int:
             from ..camera.v4l2 import V4L2Backend
             return V4L2Backend()
         allow_synthetic = False
-        from ..camera.v4l2 import enumerate_cameras
-        presence = lambda: bool(enumerate_cameras())
+        # Any capture node at all, since `--usb` means "the first one".
+        # Asking `enumerate_cameras()` instead ran a full capability walk
+        # over every device on the machine once a second, for ever.
+        import glob as _glob
+        presence = lambda: bool(_glob.glob("/dev/video*"))
     else:
         # No flag. Look at what is actually attached, across every access
         # model, and open the likeliest -- or the one chosen last time.
         # The ToupTek path is no longer the default by assumption; it is
         # one of the things `look()` can find.
-        from ..camera.discovery import backend_for, choose, look
+        from ..camera.discovery import (backend_for, choose, look,
+                                        presence_for)
 
         seen = look()
         _kept = Settings.load()
@@ -2266,7 +2278,7 @@ def main() -> int:
 
         if picked is not None:
             make: callable = lambda: backend_for(picked)
-            presence = lambda: bool(look())
+            presence = presence_for(picked)
         else:
             # Nothing found at all. The ToupTek path is still the right
             # thing to try: its own errors explain a missing SDK or an

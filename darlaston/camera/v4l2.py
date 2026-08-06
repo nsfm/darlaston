@@ -356,6 +356,20 @@ def usable_formats(found: dict) -> list[str]:
     return sorted(offered, key=lambda f: rank.get(f.strip(), 99))
 
 
+def _detail(found: dict) -> dict:
+    """Everything about a device that costs an ioctl to learn.
+
+    Split out from the enumeration so a single node can be described the
+    same way, without walking every other camera on the machine to do it.
+    """
+    node = found["node"]
+    found["controls"] = controls(node)
+    found["usable"] = usable_formats(found)
+    found["key"] = identity(node)
+    found["fingerprint"] = fingerprint(found)
+    return found
+
+
 def enumerate_cameras() -> list[dict]:
     """Every V4L2 capture device, the biggest sensor first.
 
@@ -370,11 +384,7 @@ def enumerate_cameras() -> list[dict]:
         found = describe(node)
         if not (found and found["sizes"]):
             continue
-        found["controls"] = controls(node)
-        found["usable"] = usable_formats(found)
-        found["key"] = identity(node)
-        found["fingerprint"] = fingerprint(found)
-        out.append(found)
+        out.append(_detail(found))
     # Biggest first, and a device that offers nothing we can decode goes
     # last however large its sensor.
     out.sort(key=lambda d: (bool(d["usable"]),
@@ -385,9 +395,16 @@ def enumerate_cameras() -> list[dict]:
 class V4L2Backend(CameraBackend):
     """A UVC camera. Colour in, colour out, and honest about it."""
 
-    def __init__(self, index: int = 0, node: str | None = None) -> None:
+    def __init__(self, index: int = 0, node: str | None = None,
+                 key: str = "", fingerprint: str = "") -> None:
         self._node = node
         self._index = index
+        #: Who this backend is for, as opposed to where it last was. A
+        #: node number is a position in a list the kernel rebuilds on
+        #: every replug; these survive it. Empty means "whatever is at
+        #: `node`", which is what a bare backend has always meant.
+        self._key = key
+        self._fingerprint = fingerprint
         self._cap: cv2.VideoCapture | None = None
         self._info: CameraInfo | None = None
         self._pool: BufferPool | None = None
@@ -410,9 +427,55 @@ class V4L2Backend(CameraBackend):
 
     # ---- lifecycle -------------------------------------------------------
 
+    def _is_it(self, found: dict) -> bool:
+        """Is the device described here the one this backend is for?"""
+        if self._key and found.get("key") != self._key:
+            return False
+        if self._fingerprint and found.get("fingerprint") != self._fingerprint:
+            return False
+        return True
+
+    def _locate(self) -> dict | None:
+        """Which node this camera is on *now*, which is not always where
+        it was.
+
+        Node numbers renumber. Pulling a camera out and putting it back
+        can move it, or move everything else around it, and this backend
+        is rebuilt on every reconnect from a record captured before that
+        happened. Holding the old number meant a session that reconnected
+        for ever to a device no longer there -- or, worse, opened whatever
+        had taken the number.
+
+        The remembered node is still the first guess: it is nearly always
+        right and costs one ioctl against a full enumeration's per-device
+        format walk. It is only checked, not trusted.
+        """
+        wanted = self._key or self._fingerprint
+        if self._node:
+            found = describe(self._node)
+            if found and found["sizes"]:
+                found = _detail(found)
+                if not wanted or self._is_it(found):
+                    return found
+            if not wanted:
+                return None            # a bare node backend; nothing to search
+        elif not wanted:
+            return (enumerate_cameras() or [None])[self._index]
+
+        seen = enumerate_cameras()
+        for found in seen:
+            if self._key and found.get("key") == self._key:
+                return found
+        # The port key has moved too, so the cable is in a different
+        # socket. A device publishing the same name, formats, sizes and
+        # controls is that camera -- unless there are two of them, in
+        # which case guessing is worse than waiting.
+        same = [f for f in seen
+                if self._fingerprint and f.get("fingerprint") == self._fingerprint]
+        return same[0] if len(same) == 1 else None
+
     def open(self) -> CameraInfo:
-        found = (describe(self._node) if self._node
-                 else (enumerate_cameras() or [None])[self._index])
+        found = self._locate()
         if not found:
             raise NoCameraFound("USB camera")
         self._node = found["node"]
@@ -436,7 +499,8 @@ class V4L2Backend(CameraBackend):
         # on one, none whatsoever on the other. Claiming a range we
         # cannot drive puts a slider in front of somebody that moves and
         # does nothing.
-        self._controls = {c["name"]: c for c in controls(self._node)}
+        self._controls = {c["name"]: c
+                          for c in (found.get("controls") or controls(self._node))}
         self._usable = found.get("usable") or usable_formats(found)
         self._settle()
 
@@ -447,7 +511,7 @@ class V4L2Backend(CameraBackend):
             # reboots -- so a described camera came back as a stranger
             # and was filed again under a new name. This is the same key
             # the picker uses, so the two agree about what a camera is.
-            serial=identity(self._node),
+            serial=found.get("key") or identity(self._node),
             resolutions=resolutions, max_bit_depth=8,
             bayer_pattern="",              # decoded already; no CFA exists
             exposure_range_us=self._exposure_range(),
@@ -555,6 +619,11 @@ class V4L2Backend(CameraBackend):
 
     # ---- settings --------------------------------------------------------
 
+    def _format(self) -> str:
+        """The pixel format the device is delivering right now."""
+        got = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+        return "".join(chr((got >> (8 * i)) & 0xFF) for i in range(4))
+
     def _set_format(self, fourcc: str) -> str:
         """Ask for a pixel format, and report what was actually granted.
 
@@ -565,8 +634,7 @@ class V4L2Backend(CameraBackend):
         """
         self._cap.set(cv2.CAP_PROP_FOURCC,
                       cv2.VideoWriter_fourcc(*fourcc.ljust(4)[:4]))
-        got = int(self._cap.get(cv2.CAP_PROP_FOURCC))
-        return "".join(chr((got >> (8 * i)) & 0xFF) for i in range(4))
+        return self._format()
 
     def best_capture_format(self) -> str:
         """The best format this camera will really give us for a capture.
@@ -818,10 +886,17 @@ class V4L2Backend(CameraBackend):
         try:
             with self._lock:
                 previous = self._current
+                # Read before switching. This used to restore whatever
+                # `_set_format` reported *granting*, compare it against a
+                # hard-coded "MJPG" and put the camera back into MJPG on
+                # any mismatch -- so a camera with no MJPG at all, whose
+                # preview was already the uncompressed format, was left
+                # being asked for a format it does not have.
+                before = self._format()
                 # Uncompressed for the capture where the camera has one.
                 # The preview stays compressed and fast; this is the one
                 # frame that has to be worth keeping.
-                was = self._set_format(self.best_capture_format())
+                self._set_format(self.best_capture_format())
                 self._select(0)               # index 0 is the largest
                 # The first frames after a mode change come from the old
                 # pipeline; discard a few rather than saving one.
@@ -829,8 +904,8 @@ class V4L2Backend(CameraBackend):
                     self._cap.read()
                 ok, image = self._cap.read()
                 self._select(previous)
-                if was != "MJPG":
-                    self._set_format("MJPG")   # back to the fast preview
+                if self._format() != before:
+                    self._set_format(before)   # back to the fast preview
             if not ok or image is None:
                 raise RuntimeError("capture failed -- the camera returned "
                                    "no frame")

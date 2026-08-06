@@ -275,6 +275,72 @@ def test_a_sealed_eyepiece_camera_outranks_a_face_unlock_sensor():
     assert order[0] is sealed, "would have opened the face-unlock sensor"
 
 
+def test_the_liveness_check_is_a_stat_and_not_an_enumeration():
+    """The session asks once a second, for ever, on its supervisor thread.
+    `look()` opens every node, walks its formats and issues up to 128
+    QUERYCTRL ioctls per device -- including the one being streamed."""
+    from darlaston.camera.discovery import look, presence_for
+
+    calls = []
+    here = presence_for(_cam("v4l2:port-A", node=__file__))
+    gone = presence_for(_cam("v4l2:port-B", node="/dev/video-does-not-exist"))
+
+    import darlaston.camera.discovery as D
+    real, D.look = D.look, lambda: calls.append(1) or []
+    try:
+        assert here() is True
+        assert gone() is False
+    finally:
+        D.look = real
+    assert not calls, "the liveness check enumerated every camera"
+    assert presence_for(_cam("mock", kind="mock")) is None
+
+
+def test_a_backend_finds_its_camera_after_a_replug_renumbers_the_nodes():
+    """A session rebuilds its backend from a record captured before the
+    replug. Holding the old /dev/videoN meant reconnecting for ever to a
+    device that is not there."""
+    from darlaston.camera import v4l2
+
+    moved = {"node": "/dev/video7", "card": "UVC Camera", "sizes": [(1920, 1080)],
+             "formats": ["MJPG"], "raw": [], "usable": ["MJPG"],
+             "key": "usb-0000:00:14.0-8", "fingerprint": "abc123",
+             "controls": []}
+    backend = v4l2.V4L2Backend(node="/dev/video3", key="usb-0000:00:14.0-8",
+                               fingerprint="abc123")
+    real_describe, real_enum = v4l2.describe, v4l2.enumerate_cameras
+    v4l2.describe = lambda node: None                 # video3 is gone
+    v4l2.enumerate_cameras = lambda: [moved]
+    try:
+        assert backend._locate() is moved
+    finally:
+        v4l2.describe, v4l2.enumerate_cameras = real_describe, real_enum
+
+
+def test_a_backend_will_not_open_a_stranger_that_took_its_node():
+    """The node is a first guess, not a promise. Something else answering
+    at that number is not this camera."""
+    from darlaston.camera import v4l2
+
+    stranger = {"node": "/dev/video3", "card": "Other", "sizes": [(640, 480)],
+                "formats": ["MJPG"], "raw": [], "usable": ["MJPG"],
+                "key": "usb-0000:00:14.0-2", "fingerprint": "zzz",
+                "controls": []}
+    backend = v4l2.V4L2Backend(node="/dev/video3", key="usb-0000:00:14.0-8",
+                               fingerprint="abc123")
+    real_describe, real_enum, real_detail = (v4l2.describe,
+                                             v4l2.enumerate_cameras, v4l2._detail)
+    v4l2.describe = lambda node: dict(stranger)
+    v4l2._detail = lambda found: found
+    v4l2.enumerate_cameras = lambda: [stranger]
+    try:
+        assert backend._locate() is None
+    finally:
+        v4l2.describe = real_describe
+        v4l2.enumerate_cameras = real_enum
+        v4l2._detail = real_detail
+
+
 def test_the_remembered_port_is_not_enough_on_its_own():
     """A port is a socket. A different camera in it must not simply be
     opened because the socket matches."""
