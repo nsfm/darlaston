@@ -166,9 +166,18 @@ def test_linear_composite_round_trips(tmp_path):
     sub = _ifd(data, _ifd(data, first)[330][2])
     assert sub[262][2] == 34892, "linear raw"
     assert sub[277][2] == 3
-    off = sub[273][2] if sub[273][1] == 1 else None
-    counts = sub[279][1]
-    assert counts >= 1
+    assert sub[279][1] >= 1
+
+    # And the pixels, which is what "round trips" claimed and did not check.
+    # Every assertion above is about tags; a writer that emitted a correctly
+    # described block of zeros satisfied all of them.
+    from darlaston.process.wiggle import _read_composite
+
+    back, white = _read_composite(p)
+    assert white == 65535
+    # `_read_composite` hands back BGR, because that is what every consumer
+    # of a composite in this package works in. The planes on disk are RGB.
+    assert np.array_equal(back[:, :, ::-1].astype(np.uint16), img)
 
 
 # ---- the optics, in fields a photographer reads ----------------------------
@@ -228,7 +237,10 @@ def test_thumbnail_extracts_preview_without_reading_the_file(tmp_path):
     from darlaston.process.thumbnail import preview, write_thumbnail
 
     rng = np.random.default_rng(4)
-    h, w = 600, 900
+    # Big enough that "did not read the file" is a claim with content. At
+    # 600x900 the file is under a megabyte, and the old limit below was
+    # eight -- so a thumbnailer that slurped the whole thing passed.
+    h, w = 1200, 1800
     raw = np.clip(rng.normal(1800, 300, (h, w)), 0, 4095).astype(np.uint16)
     path = tmp_path / "big.dng"
     dng.write_bayer_streamed(
@@ -278,5 +290,11 @@ def test_thumbnail_extracts_preview_without_reading_the_file(tmp_path):
         preview(path)
     finally:
         builtins.open = real_open
-    assert sum(pulled) <= 8 << 20, \
-        f"read {sum(pulled)} bytes; a thumbnailer must not slurp the file"
+    size = path.stat().st_size
+    assert size > 3 << 20, "the file is too small for the claim to mean much"
+    # Relative to the file, not an absolute number that the file might be
+    # smaller than. The embedded preview is a few hundred kilobytes however
+    # large the image is, so a quarter is generous and still bites.
+    assert sum(pulled) < size // 4, (
+        f"read {sum(pulled)} of {size} bytes; a thumbnailer must not slurp "
+        f"the file it is asked about")

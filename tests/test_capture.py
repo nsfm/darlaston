@@ -891,16 +891,43 @@ def test_tiles_and_slices_keep_their_raw_whatever_the_preference(tmp_path):
     cap = StillCapture(session=None, settings=s)
     assert cap.raw_required is False, "a plain capture is a photograph"
 
-    # The rule the capture path applies, stated here so it cannot drift.
-    def raw_wanted(cap):
-        return s.image_format != "jpeg" or cap.raw_required
+    # By shooting, not by restating the rule. This test used to define
+    # `raw_wanted` locally and assert against its own copy, so deleting the
+    # real check in `still.py` left it passing -- which is the one thing a
+    # data-loss guarantee must never do.
+    for image_format, raw_required, want_dng in (
+            ("jpeg", False, False),      # a photograph, as asked
+            ("jpeg", True, True),        # a tile, whatever the preference
+            ("both", False, True),
+            ("raw", False, True)):
+        into = tmp_path / f"{image_format}-{raw_required}"
+        made = _shoot_into(into, image_format=image_format,
+                           raw_required=raw_required)
+        assert made.ok, made.message
+        dngs = list(into.rglob("*.dng"))
+        assert bool(dngs) is want_dng, (
+            f"{image_format} with raw_required={raw_required} wrote "
+            f"{[p.name for p in into.rglob('*')]}")
 
-    assert raw_wanted(cap) is False
-    cap.raw_required = True
-    assert raw_wanted(cap) is True
-    s.image_format = "both"
-    cap.raw_required = False
-    assert raw_wanted(cap) is True
+
+def _shoot_into(root, *, image_format: str, raw_required: bool):
+    """One real capture through the real path, into `root`."""
+    from darlaston.capture.still import StillCapture
+    from darlaston.session.settings import Settings
+
+    root.mkdir(parents=True, exist_ok=True)
+    session = types.SimpleNamespace(backend=MockCamera(fps=30.0))
+    session.backend.open()
+    results, done = [], threading.Event()
+    cap = StillCapture(session,
+                       Settings(capture_root=str(root),
+                                image_format=image_format),
+                       on_result=lambda r: (results.append(r), done.set()))
+    cap.raw_required = raw_required
+    assert cap.trigger(None, subject="t")
+    assert done.wait(30), "the capture never finished"
+    session.backend.close()
+    return results[-1]
 
 
 def test_a_file_never_claims_a_manufacturer_we_do_not_know():
