@@ -30,5 +30,3 @@ msgstr "no exposure or gain control"
 msgid "camera.pick.compressed"
 msgstr "compressed frames only"
 
-msgid "menu.setup.camera_pick"
-msgstr "Choose camera…"

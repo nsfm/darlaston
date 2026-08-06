@@ -20,7 +20,7 @@ place to describe them rather than to pick between them.
 """
 from __future__ import annotations
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
 from ..session.model import (CameraProfile, Objective, ScopeProfile, Setup,
@@ -600,12 +600,37 @@ class MicroscopeDialog(_LibraryDialog):
         self.accept()
 
 
-class CameraDialog(_LibraryDialog):
-    """The cameras you own.
+def _present_dot() -> QtGui.QIcon:
+    """The mark for a camera that is plugged in right now."""
+    size = 10
+    pip = QtGui.QPixmap(size, size)
+    pip.fill(QtGui.QColor(0, 0, 0, 0))
+    p = QtGui.QPainter(pip)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    glow = QtGui.QColor(theme.BRASS)
+    glow.setAlpha(70)
+    p.setBrush(glow)
+    p.drawEllipse(0, 0, size, size)
+    p.setBrush(QtGui.QColor(theme.BRASS))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return QtGui.QIcon(pip)
 
-    There is no picker here on purpose. Which camera is in front of you is
-    not a preference -- it is whichever one is plugged in, matched by its
-    serial when it arrives. This is where you say what is bolted to each.
+
+class CameraDialog(_LibraryDialog):
+    """The cameras you own, and which of them to use.
+
+    This used to say there was no picker here on purpose: which camera is
+    in front of you is not a preference, it is whichever one is plugged
+    in. That was true of a bench with one camera on it. It stops being
+    true on a laptop with a built-in camera, an infrared sensor beside
+    it, a USB camera on the microscope and a machine-vision camera in a
+    drawer -- all attached at once, all real, only one of them the answer.
+
+    So description and selection live together, because a person thinking
+    "camera" should not have to know which of those two ideas they want.
+    The list says which are attached; choosing one that is picks it.
     """
 
     def __init__(self, library, current: str | None = None,
@@ -631,8 +656,17 @@ class CameraDialog(_LibraryDialog):
         self.remove = QtWidgets.QPushButton(_("setup.cameras.action.remove"))
         self.remove.setToolTip(_("setup.cameras.remove.tooltip"))
         self.remove.clicked.connect(self._remove)
+
+        # Only useful for a camera that is actually attached, so it says
+        # so rather than failing when pressed.
+        self.use = QtWidgets.QPushButton(_("setup.cameras.action.use"))
+        self.use.setToolTip(_("setup.cameras.use.tooltip"))
+        self.use.clicked.connect(self._use)
+        self.use.setEnabled(False)
+
         list_buttons = QtWidgets.QHBoxLayout()
         list_buttons.setSpacing(6)
+        list_buttons.addWidget(self.use)
         list_buttons.addWidget(self.remove)
 
         left = QtWidgets.QVBoxLayout()
@@ -661,6 +695,30 @@ class CameraDialog(_LibraryDialog):
         self._reload(current)
         self.setStyleSheet(theme.stylesheet())
 
+    #: Set when a camera is chosen, and read by the caller afterwards.
+    #: This dialog does not open cameras: it is a dialog.
+    picked: str = ""
+
+    def _attached(self) -> dict:
+        """Which of these are plugged in right now, under the same key.
+
+        Empty on anything that goes wrong -- a library that cannot say
+        what is attached is still a perfectly good library.
+        """
+        try:
+            from ..camera.discovery import look
+            return {c.key.split(":", 1)[1]: c
+                    for c in look() if ":" in c.key}
+        except Exception:
+            return {}
+
+    def _use(self) -> None:
+        found = self._attached().get(self._selected or "")
+        if found is None:
+            return
+        self.picked = found.key
+        self._save()
+
     def _remove(self) -> None:
         if not self._selected:
             return
@@ -679,8 +737,16 @@ class CameraDialog(_LibraryDialog):
                          key=lambda c: c.display)
         self.list.blockSignals(True)
         self.list.clear()
+        attached = self._attached()
         for camera in cameras:
             item = QtWidgets.QListWidgetItem(camera.display)
+            if camera.serial in attached:
+                # A brass dot, which is already what this program means
+                # by "state, at a glance". The list is 170 px wide and
+                # the word "attached" does not fit in it; a dot does, and
+                # is read faster anyway.
+                item.setIcon(_present_dot())
+                item.setToolTip(_("setup.cameras.attached.tooltip"))
             item.setData(QtCore.Qt.ItemDataRole.UserRole, camera.serial)
             self.list.addItem(item)
         if cameras:
@@ -690,7 +756,7 @@ class CameraDialog(_LibraryDialog):
         self.list.blockSignals(False)
 
         known = bool(cameras)
-        for w in (self.list, self.editor, self.bound, self.remove):
+        for w in (self.list, self.editor, self.bound, self.remove, self.use):
             w.setVisible(known)
         self.empty.setVisible(not known)
         if known:
@@ -716,6 +782,8 @@ class CameraDialog(_LibraryDialog):
         self._refresh()
 
     def _refresh(self) -> None:
+        self.use.setEnabled(bool(self._selected)
+                            and self._selected in self._attached())
         if not self._selected:
             self.bound.clear()
             return

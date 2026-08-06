@@ -360,7 +360,13 @@ class V4L2Backend(CameraBackend):
         self._settle()
 
         self._info = CameraInfo(
-            model=found["card"], serial=self._node,
+            model=found["card"],
+            # The stable port key, not /dev/videoN. The library files
+            # cameras by serial, and a node number renumbers across
+            # reboots -- so a described camera came back as a stranger
+            # and was filed again under a new name. This is the same key
+            # the picker uses, so the two agree about what a camera is.
+            serial=identity(self._node),
             resolutions=resolutions, max_bit_depth=8,
             bayer_pattern="",              # decoded already; no CFA exists
             exposure_range_us=self._exposure_range(),

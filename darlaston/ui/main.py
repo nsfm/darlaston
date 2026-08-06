@@ -170,13 +170,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # can set it before ever seeing a slide.
         setup = self.toolbar.add_menu("Setup", _("menu.setup"))
         setup.addAction(_("menu.setup.microscopes"), self._open_microscopes)
+        # One entry, because description and selection are one question
+        # to the person asking it: which of these things is my camera,
+        # and what is it bolted to.
         setup.addAction(_("menu.setup.cameras"), self._open_cameras)
-        # Only when there is a question to answer. On a machine with one
-        # camera this is not a choice, and an entry offering to make it
-        # is a menu one line longer for no reason.
-        self.pick_action = setup.addAction(_("menu.setup.camera_pick"))
-        self.pick_action.triggered.connect(self._choose_camera)
-        self.pick_action.setVisible(False)
         # Attribution is the one part of a file's provenance the instrument
         # cannot supply. It used to have a menu to itself to keep it
         # visible, which does not work -- an entry is invisible until the
@@ -596,29 +593,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text(f"{gain / 100:.1f}×")
         self._synced = True
 
-    def offer_camera_choice(self, cameras) -> None:
-        """Show the picker entry, if picking is a real question."""
-        self.pick_action.setVisible(len(cameras) > 1)
+    def _use_camera(self, key: str) -> None:
+        """Remember a choice and act on it."""
+        from ..camera.discovery import look
 
-    def _choose_camera(self) -> None:
-        from ..camera.discovery import backend_for, look
-        from .camera_ui import CameraPicker
-
-        cameras = look()
-        if not cameras:
-            return
-        dialog = CameraPicker(cameras, self.settings.camera_choice, self)
-        if not dialog.exec():
-            return
-        key = dialog.chosen()
         if not key or key == self.settings.camera_choice:
             return
         self.settings.camera_choice = key
         self.settings.save()
-        for camera in cameras:
+        for camera in look():
             if camera.key == key:
                 self._open_camera(camera)
-                break
+                return
 
     def _open_camera(self, camera) -> None:
         """Swap to a different camera without a restart.
@@ -1782,7 +1768,14 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         current = self.setup.camera.serial if self.setup else None
         dialog = CameraDialog(self.library, current, self)
-        if not dialog.exec() or self.setup is None:
+        accepted = dialog.exec()
+        # Selection first: a different camera means a different profile,
+        # and reloading the old one over the top of it would undo the
+        # thing that was just asked for.
+        if accepted and dialog.picked:
+            self._use_camera(dialog.picked)
+            return
+        if not accepted or self.setup is None:
             return
         updated = self.library.cameras.get(self.setup.camera.serial)
         if updated is not None:
@@ -2237,9 +2230,6 @@ def main() -> int:
     theme.load_fonts()
     theme.identify(app)                  # after the fonts: the mark is a letter
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
-    if not (args.mock or args.usb):
-        from ..camera.discovery import look as _look
-        win.offer_camera_choice(_look())
     # Before show(), where the platform allows it. Changing a window flag
     # on a window that is already up destroys the native window and makes
     # a new one, which is a visible flash and, more to the point, tears
