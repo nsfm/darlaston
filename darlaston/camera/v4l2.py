@@ -42,7 +42,7 @@ import numpy as np
 
 from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
-from .errors import CameraBusy, NoCameraFound
+from .errors import CameraBusy, NoCameraFound, PermissionDenied
 
 #: Raw Bayer fourccs, so a device that *does* offer one can be recognised
 #: and reported. The Imaging Source's industrial cameras are the realistic
@@ -193,6 +193,37 @@ def identity(node: str) -> str:
     # could open the other, and an infrared sensor is a memorable thing
     # to find yourself looking through.
     return _key_from(bus, node)
+
+
+def _why_it_would_not_open(node: str, card: str) -> Exception:
+    """Ask the device directly, since OpenCV only says no.
+
+    `cv2.VideoCapture` reports failure without a reason, and the two
+    likely reasons want opposite advice: another program holding the
+    camera is fixed by closing that program, and a user who is not in the
+    `video` group is fixed by an administrator. Guessing "busy" for both
+    sends half the people down the wrong path.
+
+    Measured in practice: guvcview holding the device produced exactly
+    this failure, and so does a fresh Linux install where nobody has been
+    added to the group yet.
+    """
+    try:
+        open(node, "rb", buffering=0).close()
+    except PermissionError:
+        return PermissionDenied(
+            f"{card} at {node} is present, but this user may not open it.")
+    except OSError as why:
+        import errno
+
+        if why.errno == errno.EBUSY:
+            return CameraBusy(
+                f"{card} at {node} is held by another program.")
+        return CameraBusy(f"{card} at {node} would not open: {why}")
+    # The device opens fine on its own, so whatever stopped OpenCV was
+    # not ownership. Say so rather than inventing a cause.
+    return CameraBusy(
+        f"{card} at {node} opened, but no video could be started from it.")
 
 
 def fingerprint(found: dict) -> str:
@@ -356,6 +387,7 @@ class V4L2Backend(CameraBackend):
         #: Filled in by `open`, from the driver. Empty means the device
         #: has told us it offers nothing, which is a real answer.
         self._controls: dict = {}
+        self._usable: list = []
         self._current = 0
 
     # ---- lifecycle -------------------------------------------------------
@@ -368,9 +400,7 @@ class V4L2Backend(CameraBackend):
         self._node = found["node"]
         self._cap = cv2.VideoCapture(self._node, cv2.CAP_V4L2)
         if not self._cap.isOpened():
-            raise CameraBusy(
-                f"{found['card']} at {self._node} is present but would "
-                "not open.")
+            raise _why_it_would_not_open(self._node, found["card"])
         # MJPEG where offered: a 1600x1200 YUYV stream is 46 MB/s and will
         # not fit USB 2.0, which is what most of these cameras are on.
         if "MJPG" in found["formats"]:
@@ -391,6 +421,7 @@ class V4L2Backend(CameraBackend):
         # cannot drive puts a slider in front of somebody that moves and
         # does nothing.
         self._controls = {c["name"]: c for c in controls(self._node)}
+        self._usable = found.get("usable") or usable_formats(found)
         self._settle()
 
         self._info = CameraInfo(
@@ -491,6 +522,33 @@ class V4L2Backend(CameraBackend):
         return self._info
 
     # ---- settings --------------------------------------------------------
+
+    def _set_format(self, fourcc: str) -> str:
+        """Ask for a pixel format, and report what was actually granted.
+
+        Reported rather than assumed, because `set` returns True for
+        formats the device will not really deliver -- measured on a
+        camera that accepts H264 and then hands back frames nothing can
+        decode.
+        """
+        self._cap.set(cv2.CAP_PROP_FOURCC,
+                      cv2.VideoWriter_fourcc(*fourcc.ljust(4)[:4]))
+        got = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+        return "".join(chr((got >> (8 * i)) & 0xFF) for i in range(4))
+
+    def best_capture_format(self) -> str:
+        """The best format this camera will really give us for a capture.
+
+        Uncompressed if there is any, because MJPG subsampling and
+        ringing land exactly on detail a few pixels wide, which is what a
+        diatom's striae are. It costs frame rate -- measured at 6 fps
+        against MJPG's 30 at 1920x1080 -- which is why this is only used
+        for captures and the preview stays fast.
+        """
+        for name in (self._usable or ["MJPG"]):
+            if name.strip() != "MJPG":
+                return name
+        return "MJPG"
 
     def _select(self, index: int) -> None:
         if self._info is not None:
@@ -622,13 +680,19 @@ class V4L2Backend(CameraBackend):
         try:
             with self._lock:
                 previous = self._current
+                # Uncompressed for the capture where the camera has one.
+                # The preview stays compressed and fast; this is the one
+                # frame that has to be worth keeping.
+                was = self._set_format(self.best_capture_format())
                 self._select(0)               # index 0 is the largest
-                # The first frames after a size change come from the old
+                # The first frames after a mode change come from the old
                 # pipeline; discard a few rather than saving one.
-                for _ in range(4):
+                for _ in range(SETTLE_FRAMES + 3):
                     self._cap.read()
                 ok, image = self._cap.read()
                 self._select(previous)
+                if was != "MJPG":
+                    self._set_format("MJPG")   # back to the fast preview
             if not ok or image is None:
                 raise RuntimeError("capture failed -- the camera returned "
                                    "no frame")

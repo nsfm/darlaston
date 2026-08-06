@@ -616,3 +616,30 @@ def test_a_live_preview_means_a_capture_can_happen(qapp):
             "frames are arriving but a capture would be refused"
     finally:
         session.stop()
+
+
+def test_a_camera_that_will_not_open_says_which_kind_of_no(monkeypatch):
+    """OpenCV reports failure without a reason, and the two likely
+    reasons want opposite advice: another program holding the device is
+    fixed by closing it, and a user outside the `video` group needs an
+    administrator. Guessing "busy" for both sends half the people down
+    the wrong path."""
+    import errno
+
+    from darlaston.camera import v4l2
+    from darlaston.camera.errors import CameraBusy, PermissionDenied
+
+    def refuse(exc):
+        def opener(*_a, **_kw):
+            raise exc
+        monkeypatch.setattr("builtins.open", opener)
+
+    refuse(PermissionError(errno.EACCES, "Permission denied"))
+    problem = v4l2._why_it_would_not_open("/dev/video9", "Some Camera")
+    assert isinstance(problem, PermissionDenied)
+    assert problem.steps, "told somebody they lack permission and not what to do"
+
+    refuse(OSError(errno.EBUSY, "Device or resource busy"))
+    problem = v4l2._why_it_would_not_open("/dev/video9", "Some Camera")
+    assert isinstance(problem, CameraBusy)
+    assert "another program" in problem.detail
