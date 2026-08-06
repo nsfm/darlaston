@@ -162,6 +162,28 @@ class CameraProfile:
     serial: str
     name: str = "Camera"
     model: str = ""
+    #: Who made it. Written into EXIF as Make, and empty when unknown --
+    #: raw processors key their camera profiles on Make and Model, so a
+    #: wrong one is worse than none.
+    make: str = ""
+    #: What the camera says about itself, hashed. The serial is a USB
+    #: port, so a *different* camera plugged into the same socket arrives
+    #: wearing the previous occupant's identity -- its name, and worse,
+    #: its measured geometry and response. This is how that is caught.
+    fingerprint: str = ""
+    #: What a profiling run measured, or empty until one has been done.
+    #:
+    #: `geometry` is one entry per resolution mode: its size, whether the
+    #: mode crops or also downscales, and where it sits. A mode is not
+    #: simply more or fewer pixels of the same view -- measured on one
+    #: camera, 640x480 covers *more* slide than 800x600 -- so everything
+    #: converting pixels to micrometres needs this rather than arithmetic.
+    #:
+    #: `response` is (control value, mean level) pairs. The exposure
+    #: control's *timing* is honest, but its brightness is not monotonic,
+    #: so a slider that promises brightness drives through this table.
+    geometry: list = field(default_factory=list)
+    response: list = field(default_factory=list)
     relay: str = ""              # travels with the camera, not the scope
     #: What the relay actually multiplies by. It sits between the objective
     #: and the sensor, so it belongs in the magnification chain like the
@@ -428,7 +450,8 @@ class Library:
         self.cameras.pop(serial, None)
         self.save()
 
-    def remember_camera(self, serial: str, model: str) -> CameraProfile:
+    def remember_camera(self, serial: str, model: str, make: str = "",
+                        fingerprint: str = "") -> CameraProfile:
         """First sight of a camera gets a provisional name the user can change."""
         if is_synthetic(serial):
             # The synthetic camera is a test fixture, not a device somebody
@@ -436,11 +459,44 @@ class Library:
             # then offered it as the camera to describe when nothing real
             # was plugged in.
             return CameraProfile(serial=serial, name=model or "Camera",
-                                 model=model)
+                                 model=model, make=make)
         if serial not in self.cameras:
             self.cameras[serial] = CameraProfile(
-                serial=serial, name=model or "Camera", model=model)
+                serial=serial, name=model or "Camera", model=model,
+                make=make, fingerprint=fingerprint)
             self.save()
+        else:
+            known = self.cameras[serial]
+            # A library written before fingerprints existed has none, so
+            # requiring both to be present let exactly the case this
+            # guards against through: the old entry adopted the new
+            # camera's fingerprint and reported itself satisfied for
+            # ever after. Where there is nothing to compare, the model
+            # string is what a legacy entry does have.
+            differs = (fingerprint != known.fingerprint
+                       if fingerprint and known.fingerprint
+                       else bool(model and known.model and model != known.model))
+            if differs:
+                # Same socket, different camera. Everything filed against
+                # this key belongs to the previous occupant -- including
+                # its measured geometry and response, which would then be
+                # applied to a camera they were never measured on. Start
+                # again rather than inherit.
+                self.cameras[serial] = CameraProfile(
+                    serial=serial, name=model or "Camera", model=model,
+                    make=make, fingerprint=fingerprint)
+                self.save()
+            else:
+                changed = {}
+                if make and not known.make:
+                    changed["make"] = make
+                if fingerprint and not known.fingerprint:
+                    changed["fingerprint"] = fingerprint
+                if model and known.model != model:
+                    changed["model"] = model
+                if changed:
+                    self.cameras[serial] = replace(known, **changed)
+                    self.save()
         return self.cameras[serial]
 
     def rename_camera(self, serial: str, name: str) -> None:

@@ -66,7 +66,7 @@ def _rows(setup, info=None, link=None, calibration=None) -> list[Row]:
     turret = []
     for i, o in enumerate(scope.turret.positions):
         if o is None:
-            turret.append("--")
+            turret.append("-")
         else:
             turret.append(f"[{o.label}]" if i == scope.turret.current else o.label)
     if turret:

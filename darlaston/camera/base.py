@@ -50,8 +50,12 @@ class CameraInfo:
     resolutions: tuple[Resolution, ...]
     max_bit_depth: int
     bayer_pattern: str
-    exposure_range_us: tuple[int, int]
-    gain_range_pct: tuple[int, int]
+    #: None when the device has no such control. Not a zero-width range
+    #: and not a guess: a UVC camera can genuinely offer neither, and a
+    #: slider over a control that does not exist is worse than no slider,
+    #: because it moves and nothing happens.
+    exposure_range_us: tuple[int, int] | None
+    gain_range_pct: tuple[int, int] | None
     #: Which vendor library answered. One family ships under a dozen
     #: brand names, so this is what to print rather than guessing.
     brand: str = ""
@@ -62,6 +66,10 @@ class CameraInfo:
     cooled: bool = False
     has_fan: bool = False
     software_trigger: bool = True
+    #: A hash of what the device publishes about itself. Distinguishes a
+    #: camera from a *different* one plugged into the same USB port,
+    #: which the port-based serial cannot.
+    fingerprint: str = ""
 
     @property
     def is_colour(self) -> bool:

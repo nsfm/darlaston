@@ -566,3 +566,129 @@ def test_a_slow_link_is_named_only_when_it_is_slow(qapp):
     assert fast.advice is None, "a healthy link has nothing to say"
     assert slow.advice not in text_of(fast)
     assert slow.advice not in text_of(None)
+
+
+def test_switching_cameras_keeps_the_session_everything_else_holds():
+    """Capture, calibration and the opportunist are each handed the
+    session when the window is built and hold it for the life of the
+    program. Swapping cameras by building a *new* session leaves all
+    three pointing at the old one, which by then has no backend -- so the
+    preview runs from the new camera and a capture reports "no camera
+    connected" from the old.
+
+    Real bug, and an old one: switching to the synthetic camera did it
+    too, before there was ever a second real camera to switch between.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import CameraSession
+
+    session = CameraSession(lambda: MockCamera(fps=30.0),
+                            on_status=lambda _s: None,
+                            on_frame=lambda _f: None)
+    held = session                      # what StillCapture would keep
+
+    session.retarget(lambda: MockCamera(fps=30.0))
+    assert session is held, "retarget replaced the object it was called on"
+    session.stop()
+
+
+def test_a_live_preview_means_a_capture_can_happen(qapp):
+    """The symptom, from the other end: whatever is streaming frames is
+    what a capture must find when it asks for a backend."""
+    import time
+
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import CameraSession
+
+    frames = []
+    session = CameraSession(lambda: MockCamera(fps=30.0),
+                            on_status=lambda _s: None,
+                            on_frame=frames.append)
+    session.start()
+    for _ in range(50):
+        if frames:
+            break
+        time.sleep(0.05)
+    try:
+        assert frames, "no preview to reason about"
+        assert session.backend is not None, \
+            "frames are arriving but a capture would be refused"
+    finally:
+        session.stop()
+
+
+def test_a_camera_that_will_not_open_says_which_kind_of_no(monkeypatch):
+    """OpenCV reports failure without a reason, and the two likely
+    reasons want opposite advice: another program holding the device is
+    fixed by closing it, and a user outside the `video` group needs an
+    administrator. Guessing "busy" for both sends half the people down
+    the wrong path."""
+    import errno
+
+    from darlaston.camera import v4l2
+    from darlaston.camera.errors import CameraBusy, PermissionDenied
+
+    def refuse(exc):
+        def opener(*_a, **_kw):
+            raise exc
+        monkeypatch.setattr("builtins.open", opener)
+
+    refuse(PermissionError(errno.EACCES, "Permission denied"))
+    problem = v4l2._why_it_would_not_open("/dev/video9", "Some Camera")
+    assert isinstance(problem, PermissionDenied)
+    assert problem.steps, "told somebody they lack permission and not what to do"
+
+    refuse(OSError(errno.EBUSY, "Device or resource busy"))
+    problem = v4l2._why_it_would_not_open("/dev/video9", "Some Camera")
+    assert isinstance(problem, CameraBusy)
+    assert "another program" in problem.detail
+
+
+def test_setting_a_control_does_not_wait_for_frames():
+    """Nate's report: a long exposure froze the whole window for 200 to
+    2000 milliseconds at a time.
+
+    `set_exposure` is a Qt slot on the interface thread, and it held the
+    session lock while reading frames to flush the stale ones. A frame
+    read costs a frame period, so at a half-second exposure three of them
+    is a second and a half of dead window -- measured at 1600 ms before
+    this, and 22 ms after.
+
+    Waiting for a control to land belongs to code that needs a settled
+    frame. `level()` does it, and nothing on the interface thread calls
+    that.
+    """
+    from darlaston.camera.v4l2 import V4L2Backend
+
+    reads = []
+
+    class _Cap:
+        def set(self, *_a):
+            return True
+
+        def get(self, *_a):
+            return 0.0
+
+        def read(self):
+            reads.append("read")
+            return True, None
+
+        def grab(self):
+            reads.append("grab")
+            return True
+
+    backend = V4L2Backend()
+    backend._cap = _Cap()
+    backend._controls = {
+        "Exposure Time, Absolute": {"min": 1, "max": 5000, "step": 1,
+                                    "default": 157, "name": "", "id": 0},
+        "Gain": {"min": 0, "max": 100, "step": 1, "default": 0,
+                 "name": "", "id": 0},
+    }
+
+    backend.set_exposure(500_000)
+    assert not reads, f"set_exposure read {len(reads)} frames on the caller"
+
+    backend.set_gain(150)
+    assert not reads, f"set_gain read {len(reads)} frames on the caller"

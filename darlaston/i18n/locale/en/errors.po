@@ -6,7 +6,7 @@
 #. words a person reads at midnight with a diatom under the objective.
 
 #. Not a failure. Nothing is plugged in yet, and the application is
-#. watching for one -- the state a demonstration starts in and the state
+#. watching for one - the state a demonstration starts in and the state
 #. it returns to when the camera is unplugged on purpose.
 msgid "session.waiting"
 msgstr "Waiting for a camera"

@@ -4,3 +4,14 @@
 #: these panels draw their own.
 msgid "panel.resize.tooltip"
 msgstr "Drag to resize"
+
+#. Shown on a control the camera does not have. Not a fault: cameras
+#. that expose nothing at all are real, and on a microscope the
+#. illumination is the right thing to adjust anyway.
+msgid "rail.no_exposure"
+msgstr ""
+"This camera does not let darlaston set exposure time.\n"
+"Set the brightness on the microscope instead."
+
+msgid "rail.no_gain"
+msgstr "This camera does not let darlaston control gain."

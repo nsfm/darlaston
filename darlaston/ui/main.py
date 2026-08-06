@@ -170,6 +170,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # can set it before ever seeing a slide.
         setup = self.toolbar.add_menu("Setup", _("menu.setup"))
         setup.addAction(_("menu.setup.microscopes"), self._open_microscopes)
+        # One entry, because description and selection are one question
+        # to the person asking it: which of these things is my camera,
+        # and what is it bolted to.
         setup.addAction(_("menu.setup.cameras"), self._open_cameras)
         # Attribution is the one part of a file's provenance the instrument
         # cannot supply. It used to have a menu to itself to keep it
@@ -532,7 +535,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_status(self, status: SessionStatus) -> None:
         info = status.info
         if info is not None and self.setup is None:
-            profile = self.library.remember_camera(info.serial, info.model)
+            profile = self.library.remember_camera(
+                info.serial, info.model, make=info.brand or "",
+                fingerprint=getattr(info, "fingerprint", ""))
             # The stand this camera was last on, if we know it. Without this
             # lookup the setup editor wrote to disk correctly and was then
             # ignored on every subsequent launch -- a configured Zeiss
@@ -545,6 +550,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sync_optovar()
             self._push_turret()
 
+        if info is not None:
+            self._fit_controls_to(info)
         self.strip.update_status(status, self.setup)
         self.strip.select_resolution(self.session.preview_resolution)
         self.strip.select_rate(self.session.framerate_cap)
@@ -588,14 +595,133 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text(f"{gain / 100:.1f}×")
         self._synced = True
 
+    def _measure_camera(self, parent=None) -> None:
+        """Run the profiling pass, and keep what it measured.
+
+        Only what it is confident about. A run against an unlit scope
+        measures nothing and says so, and writing that down as though it
+        were a result is how a wrong micrometres-per-pixel gets into
+        every file taken afterwards.
+        """
+        from dataclasses import asdict, replace
+
+        from .profile_ui import ProfileDialog
+
+        if self.setup is None:
+            return
+        dialog = ProfileDialog(self.session, self.setup.camera, parent or self)
+        dialog.exec()
+
+        changed = {}
+        if dialog.geometry_result:
+            trusted = [asdict(g) for g in dialog.geometry_result if g.trusted]
+            if trusted:
+                changed["geometry"] = trusted
+        if dialog.response_result is not None:
+            # The dialog already refused anything untrustworthy, and it
+            # said so on screen. Applying a second, different rule here
+            # is how a run gets announced as measured and stored as
+            # nothing.
+            changed["response"] = [list(p)
+                                   for p in dialog.response_result.points]
+        if not changed:
+            self._synced = False       # it still moved the camera
+            return
+
+        updated = replace(self.setup.camera, **changed)
+        # Through `file_camera`, not past it. Writing to `library.cameras`
+        # directly is the anti-pattern that function's docstring names.
+        self.library.file_camera(updated)
+        self.setup.camera = updated
+        # Measuring drove the exposure and the resolution all over the
+        # place. Even having put them back, the sliders should read from
+        # the camera rather than from what they last remembered.
+        self._synced = False
+
+    def _use_camera(self, key: str) -> None:
+        """Remember a choice and act on it."""
+        from ..camera.discovery import look
+
+        if not key or key == self.settings.camera_choice:
+            return
+        self.settings.camera_choice = key
+        for camera in look():
+            if camera.key == key:
+                # Kept alongside the port, so moving the cable is
+                # recoverable rather than a forgetting.
+                self.settings.camera_fingerprint = camera.fingerprint
+                self.settings.save()
+                self._open_camera(camera)
+                return
+        # Chosen but not found -- unplugged between the menu opening and
+        # the click. The fingerprint has to go with the key: left behind
+        # it describes the *previous* camera, and `choose` matches on it
+        # when the port key misses, so the next start would open that one
+        # and file it under this key's name.
+        self.settings.camera_fingerprint = ""
+        self.settings.save()
+
+    def _open_camera(self, camera) -> None:
+        """Swap to a different camera without a restart.
+
+        In place, through `retarget`. Building a *new* session here would
+        leave capture, calibration and the opportunist holding the old
+        stopped one -- they are each handed the session at construction
+        and keep it -- so a capture would report "no camera connected"
+        over a live preview.
+        """
+        from ..camera.discovery import backend_for, presence_for
+
+        self._synced = False
+        self._make_backend = lambda: backend_for(camera)
+        # And the liveness check, which is per device: without it the
+        # session goes on watching the camera we just switched away from.
+        self.session.retarget(self._make_backend, presence_for(camera))
+
+    def _fit_controls_to(self, info) -> None:
+        """Show only the controls this camera really has.
+
+        A slider over a control that does not exist is worse than no
+        slider, because it moves and nothing happens -- and the person
+        reasonably concludes the program is broken rather than the
+        camera. Measured on two cameras in one machine: one exposes
+        sixteen controls, the other none whatsoever.
+
+        Where the control exists, the widget takes the device's own
+        range. It used to assert 100..2000 on everything, which on a
+        camera whose gain runs 0..100 meant our floor was its ceiling:
+        the slider pinned gain at maximum and every movement clamped to
+        the same place, looking for all the world like a dead control.
+        """
+        for widget, span, why in (
+                (self.exposure, info.exposure_range_us, _("rail.no_exposure")),
+                (self.gain, info.gain_range_pct, _("rail.no_gain"))):
+            if span is None:
+                widget.setEnabled(False)
+                widget.setToolTip(why)
+                continue
+            widget.setEnabled(True)
+            widget.setToolTip("")
+            low, high = span
+            if widget is self.gain:
+                widget.setRange(int(low), int(high))
+            else:
+                # The exposure slider is logarithmic in microseconds, so
+                # the device's range has to be mapped through the same
+                # function the handle uses. It kept a hard-coded range
+                # before, which the docstring above already argued
+                # against for the other control.
+                widget.setRange(self._us_to_slider(int(low)),
+                                self._us_to_slider(int(high)))
+
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
-        self.session.stop()
+
         self._synced = False
-        self.session = CameraSession(lambda: MockCamera(fps=30.0),
-                                     self.bridge.status.emit,
-                                     self.pipeline.submit)  # always present
-        self.session.start()
+        # In place. Building a new session here left capture, calibration
+        # and the opportunist holding the old one, so the preview ran and
+        # a capture answered "no camera connected".
+        self.session.retarget(lambda: MockCamera(fps=30.0))
 
     # ---- controls --------------------------------------------------------
 
@@ -1705,7 +1831,15 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         current = self.setup.camera.serial if self.setup else None
         dialog = CameraDialog(self.library, current, self)
-        if not dialog.exec() or self.setup is None:
+        dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
+        accepted = dialog.exec()
+        # Selection first: a different camera means a different profile,
+        # and reloading the old one over the top of it would undo the
+        # thing that was just asked for.
+        if accepted and dialog.picked:
+            self._use_camera(dialog.picked)
+            return
+        if not accepted or self.setup is None:
             return
         updated = self.library.cameras.get(self.setup.camera.serial)
         if updated is not None:
@@ -2118,15 +2252,43 @@ def main() -> int:
             from ..camera.v4l2 import V4L2Backend
             return V4L2Backend()
         allow_synthetic = False
-        from ..camera.v4l2 import enumerate_cameras
-        presence = lambda: bool(enumerate_cameras())
+        # Any capture node at all, since `--usb` means "the first one".
+        # Asking `enumerate_cameras()` instead ran a full capability walk
+        # over every device on the machine once a second, for ever.
+        import glob as _glob
+        presence = lambda: bool(_glob.glob("/dev/video*"))
     else:
-        def make() -> CameraBackend:
-            from ..camera.toupcam import ToupcamBackend
-            return ToupcamBackend()
+        # No flag. Look at what is actually attached, across every access
+        # model, and open the likeliest -- or the one chosen last time.
+        # The ToupTek path is no longer the default by assumption; it is
+        # one of the things `look()` can find.
+        from ..camera.discovery import (backend_for, choose, look,
+                                        presence_for)
+
+        seen = look()
+        _kept = Settings.load()
+        picked = choose(seen, _kept.camera_choice, _kept.camera_fingerprint)
+        if picked is None and seen:
+            # Several attached and nobody has said which. Open the
+            # likeliest, so there is a picture to look at, and let the
+            # menu offer the rest. An empty window and a question, before
+            # the application has done anything useful, is a worse
+            # greeting than a picture and a way to change it.
+            picked = seen[0]
+
+        if picked is not None:
+            make: callable = lambda: backend_for(picked)
+            presence = presence_for(picked)
+        else:
+            # Nothing found at all. The ToupTek path is still the right
+            # thing to try: its own errors explain a missing SDK or an
+            # absent camera far better than silence would.
+            def make() -> CameraBackend:
+                from ..camera.toupcam import ToupcamBackend
+                return ToupcamBackend()
+            from ..camera import usb
+            presence = usb.present
         allow_synthetic = False
-        from ..camera import usb
-        presence = usb.present               # real hardware lives on the bus
 
     # Before anything opens a camera. Measured to be the right setting for
     # the batch jobs too, not just the preview -- see cpu.py.

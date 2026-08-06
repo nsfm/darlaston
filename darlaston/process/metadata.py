@@ -38,7 +38,13 @@ def ascii_safe(text: str) -> str:
 class CaptureMetadata:
     """Everything worth writing into the file."""
 
-    make: str = "ToupTek"
+    #: Empty when unknown, and never guessed. This defaulted to
+    #: "ToupTek" and nothing ever overrode it, so every file from every
+    #: camera claimed that manufacturer -- including a webcam. Raw
+    #: processors key their camera profiles on Make and Model, so the
+    #: wrong one is not merely untidy: it applies somebody else's colour
+    #: science to your slide.
+    make: str = ""
     model: str = ""
     unique_camera_model: str = ""
     serial: str = ""
@@ -196,6 +202,7 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         subsec = f"{when.microsecond // 10000:02d}"
 
     return CaptureMetadata(
+        make=cam.make,
         model=cam.model or cam.name,
         unique_camera_model=cam.model,
         serial=cam.serial,

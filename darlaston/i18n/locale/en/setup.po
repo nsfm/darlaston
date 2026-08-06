@@ -19,7 +19,7 @@ msgstr "empty"
 #. known. Two dashes rather than a word, because the box is 78 px wide and
 #. the whole row of them has to stay readable as a column.
 msgid "setup.objective.na.state.unknown"
-msgstr "--"
+msgstr "-"
 
 #. An example of an objective's optical design, in the box that asks for
 #. one. A real name rather than a description, because it is what is
@@ -325,3 +325,17 @@ msgstr "Last used on {name}."
 
 msgid "setup.cameras.bound.detail.unused"
 msgstr "Not yet used on a microscope."
+
+#. Marks a camera in the library that is plugged in right now. The list
+#. holds every camera ever seen, so saying which are present is the
+#. difference between a catalogue and a choice.
+msgid "setup.cameras.attached.tooltip"
+msgstr "Plugged in now. Everything else here is described but absent."
+
+msgid "setup.cameras.action.use"
+msgstr "Use this camera"
+
+msgid "setup.cameras.use.tooltip"
+msgstr ""
+"Switch the live view to this camera. Only for one that is plugged in; "
+"the rest are here so they can be described while they sit on the bench."

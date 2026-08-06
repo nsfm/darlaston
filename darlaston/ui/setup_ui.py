@@ -20,7 +20,7 @@ place to describe them rather than to pick between them.
 """
 from __future__ import annotations
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
 from ..session.model import (CameraProfile, Objective, ScopeProfile, Setup,
@@ -409,19 +409,30 @@ class CameraEditor(QtWidgets.QWidget):
                 w.blockSignals(False)
 
     def build(self) -> CameraProfile:
+        """The edited camera: what was typed, over everything else.
+
+        `replace` rather than a fresh `CameraProfile`, and that is the
+        whole point. Listing the fields to keep meant every field this
+        editor does not show was silently reset -- the manufacturer, the
+        fingerprint that stops one camera inheriting another's identity,
+        and the measured geometry and exposure response. Clicking Save,
+        or merely selecting a different row, threw away a ten-minute
+        profiling run. Anything added to `CameraProfile` in future would
+        have joined them without a word.
+        """
+        from dataclasses import replace
+
         base = self._camera or CameraProfile(serial="")
-        return CameraProfile(
-            serial=base.serial,
+        return replace(
+            base,
             # English on purpose, as the stand's default name is: it is the
             # model's own default and it goes to the library file, where a
             # camera would otherwise be named after whatever language
             # happened to be set the day it was last edited.
             name=self.name.text().strip() or "Camera",
-            model=base.model,
             relay=self.relay.text().strip(),
             relay_factor=self.relay_factor.value(),
-            pixel_um=self.pixel_um.value(),
-            last_scope=base.last_scope)
+            pixel_um=self.pixel_um.value())
 
 
 class _LibraryDialog(QtWidgets.QDialog):
@@ -600,18 +611,46 @@ class MicroscopeDialog(_LibraryDialog):
         self.accept()
 
 
-class CameraDialog(_LibraryDialog):
-    """The cameras you own.
+def _present_dot() -> QtGui.QIcon:
+    """The mark for a camera that is plugged in right now."""
+    size = 10
+    pip = QtGui.QPixmap(size, size)
+    pip.fill(QtGui.QColor(0, 0, 0, 0))
+    p = QtGui.QPainter(pip)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    glow = QtGui.QColor(theme.BRASS)
+    glow.setAlpha(70)
+    p.setBrush(glow)
+    p.drawEllipse(0, 0, size, size)
+    p.setBrush(QtGui.QColor(theme.BRASS))
+    p.drawEllipse(2, 2, size - 4, size - 4)
+    p.end()
+    return QtGui.QIcon(pip)
 
-    There is no picker here on purpose. Which camera is in front of you is
-    not a preference -- it is whichever one is plugged in, matched by its
-    serial when it arrives. This is where you say what is bolted to each.
+
+class CameraDialog(_LibraryDialog):
+    """The cameras you own, which of them to use, and what they do.
+
+    This used to say there was no picker here on purpose: which camera is
+    in front of you is not a preference, it is whichever one is plugged
+    in. That was true of a bench with one camera on it. It stops being
+    true on a laptop with a built-in camera, an infrared sensor beside
+    it, a USB camera on the microscope and a machine-vision camera in a
+    drawer -- all attached at once, all real, only one of them the answer.
+
+    So description and selection live together, because a person thinking
+    "camera" should not have to know which of those two ideas they want.
+    The list says which are attached; choosing one that is picks it.
     """
 
     def __init__(self, library, current: str | None = None,
                  parent=None) -> None:
         super().__init__(library, parent, width=520)
         self.setWindowTitle(_("setup.cameras.title"))
+        #: Which camera the session actually has open, as opposed to
+        #: merely attached. Measuring needs to drive it.
+        self._open_serial = current
 
         self.editor = CameraEditor()
         self.editor.changed.connect(self._refresh)
@@ -631,8 +670,26 @@ class CameraDialog(_LibraryDialog):
         self.remove = QtWidgets.QPushButton(_("setup.cameras.action.remove"))
         self.remove.setToolTip(_("setup.cameras.remove.tooltip"))
         self.remove.clicked.connect(self._remove)
+
+        # Only useful for a camera that is actually attached, so it says
+        # so rather than failing when pressed.
+        self.use = QtWidgets.QPushButton(_("setup.cameras.action.use"))
+        self.use.setToolTip(_("setup.cameras.use.tooltip"))
+        self.use.clicked.connect(self._use)
+        self.use.setEnabled(False)
+
+        # Only for the camera that is actually open, since measuring
+        # means driving it.
+        self.profile = QtWidgets.QPushButton(
+            _("setup.cameras.action.profile"))
+        self.profile.setToolTip(_("setup.cameras.profile.tooltip"))
+        self.profile.clicked.connect(self.measure_requested)
+        self.profile.setEnabled(False)
+
         list_buttons = QtWidgets.QHBoxLayout()
         list_buttons.setSpacing(6)
+        list_buttons.addWidget(self.use)
+        list_buttons.addWidget(self.profile)
         list_buttons.addWidget(self.remove)
 
         left = QtWidgets.QVBoxLayout()
@@ -661,6 +718,34 @@ class CameraDialog(_LibraryDialog):
         self._reload(current)
         self.setStyleSheet(theme.stylesheet())
 
+    #: Emitted when somebody asks to measure the open camera. The window
+    #: owns the session, so it runs the measurement; this only asks.
+    measure_requested = QtCore.Signal()
+
+    #: Set when a camera is chosen, and read by the caller afterwards.
+    #: This dialog does not open cameras: it is a dialog.
+    picked: str = ""
+
+    def _attached(self) -> dict:
+        """Which of these are plugged in right now, under the same key.
+
+        Empty on anything that goes wrong -- a library that cannot say
+        what is attached is still a perfectly good library.
+        """
+        try:
+            from ..camera.discovery import look
+            return {c.key.split(":", 1)[1]: c
+                    for c in look() if ":" in c.key}
+        except Exception:
+            return {}
+
+    def _use(self) -> None:
+        found = self._attached().get(self._selected or "")
+        if found is None:
+            return
+        self.picked = found.key
+        self._save()
+
     def _remove(self) -> None:
         if not self._selected:
             return
@@ -679,8 +764,16 @@ class CameraDialog(_LibraryDialog):
                          key=lambda c: c.display)
         self.list.blockSignals(True)
         self.list.clear()
+        attached = self._attached()
         for camera in cameras:
             item = QtWidgets.QListWidgetItem(camera.display)
+            if camera.serial in attached:
+                # A brass dot, which is already what this program means
+                # by "state, at a glance". The list is 170 px wide and
+                # the word "attached" does not fit in it; a dot does, and
+                # is read faster anyway.
+                item.setIcon(_present_dot())
+                item.setToolTip(_("setup.cameras.attached.tooltip"))
             item.setData(QtCore.Qt.ItemDataRole.UserRole, camera.serial)
             self.list.addItem(item)
         if cameras:
@@ -690,7 +783,8 @@ class CameraDialog(_LibraryDialog):
         self.list.blockSignals(False)
 
         known = bool(cameras)
-        for w in (self.list, self.editor, self.bound, self.remove):
+        for w in (self.list, self.editor, self.bound, self.remove,
+                  self.use, self.profile):
             w.setVisible(known)
         self.empty.setVisible(not known)
         if known:
@@ -716,6 +810,10 @@ class CameraDialog(_LibraryDialog):
         self._refresh()
 
     def _refresh(self) -> None:
+        here = bool(self._selected) and self._selected in self._attached()
+        self.use.setEnabled(here)
+        # Measuring drives the camera, so only the one that is open.
+        self.profile.setEnabled(here and self._selected == self._open_serial)
         if not self._selected:
             self.bound.clear()
             return

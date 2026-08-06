@@ -1,0 +1,30 @@
+# Choosing which camera is the one on the microscope. Only ever shown
+# when there is more than one, because with one it is not a question.
+
+msgid "camera.pick.title"
+msgstr "Choose a camera"
+
+msgid "camera.pick.heading"
+msgstr "Which camera is on the microscope?"
+
+#. Says why the list contains things that are obviously not microscope
+#. cameras: because hiding them would eventually hide the right one.
+msgid "camera.pick.body"
+msgstr ""
+"Every camera darlaston can see is listed here."
+
+msgid "camera.pick.size"
+msgstr "{width}×{height} ({mp} MP)"
+
+msgid "camera.pick.controls"
+msgstr "{n} controls"
+
+#. Not a fault. Cameras that expose nothing at all are real and not rare,
+#. and the honest thing is to say so before somebody picks one and
+#. wonders why the exposure slider does nothing.
+msgid "camera.pick.no_controls"
+msgstr "no exposure or gain control"
+
+msgid "camera.pick.compressed"
+msgstr "compressed frames only"
+

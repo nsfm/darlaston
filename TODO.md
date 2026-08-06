@@ -213,6 +213,23 @@
 - [ ] Re-measure sensor dust after cleaning the C-mount adapter. Baseline is
       0.93% overall, 1.02% at fine scale, 57 features near the cover glass.
 
+- [ ] **Stop the preview during a long timelapse.** Nate's idea, and the
+      reasoning is sound: a 30 fps preview between shots that are minutes
+      apart is an enormous amount of readout for nothing, and readout is
+      what heats a sensor. Dark current roughly doubles every 6-8 C, so
+      the preview may be *causing* the drift the timelapse warning
+      describes. Wake the stream only shortly before each frame, and show
+      the last capture in the meantime rather than a live view.
+
+      Cheap to do: a mode change measured about a second, which is
+      nothing against a minute-long interval. Two things to check first
+      -- the stage tracker feeds on preview frames, which is fine for a
+      timelapse where nothing moves but means the hold-still guard is
+      unavailable; and stopping a UVC stream may drop the manual exposure
+      and white balance we set on open, so they would need re-applying
+      each time. Worth measuring the actual sensor warming before and
+      after, since the whole premise is that it matters.
+
 ## Unverified
 
 - [ ] **? `imagepro_stitch` on sparse darkfield.** The largest open question in

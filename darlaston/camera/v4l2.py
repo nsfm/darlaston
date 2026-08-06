@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import fcntl
 import glob
+import os
 import struct
 import threading
 import time
@@ -41,7 +42,7 @@ import numpy as np
 
 from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
-from .errors import CameraBusy, NoCameraFound
+from .errors import CameraBusy, NoCameraFound, PermissionDenied
 
 #: Raw Bayer fourccs, so a device that *does* offer one can be recognised
 #: and reported. The Imaging Source's industrial cameras are the realistic
@@ -59,6 +60,36 @@ _VIDIOC_ENUM_FMT = (3 << 30) | (64 << 16) | (ord("V") << 8) | 2
 _VIDIOC_ENUM_FRAMESIZES = (3 << 30) | (44 << 16) | (ord("V") << 8) | 74
 _CAP_VIDEO_CAPTURE = 0x00000001
 _FRMSIZE_DISCRETE = 1
+_VIDIOC_QUERYCTRL = (3 << 30) | (68 << 16) | (ord("V") << 8) | 36
+#: Walk the control list rather than guessing at identifiers.
+_CTRL_FLAG_NEXT = 0x80000000
+_CTRL_FLAG_DISABLED = 0x0001
+
+#: Formats we will not stream, whatever the device says it can do.
+#:
+#: H.264 is the trap: OpenCV accepts `CAP_PROP_FOURCC` for it and returns
+#: True, then hands back frames nothing can decode. Measured on a
+#: 0ac8:3420, which advertises H264 first and would therefore win any
+#: naive "take the first format" negotiation.
+REFUSED_FOURCC = ("H264", "HEVC", "MPG4", "MJPGH264")
+
+#: Thrown away after opening, and after any control change. The first
+#: frame off a freshly opened UVC camera can be garbage -- measured at a
+#: mean of 254 where the settled value was 89 -- and an exposure change
+#: takes exactly two frames to appear: frame 0 carries the old value,
+#: frame 1 is transitional, frame 2 onward is stable. Repeatable in both
+#: directions across four transitions, so the number is measured rather
+#: than picked.
+SETTLE_FRAMES = 3
+WARMUP_FRAMES = 8
+
+#: Preferred in this order. Uncompressed first, because MJPG chroma
+#: subsampling and ringing land exactly on the fine detail this program
+#: exists to record -- a diatom's striae are a few pixels wide. The cost
+#: is measured and real: on a USB 2.0 industrial camera at 1920x1080,
+#: YUYV gave 5.0 fps against MJPG's 9.3. So the *preview* may still
+#: choose speed; this is the order for a capture.
+PREFERRED_FOURCC = ("Y16 ", "GREY", "YUYV", "UYVY", "YU12", "MJPG")
 
 
 def _fourcc(value: int) -> str:
@@ -125,22 +156,255 @@ def _sizes(fh, pixelformat: int, limit: int = 24) -> list[tuple[int, int]]:
     return sorted(set(found), reverse=True)
 
 
+def identity(node: str) -> str:
+    """A key for this camera that survives a replug.
+
+    `/dev/videoN` renumbers, and the cameras that most need identifying
+    are the ones least able to say who they are: measured on two here,
+    one reports a serial of "0000" and the other reports no serial, no
+    manufacturer and no product string at all. So the serial is not
+    usable and the name is not unique.
+
+    The physical port is. `bus_info` from QUERYCAP is the same thing
+    `/dev/v4l/by-path` encodes, and it holds across replug and reboot for
+    as long as the camera stays in the same socket. Moving the cable
+    breaks it, which is the honest limit -- and the reason the caller
+    should offer "is this the one you called X?" rather than silently
+    forgetting.
+    """
+    try:
+        fh = open(node, "rb", buffering=0)
+    except OSError:
+        return node
+    with fh:
+        buf = bytearray(104)
+        try:
+            fcntl.ioctl(fh, _VIDIOC_QUERYCAP, buf, True)
+        except OSError:
+            return node
+        bus = bytes(buf[48:80]).split(b"\0")[0].decode("ascii", "replace")
+    if not bus:
+        return node
+
+    # The port alone is not unique. One camera can publish several
+    # capture nodes on one port -- measured on a laptop whose built-in
+    # camera and its infrared face-unlock sensor share a port and differ
+    # only by USB interface. Keyed on the port alone, remembering one
+    # could open the other, and an infrared sensor is a memorable thing
+    # to find yourself looking through.
+    return _key_from(bus, node)
+
+
+def _why_it_would_not_open(node: str, card: str) -> Exception:
+    """Ask the device directly, since OpenCV only says no.
+
+    `cv2.VideoCapture` reports failure without a reason, and the two
+    likely reasons want opposite advice: another program holding the
+    camera is fixed by closing that program, and a user who is not in the
+    `video` group is fixed by an administrator. Guessing "busy" for both
+    sends half the people down the wrong path.
+
+    Measured in practice: guvcview holding the device produced exactly
+    this failure, and so does a fresh Linux install where nobody has been
+    added to the group yet.
+    """
+    try:
+        open(node, "rb", buffering=0).close()
+    except PermissionError:
+        return PermissionDenied(
+            f"{card} at {node} is present, but this user may not open it.")
+    except OSError as why:
+        import errno
+
+        if why.errno == errno.EBUSY:
+            return CameraBusy(
+                f"{card} at {node} is held by another program.")
+        return CameraBusy(f"{card} at {node} would not open: {why}")
+    # The device opens fine on its own, so whatever stopped OpenCV was
+    # not ownership. Say so rather than inventing a cause.
+    return CameraBusy(
+        f"{card} at {node} opened, but no video could be started from it.")
+
+
+def fingerprint(found: dict) -> str:
+    """A short hash of everything this camera says about itself.
+
+    Not a serial. Two identical cameras produce the same fingerprint, so
+    this identifies a *model in a configuration* rather than a specific
+    device -- which is exactly what is wanted alongside the port, because
+    the port identifies the instance and nothing identifies both.
+
+    The point is the case where somebody moves the cable. The port key
+    changes, the camera looks like a stranger, and the description they
+    wrote is orphaned. With a fingerprint we can say "this is the same
+    kind of camera you called X, on a different port" and offer to carry
+    the description over -- which is a question worth asking, where
+    silently forgetting is not.
+
+    Built from what the device publishes and a person cannot change: its
+    name, its formats, its sizes, and the names of its controls. Values
+    are deliberately excluded, since exposure and gain move constantly
+    and a fingerprint that changes when you adjust a slider is no use.
+    """
+    import hashlib
+
+    parts = [
+        found.get("card", ""),
+        found.get("driver", ""),
+        ",".join(sorted(found.get("formats") or [])),
+        ",".join(f"{w}x{h}" for w, h in sorted(found.get("sizes") or [])),
+        ",".join(sorted(c["name"] for c in (found.get("controls") or []))),
+    ]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
+def _key_from(bus: str, node: str) -> str:
+    """Compose the key. Separated out so it can be asked directly.
+
+    Testing this through `enumerate_cameras` meant testing it against
+    whatever happened to be plugged in, which is not a test.
+    """
+    interface = _interface_of(node)
+    if interface:
+        return f"{bus}:{interface}"
+    # Sysfs would not say. Fall back to the node, which renumbers across
+    # reboots and is therefore a worse key -- but never a *colliding*
+    # one. Two cameras sharing a key is not instability, it is opening
+    # the wrong camera, and the wrong camera here is somebody's face.
+    return f"{bus}:{os.path.basename(node)}"
+
+
+def _manufacturer(node: str) -> str:
+    """The USB manufacturer string, if the device publishes one."""
+    import os
+
+    name = os.path.basename(node)
+    try:
+        device = os.path.realpath(f"/sys/class/video4linux/{name}/device")
+        with open(os.path.join(os.path.dirname(device), "manufacturer")) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _interface_of(node: str) -> str:
+    """Which USB interface this node belongs to, from sysfs.
+
+    The device link for /dev/videoN ends in the interface address, like
+    `1-8:1.0` for the colour camera and `1-8:1.2` for the infrared one on
+    the same physical camera.
+    """
+    import os
+
+    name = os.path.basename(node)
+    try:
+        target = os.readlink(f"/sys/class/video4linux/{name}/device")
+    except OSError:
+        return ""
+    tail = os.path.basename(target.rstrip("/"))
+    return tail.split(":")[-1] if ":" in tail else ""
+
+
+def controls(node: str) -> list[dict]:
+    """Every control the driver advertises for this device.
+
+    Empty is a real answer, not a failure. Cameras that expose nothing at
+    all exist and are not rare: measured on a 0ac8:3420, whose USB
+    descriptors declare `bmControls = 0x0000` for both the camera
+    terminal and the processing unit, so `uvcvideo` registers no controls
+    at probe time and no amount of asking will produce any. A second
+    camera on the same machine, costing less, advertises sixteen.
+
+    Which is the whole reason this exists: capability has to be asked
+    for, per device, at runtime. It cannot be assumed from the class of
+    device, the price, or the vendor.
+    """
+    found = []
+    try:
+        fh = open(node, "rb", buffering=0)
+    except OSError:
+        return found
+    with fh:
+        cid = _CTRL_FLAG_NEXT
+        while len(found) < 128:
+            buf = bytearray(68)
+            struct.pack_into("<I", buf, 0, cid)
+            try:
+                fcntl.ioctl(fh, _VIDIOC_QUERYCTRL, buf, True)
+            except OSError:
+                break            # EINVAL ends the walk; anything else, stop
+            got, kind = struct.unpack_from("<II", buf, 0)
+            name = bytes(buf[8:40]).split(b"\0")[0].decode("ascii", "replace")
+            low, high, step, default, flags = struct.unpack_from("<iiiiI",
+                                                                 buf, 40)
+            if not flags & _CTRL_FLAG_DISABLED and not name.endswith(
+                    "Controls"):
+                # The "User Controls"/"Camera Controls" entries are class
+                # headers, not settings. Keeping them would put two
+                # unusable rows in front of somebody.
+                found.append({"id": got, "name": name, "min": low,
+                              "max": high, "step": step, "default": default})
+            cid = got | _CTRL_FLAG_NEXT
+    return found
+
+
+def usable_formats(found: dict) -> list[str]:
+    """The device's formats, best first, with the undecodable ones gone."""
+    offered = [f for f in found["formats"] if f.strip() not in REFUSED_FOURCC]
+    rank = {name.strip(): i for i, name in enumerate(PREFERRED_FOURCC)}
+    return sorted(offered, key=lambda f: rank.get(f.strip(), 99))
+
+
+def _detail(found: dict) -> dict:
+    """Everything about a device that costs an ioctl to learn.
+
+    Split out from the enumeration so a single node can be described the
+    same way, without walking every other camera on the machine to do it.
+    """
+    node = found["node"]
+    found["controls"] = controls(node)
+    found["usable"] = usable_formats(found)
+    found["key"] = identity(node)
+    found["fingerprint"] = fingerprint(found)
+    return found
+
+
 def enumerate_cameras() -> list[dict]:
-    """Every V4L2 capture device on the machine, largest first."""
+    """Every V4L2 capture device, the biggest sensor first.
+
+    Sorted by what the device can actually deliver, not by node number.
+    It used to claim "largest first" in this docstring and return them in
+    `/dev/videoN` order, which on a real machine put a 1920x1080 camera
+    behind a 640x360 infrared face-unlock sensor -- so anything picking
+    the first entry picked the wrong device.
+    """
     out = []
     for node in sorted(glob.glob("/dev/video*")):
         found = describe(node)
-        if found and found["sizes"]:
-            out.append(found)
+        if not (found and found["sizes"]):
+            continue
+        out.append(_detail(found))
+    # Biggest first, and a device that offers nothing we can decode goes
+    # last however large its sensor.
+    out.sort(key=lambda d: (bool(d["usable"]),
+                            d["sizes"][0][0] * d["sizes"][0][1]), reverse=True)
     return out
 
 
 class V4L2Backend(CameraBackend):
     """A UVC camera. Colour in, colour out, and honest about it."""
 
-    def __init__(self, index: int = 0, node: str | None = None) -> None:
+    def __init__(self, index: int = 0, node: str | None = None,
+                 key: str = "", fingerprint: str = "") -> None:
         self._node = node
         self._index = index
+        #: Who this backend is for, as opposed to where it last was. A
+        #: node number is a position in a list the kernel rebuilds on
+        #: every replug; these survive it. Empty means "whatever is at
+        #: `node`", which is what a bare backend has always meant.
+        self._key = key
+        self._fingerprint = fingerprint
         self._cap: cv2.VideoCapture | None = None
         self._info: CameraInfo | None = None
         self._pool: BufferPool | None = None
@@ -150,21 +414,74 @@ class V4L2Backend(CameraBackend):
         self._seq = 0
         self._exposure_us = 20000
         self._gain_pct = 100
+        #: Filled in by `open`, from the driver. Empty means the device
+        #: has told us it offers nothing, which is a real answer.
+        self._controls: dict = {}
+        self._usable: list = []
+        #: Control changes waiting for the reader thread. Guarded by its
+        #: own lock, which is only ever held for a dictionary write --
+        #: never across a frame read, which is the whole point.
+        self._pending: dict = {}
+        self._pending_lock = threading.Lock()
         self._current = 0
 
     # ---- lifecycle -------------------------------------------------------
 
+    def _is_it(self, found: dict) -> bool:
+        """Is the device described here the one this backend is for?"""
+        if self._key and found.get("key") != self._key:
+            return False
+        if self._fingerprint and found.get("fingerprint") != self._fingerprint:
+            return False
+        return True
+
+    def _locate(self) -> dict | None:
+        """Which node this camera is on *now*, which is not always where
+        it was.
+
+        Node numbers renumber. Pulling a camera out and putting it back
+        can move it, or move everything else around it, and this backend
+        is rebuilt on every reconnect from a record captured before that
+        happened. Holding the old number meant a session that reconnected
+        for ever to a device no longer there -- or, worse, opened whatever
+        had taken the number.
+
+        The remembered node is still the first guess: it is nearly always
+        right and costs one ioctl against a full enumeration's per-device
+        format walk. It is only checked, not trusted.
+        """
+        wanted = self._key or self._fingerprint
+        if self._node:
+            found = describe(self._node)
+            if found and found["sizes"]:
+                found = _detail(found)
+                if not wanted or self._is_it(found):
+                    return found
+            if not wanted:
+                return None            # a bare node backend; nothing to search
+        elif not wanted:
+            return (enumerate_cameras() or [None])[self._index]
+
+        seen = enumerate_cameras()
+        for found in seen:
+            if self._key and found.get("key") == self._key:
+                return found
+        # The port key has moved too, so the cable is in a different
+        # socket. A device publishing the same name, formats, sizes and
+        # controls is that camera -- unless there are two of them, in
+        # which case guessing is worse than waiting.
+        same = [f for f in seen
+                if self._fingerprint and f.get("fingerprint") == self._fingerprint]
+        return same[0] if len(same) == 1 else None
+
     def open(self) -> CameraInfo:
-        found = (describe(self._node) if self._node
-                 else (enumerate_cameras() or [None])[self._index])
+        found = self._locate()
         if not found:
             raise NoCameraFound("USB camera")
         self._node = found["node"]
         self._cap = cv2.VideoCapture(self._node, cv2.CAP_V4L2)
         if not self._cap.isOpened():
-            raise CameraBusy(
-                f"{found['card']} at {self._node} is present but would "
-                "not open.")
+            raise _why_it_would_not_open(self._node, found["card"])
         # MJPEG where offered: a 1600x1200 YUYV stream is 46 MB/s and will
         # not fit USB 2.0, which is what most of these cameras are on.
         if "MJPG" in found["formats"]:
@@ -177,18 +494,117 @@ class V4L2Backend(CameraBackend):
             # these cameras rarely publish it. Zero means "unknown", and
             # the scale bar refuses to draw rather than inventing one.
             Resolution(i, w, h, 0.0) for i, (w, h) in enumerate(sizes))
-        self._select(0)
+        # What this device really offers, rather than what a UVC camera
+        # might. Measured on two cameras in one machine: sixteen controls
+        # on one, none whatsoever on the other. Claiming a range we
+        # cannot drive puts a slider in front of somebody that moves and
+        # does nothing.
+        self._controls = {c["name"]: c
+                          for c in (found.get("controls") or controls(self._node))}
+        self._usable = found.get("usable") or usable_formats(found)
+        self._settle()
+
         self._info = CameraInfo(
-            model=found["card"], serial=self._node,
+            model=found["card"],
+            # The stable port key, not /dev/videoN. The library files
+            # cameras by serial, and a node number renumbers across
+            # reboots -- so a described camera came back as a stranger
+            # and was filed again under a new name. This is the same key
+            # the picker uses, so the two agree about what a camera is.
+            serial=found.get("key") or identity(self._node),
             resolutions=resolutions, max_bit_depth=8,
             bayer_pattern="",              # decoded already; no CFA exists
-            exposure_range_us=(100, 1_000_000),
-            gain_range_pct=(100, 1600),
-            brand=found["driver"],
+            exposure_range_us=self._exposure_range(),
+            gain_range_pct=self._gain_range(),
+            # Who made it, not which kernel module drives it. Read from
+            # the USB descriptor, and frequently absent or a placeholder
+            # -- one camera here says "HD Camera Manufacturer" -- but a
+            # placeholder the device actually published beats a name we
+            # invented for it.
+            brand=_manufacturer(self._node),
             raw_capable=bool(found["raw"]),
             software_trigger=True,
+            fingerprint=found.get("fingerprint", ""),
         )
+
+        # After `_info`, deliberately. `_select` reads the resolution list
+        # from it, so choosing a mode first fell through to a hard-coded
+        # 1280x720 while recording index 0 -- and every frame was then
+        # upscaled to a full-resolution pool.
+        #
+        # The largest mode is the preview because these modes *crop*: at
+        # 1280x720 you see the middle 44% of what a capture records,
+        # which is the wrong way round for composing a shot.
+        self._select(0)
         return self._info
+
+    def _has(self, *names: str) -> dict | None:
+        for name in names:
+            found = self._controls.get(name)
+            if found:
+                return found
+        return None
+
+    def _exposure_range(self) -> tuple[int, int] | None:
+        """In microseconds, from the control's own limits.
+
+        UVC reports exposure in 100 us units, so the driver's 1..5000
+        becomes 100 us to half a second. Taking the device's word for it
+        beats the range we used to assert, which was the same on every
+        camera and true of none.
+        """
+        found = self._has("Exposure Time, Absolute", "Exposure (Absolute)")
+        if not found:
+            return None
+        return (max(1, found["min"]) * 100, max(1, found["max"]) * 100)
+
+    def _gain_range(self) -> tuple[int, int] | None:
+        """As a percentage where 100 is the device's own floor.
+
+        UVC gain units are device-defined and mean nothing across
+        cameras: this one runs 0..100 and measured 2.8x end to end, so
+        the number is a position on its scale rather than a true
+        multiplier. Said here rather than converted, because inventing a
+        multiplier we have not measured would be worse than a scale that
+        is honestly just a scale.
+        """
+        found = self._has("Gain")
+        if not found:
+            return None
+        return (100, 100 + max(1, found["max"] - found["min"]))
+
+    def _settle(self) -> None:
+        """Put the camera into a known state, and let it get there.
+
+        Three things, each learned the hard way on real hardware:
+
+        * **Manual exposure**, where the device has it. Automatic
+          exposure re-exposes between frames, which shows up as tiles
+          that do not match across a mosaic and slices that do not match
+          within a stack.
+        * **Auto white balance off.** It adjusts channel gains underneath
+          a measurement. It also has no business anywhere near a
+          calibration sweep, and it is what makes a tungsten-lit field
+          come out yellow.
+        * **Discard the first frames.** The first frame after opening can
+          be a blown or empty one -- measured at 254 mean where the
+          settled value was 89 -- and after any control change the next
+          two frames still carry the old setting.
+        """
+        if self._cap is None:
+            return
+        try:
+            if self._has("Auto Exposure"):
+                self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)     # manual
+            if self._has("White Balance, Automatic", "White Balance Temperature, Auto"):
+                self._cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+        except Exception:
+            pass
+        for _ in range(WARMUP_FRAMES):
+            try:
+                self._cap.grab()
+            except Exception:
+                break
 
     def close(self) -> None:
         self.stop_stream()
@@ -202,6 +618,37 @@ class V4L2Backend(CameraBackend):
         return self._info
 
     # ---- settings --------------------------------------------------------
+
+    def _format(self) -> str:
+        """The pixel format the device is delivering right now."""
+        got = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+        return "".join(chr((got >> (8 * i)) & 0xFF) for i in range(4))
+
+    def _set_format(self, fourcc: str) -> str:
+        """Ask for a pixel format, and report what was actually granted.
+
+        Reported rather than assumed, because `set` returns True for
+        formats the device will not really deliver -- measured on a
+        camera that accepts H264 and then hands back frames nothing can
+        decode.
+        """
+        self._cap.set(cv2.CAP_PROP_FOURCC,
+                      cv2.VideoWriter_fourcc(*fourcc.ljust(4)[:4]))
+        return self._format()
+
+    def best_capture_format(self) -> str:
+        """The best format this camera will really give us for a capture.
+
+        Uncompressed if there is any, because MJPG subsampling and
+        ringing land exactly on detail a few pixels wide, which is what a
+        diatom's striae are. It costs frame rate -- measured at 6 fps
+        against MJPG's 30 at 1920x1080 -- which is why this is only used
+        for captures and the preview stays fast.
+        """
+        for name in (self._usable or ["MJPG"]):
+            if name.strip() != "MJPG":
+                return name
+        return "MJPG"
 
     def _select(self, index: int) -> None:
         if self._info is not None:
@@ -218,33 +665,93 @@ class V4L2Backend(CameraBackend):
         if streaming:
             self.stop_stream()
         with self._lock:
+            if self._cap is None:
+                return         # closed underneath us; not an error
             self._select(index)
         if streaming and on_frame is not None:
             self.start_stream(on_frame)
 
-    def set_exposure(self, microseconds: int) -> None:
-        self._exposure_us = int(microseconds)
+    def _apply_pending(self) -> None:
+        """Write any queued control changes. Reader thread only."""
+        with self._pending_lock:
+            pending, self._pending = self._pending, {}
+        if not pending:
+            return
         with self._lock:
             if self._cap is None:
                 return
-            # V4L2 exposure is in 100 us units, and it is only writable
-            # once auto-exposure is off -- which is control 1 (manual) on
-            # UVC, not 0. Setting the value first silently does nothing.
+            for what, value in pending.items():
+                try:
+                    self._write_control(what, value)
+                except Exception:
+                    pass          # a dropped link surfaces elsewhere
+
+    def _queue(self, what: str, value) -> None:
+        """Ask for a control change without waiting for one.
+
+        Always queued first, under the small lock, so there is no window
+        where a stream starting or stopping loses the value or sends the
+        caller to the capture lock -- which the reader holds across a
+        whole frame read, and which is the freeze this exists to avoid.
+
+        Only when no reader is running does the caller apply it, and by
+        then the value is already recorded, so the two paths cannot
+        disagree about what was asked for.
+        """
+        with self._pending_lock:
+            self._pending[what] = value
+        if not self._running.is_set():
+            self._apply_pending()
+
+    def _write_control(self, what: str, value) -> None:
+        """The actual writes. Called holding `_lock`, never from the UI."""
+        if what == "exposure":
+            # Only writable once auto-exposure is off -- control 1
+            # (manual) on UVC, not 0. Setting the value first silently
+            # does nothing.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
-            self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, microseconds // 100))
+            self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, int(value) // 100))
+        elif what == "gain":
+            found = self._has("Gain")
+            if not found:
+                return
+            level = found["min"] + max(0, int(value) - 100)
+            self._cap.set(cv2.CAP_PROP_GAIN,
+                          min(found["max"], max(found["min"], level)))
+
+    def set_exposure(self, microseconds: int) -> None:
+        self._exposure_us = int(microseconds)
+        self._queue("exposure", int(microseconds))
 
     def set_gain(self, percent: int) -> None:
+        """Map our percentage onto whatever scale this device uses.
+
+        Queued rather than written: this is reached from a slider, and
+        the reader holds the capture for a whole frame period at a time.
+        """
         self._gain_pct = int(percent)
-        with self._lock:
-            if self._cap is not None:
-                self._cap.set(cv2.CAP_PROP_GAIN, percent)
+        self._queue("gain", int(percent))
+
+    def _flush(self) -> None:
+        """Throw away the frames still carrying the old setting."""
+        for _ in range(SETTLE_FRAMES):
+            try:
+                self._cap.grab()
+            except Exception:
+                return
 
     def get_exposure(self) -> int:
-        with self._lock:
-            if self._cap is None:
-                return self._exposure_us
-            value = self._cap.get(cv2.CAP_PROP_EXPOSURE)
-        return int(value * 100) if value and value > 0 else self._exposure_us
+        """What we last asked for, not what the device says.
+
+        Asking the device means taking the capture lock, which the reader
+        holds for a whole frame period -- so this froze the window from
+        two Qt slots, exactly as the setters used to. It was also called
+        once per frame from the reader itself, a lock round trip and an
+        ioctl for a number already in hand.
+
+        The value is ours: nothing else writes the exposure.
+        """
+        return self._exposure_us
 
     def get_gain(self) -> int:
         with self._lock:
@@ -268,14 +775,43 @@ class V4L2Backend(CameraBackend):
                                         daemon=True, name="v4l2-camera")
         self._thread.start()
 
+    def _drain_pending(self) -> None:
+        """Apply anything queued, now, on the caller's thread.
+
+        Called where the reader is about to stop or has stopped, so a
+        change made a moment ago is not simply discarded. That mattered
+        most before a capture: `grab_raw` stops the stream first, so an
+        exposure moved and then captured immediately was taken at the old
+        value while the frame's own metadata reported the new one.
+        """
+        self._apply_pending()
+
     def stop_stream(self) -> None:
         self._running.clear()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                # The reader is stuck in a long `read`. Leaving the
+                # handle behind and starting another would give two
+                # threads writing one buffer pool, so keep it and let
+                # `start_stream` refuse rather than double up.
+                return
             self._thread = None
+        # Whatever the interface queued while the reader was blocked in
+        # its last `read` is still waiting, and there is nobody left to
+        # apply it. Draining here is what stops a capture being taken at
+        # the previous exposure while reporting the new one.
+        self._drain_pending()
 
     def _loop(self, on_frame: Callable[[Frame], None]) -> None:
         while self._running.is_set():
+            # Controls are applied here, by the thread that owns the
+            # capture, between frames. Nothing else may touch it while a
+            # stream is running: `read` blocks for a whole frame period,
+            # so anyone waiting on the same lock waits that long, and at
+            # a half-second exposure that is a half-second of frozen
+            # window per slider movement.
+            self._apply_pending()
             with self._lock:
                 if self._cap is None:
                     return
@@ -298,6 +834,44 @@ class V4L2Backend(CameraBackend):
                            gain_pct=self._gain_pct, binned=True,
                            _pool=self._pool))
 
+    # ---- profiling -------------------------------------------------------
+
+    def snapshot(self, index: int):
+        """One settled greyscale frame from a given resolution mode.
+
+        For measuring what the camera does rather than for keeping. Mode
+        changes take about a second on this hardware and the first frames
+        after one still come from the old pipeline, so this waits rather
+        than trusting the first thing it is handed.
+        """
+        with self._lock:
+            if self._cap is None:
+                raise RuntimeError("camera is not open")
+            previous = self._current
+            self._select(index)
+            for _ in range(SETTLE_FRAMES + 5):
+                self._cap.read()
+            ok, image = self._cap.read()
+            self._select(previous)
+        if not ok or image is None:
+            raise RuntimeError(f"no frame from mode {index}")
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    def level(self) -> float:
+        """The mean level of a settled frame, for a photometric sweep.
+
+        This is where waiting for a control change belongs -- not in the
+        setter, which a slider calls on the interface thread. A frame
+        change lands on the third frame, measured in both directions, so
+        discarding `SETTLE_FRAMES` and reading the next is enough.
+        """
+        with self._lock:
+            if self._cap is None:
+                raise RuntimeError("camera is not open")
+            self._flush()
+            ok, image = self._cap.read()
+        return float(image.mean()) if ok and image is not None else 0.0
+
     # ---- capture ---------------------------------------------------------
 
     def grab_raw(self, timeout_ms: int = 8000) -> Frame:
@@ -312,13 +886,26 @@ class V4L2Backend(CameraBackend):
         try:
             with self._lock:
                 previous = self._current
+                # Read before switching. This used to restore whatever
+                # `_set_format` reported *granting*, compare it against a
+                # hard-coded "MJPG" and put the camera back into MJPG on
+                # any mismatch -- so a camera with no MJPG at all, whose
+                # preview was already the uncompressed format, was left
+                # being asked for a format it does not have.
+                before = self._format()
+                # Uncompressed for the capture where the camera has one.
+                # The preview stays compressed and fast; this is the one
+                # frame that has to be worth keeping.
+                self._set_format(self.best_capture_format())
                 self._select(0)               # index 0 is the largest
-                # The first frames after a size change come from the old
+                # The first frames after a mode change come from the old
                 # pipeline; discard a few rather than saving one.
-                for _ in range(4):
+                for _ in range(SETTLE_FRAMES + 3):
                     self._cap.read()
                 ok, image = self._cap.read()
                 self._select(previous)
+                if self._format() != before:
+                    self._set_format(before)   # back to the fast preview
             if not ok or image is None:
                 raise RuntimeError("capture failed -- the camera returned "
                                    "no frame")

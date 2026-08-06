@@ -822,3 +822,96 @@ def test_tiles_and_slices_keep_their_raw_whatever_the_preference(tmp_path):
     s.image_format = "both"
     cap.raw_required = False
     assert raw_wanted(cap) is True
+
+
+def test_a_file_never_claims_a_manufacturer_we_do_not_know():
+    """`CaptureMetadata.make` defaulted to "ToupTek" and nothing ever
+    overrode it, so every file from every camera claimed that maker --
+    including an eight-dollar webcam. Raw processors key their camera
+    profiles on Make and Model, so a wrong one is not untidy, it applies
+    somebody else's colour science to your slide."""
+    from darlaston.process.metadata import CaptureMetadata, from_setup
+    from darlaston.session.model import (CameraProfile, Objective,
+                                         ScopeProfile, Setup, Turret)
+
+    assert CaptureMetadata().make == "", "a default manufacturer is a guess"
+
+    turret = Turret(positions=[Objective(magnification=16.0, na=0.4)],
+                    current=0)
+    unknown = Setup(camera=CameraProfile(serial="x", pixel_um=2.4),
+                    scope=ScopeProfile(id="s", name="Zeiss", turret=turret))
+    assert from_setup(unknown, exposure_us=8300, gain_pct=100).make == ""
+
+    known = Setup(camera=CameraProfile(serial="y", pixel_um=2.4,
+                                       make="ToupTek"),
+                  scope=ScopeProfile(id="s", name="Zeiss", turret=turret))
+    assert from_setup(known, exposure_us=8300, gain_pct=100).make == "ToupTek"
+
+
+def test_the_dng_omits_a_maker_it_does_not_know(tmp_path):
+    """Rather than falling back to "darlaston", which names the software
+    and is a claim about hardware we did not build."""
+    import numpy as np
+
+    from darlaston.process.dng import write_bayer_streamed
+    from darlaston.process.metadata import CaptureMetadata
+
+    preview = np.zeros((16, 16, 3), dtype=np.uint8)
+    make = CaptureMetadata(model="Some Camera", make="Acme Optics")
+
+    def rows(start, count):
+        return np.full((count, 64), 1000, dtype=np.uint16)
+
+    unknown = tmp_path / "unknown.dng"
+    write_bayer_streamed(unknown, rows, 64, 64, preview=preview,
+                         meta=CaptureMetadata(model="Some Camera"))
+    named = tmp_path / "named.dng"
+    write_bayer_streamed(named, rows, 64, 64, preview=preview, meta=make)
+
+    # Tag 271 is Make. Checked by tag rather than by searching the bytes:
+    # "darlaston" appears legitimately in Software, and a whole-file
+    # search cannot tell the two apart.
+    from darlaston.process.stitch import _read_ifd
+
+    def make_tag(path):
+        data = path.read_bytes()
+        first = int.from_bytes(data[4:8], "little")
+        return _read_ifd(data, first).get(271)
+
+    assert make_tag(named) is not None, "a known maker is written"
+    assert make_tag(unknown) is None, \
+        "claimed a manufacturer for a camera that never named one"
+
+
+def test_a_decoded_capture_puts_red_where_the_dng_says_red_is(tmp_path):
+    """A UVC camera hands back BGR -- that is what OpenCV returns, and
+    what the preview and the sidecar JPEG both expect -- while the DNG's
+    linear planes are R, G, B.
+
+    Written straight through, red and blue came out swapped in the raw
+    and its embedded thumbnail while the JPEG beside it was correct, so
+    the two files disagreed about which channel was red.
+    """
+    import numpy as np
+
+    from darlaston.process import dng
+    from darlaston.process.metadata import CaptureMetadata
+    from darlaston.process.wiggle import _read_linear
+
+    h, w = 32, 32
+    bgr = np.zeros((h, w, 3), dtype=np.uint16)
+    bgr[..., 0], bgr[..., 1], bgr[..., 2] = 100, 200, 3000   # B, G, R
+
+    path = tmp_path / "red.dng"
+    dng.write_linear_streamed(
+        path, lambda s, c: bgr[s:s + c, :, ::-1], h, w,
+        preview=np.zeros((8, 8, 3), np.uint8),
+        meta=CaptureMetadata(model="t"), white=4095)
+
+    # `_read_linear` returns BGR, so the bright channel must come back at
+    # index 2 -- where it started.
+    back = _read_linear(path)
+    means = [float(back[..., i].mean()) for i in range(3)]
+    assert means[2] > means[0], \
+        f"red and blue are swapped in the raw: B,G,R = {means}"
+    assert round(means[2]) == 3000 and round(means[0]) == 100

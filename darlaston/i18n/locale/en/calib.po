@@ -71,7 +71,7 @@ msgid "calib.wb.label"
 msgstr "white balance"
 
 msgid "calib.wb.action"
-msgstr "--"
+msgstr "-"
 
 msgid "calib.wb.detail"
 msgstr "from flat"

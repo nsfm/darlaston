@@ -1,4 +1,4 @@
-# A newer version exists. Notify and hand off -- nothing here downloads
+# A newer version exists. Notify and hand off - nothing here downloads
 # or installs anything, so the words must not promise that it will.
 
 #. The menu entry, which only appears when there is something to say.

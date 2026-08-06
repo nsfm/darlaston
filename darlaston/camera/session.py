@@ -85,7 +85,12 @@ class CameraSession:
     def __init__(self, make_backend: Callable[[], CameraBackend],
                  on_status: Callable[[SessionStatus], None],
                  on_frame: Callable[[Frame], None],
-                 preview_resolution: int = 2,
+                 # Index 0: the full field. This was 2, which on a
+                 # ToupTek is a binned preview of the whole sensor and on
+                 # a UVC camera is an arbitrary mode -- and those modes
+                 # *crop*, so the preview showed the middle of what a
+                 # capture would record and framing on it was misleading.
+                 preview_resolution: int = 0,
                  is_present: Callable[[], bool] | None = None) -> None:
         # Presence is a property of the backend, not an assumption about USB.
         # A synthetic camera is always present; a tethered one may answer
@@ -161,6 +166,34 @@ class CameraSession:
         self._thread = threading.Thread(target=self._supervise, daemon=True,
                                         name="camera-session")
         self._thread.start()
+
+    def retarget(self, make_backend, is_present=None) -> None:
+        """Point this session at a different camera, in place.
+
+        The liveness check comes with it. It is specific to one device --
+        one `/dev/video` node, one USB vendor id -- so leaving the old
+        one behind means watching the camera we just stopped using and
+        reporting *it* as disconnected. None means "no cheap check", which
+        is the right answer for the synthetic camera and for any backend
+        whose absence only its own errors can report.
+
+        **The object identity is the whole point.** `StillCapture`, the
+        calibration service and the opportunist are each handed this
+        session when the window is built and hold it for the life of the
+        program. Building a *new* session to switch cameras leaves all
+        three pointing at the old one, which by then has no backend -- so
+        the preview runs from the new camera while a capture reports "no
+        camera connected" from the old.
+
+        That was a real bug and an old one: switching to the synthetic
+        camera did it too, long before there was more than one real
+        camera to switch between.
+        """
+        self.stop()
+        self._make_backend = make_backend
+        self._is_present = is_present or (lambda: True)
+        self._attempt = 0
+        self.start()
 
     def stop(self) -> None:
         self._running.clear()

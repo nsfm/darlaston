@@ -26,7 +26,7 @@ def test_median_rejects_debris_in_a_minority():
     assert out.max() == pytest.approx(1000.0), "debris survived the median"
 
 
-def test_bayer_normalise_removes_the_checkerboard():
+def test_normalise_flat_removes_the_checkerboard():
     """A single scalar norm would leave a 2x2 pattern, because the phases
     differ in sensitivity by about three times on this sensor."""
     flat = np.zeros((32, 32), np.float32)
@@ -34,7 +34,7 @@ def test_bayer_normalise_removes_the_checkerboard():
     flat[0::2, 1::2] = 800       # B
     flat[1::2, 0::2] = 1700      # R
     flat[1::2, 1::2] = 2400      # G
-    out = F.bayer_normalise(flat)
+    out = F.normalise_flat(flat)
     assert out.std() == pytest.approx(0.0, abs=1e-5)
 
 
@@ -71,6 +71,67 @@ def test_calibration_flattens_a_gradient():
     before = raw.std() / raw.mean()
     after = F.calibrate(raw, dark=dark, flat=flat)
     assert after.std() / after.mean() < before / 20, "gradient survived"
+
+
+# ---- a camera that demosaices before we see it ---------------------------
+#
+# Every function above was written against a 2D sensor frame. A UVC camera
+# hands over three separated channels instead, and reading those with Bayer
+# strides is silently wrong rather than an error: it is arithmetic that
+# succeeds and means nothing.
+
+
+def _bgr_flat(blue: float, green: float, red: float) -> np.ndarray:
+    out = np.zeros((32, 32, 3), np.float32)
+    out[..., 0], out[..., 1], out[..., 2] = blue, green, red
+    return out
+
+
+def test_normalise_flat_does_not_invent_a_checkerboard_on_colour():
+    """The Bayer split applied to a demosaiced frame *creates* the 2x2
+    pattern that this function exists to remove."""
+    flat = _bgr_flat(800, 2400, 1700)
+    flat[..., 1] *= np.linspace(0.6, 1.0, 32, dtype=np.float32)[None, :]
+    out = F.normalise_flat(flat)
+    for c in range(3):
+        plane = out[..., c]
+        assert plane.mean() == pytest.approx(1.0, rel=1e-4)
+        # Neighbouring pixels within a channel differ only by the gradient
+        # that was put there, never by a phase.
+        assert abs(float(plane[0, 8] - plane[1, 8])) < 1e-5
+
+
+def test_white_balance_reads_the_channels_of_a_colour_flat():
+    """It used to average all three at every Bayer phase, so every gain came
+    back at 1.0 -- a white balance that reported success and did nothing."""
+    r, g, b = F.white_balance_from_flat(_bgr_flat(800, 2400, 1700))
+    assert g == 1.0
+    assert r == pytest.approx(2400 / 1700, rel=1e-3)
+    assert b == pytest.approx(2400 / 800, rel=1e-3)
+
+
+def test_defect_map_records_a_colour_hot_pixel_once():
+    """`nonzero` on a 3D frame returns three index arrays. Keeping the first
+    two filed one bad photosite as three defects."""
+    dark = np.full((64, 64, 3), 1.0, np.float32)
+    dark[10, 10, :] = 400.0                  # smeared across all channels
+    dark[20, 20, 1] = 900.0                  # and one that is only green
+    found = F.defect_map(dark)
+    assert [tuple(p) for p in found] == [(10, 10), (20, 20)]
+
+
+def test_calibration_repairs_a_colour_frame_without_raising():
+    """`h, w = frame.shape` raised on every 3-channel capture that had a
+    defect map stored, which is a crash in the capture path."""
+    raw = np.full((32, 32, 3), 500.0, np.float32)
+    raw[4, 4, :] = 4000.0
+    dark = np.full((32, 32, 3), 5.0, np.float32)
+    out = F.calibrate(raw, dark=dark, flat=_bgr_flat(800, 2400, 1700),
+                      defects=np.array([[4, 4]], np.int32))
+    assert out.shape == raw.shape
+    # Repaired to its neighbours, in every channel, rather than left at
+    # eight times the surrounding field.
+    assert out[4, 4] == pytest.approx(out[0, 0], rel=1e-3)
 
 
 def test_blank_detector_rejects_a_subject():
