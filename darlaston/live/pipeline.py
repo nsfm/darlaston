@@ -18,6 +18,7 @@ boundary is not present-day speed; it is optionality.
 """
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
@@ -35,6 +36,8 @@ from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
 from .profile import Meter
 from .tracker import StageTracker
 from .turret import TurretDetector, TurretEvent, model_signatures
+
+_log = logging.getLogger(__name__)
 
 
 #: How many frames pass between instrument repaints. Shared with the UI's
@@ -356,9 +359,10 @@ class LivePipeline:
                 try:
                     self._analyse(frame)
                 except Exception:
-                    # A bad frame must never kill the live view.
-                    import traceback
-                    traceback.print_exc()
+                    # A bad frame must never kill the live view -- but a
+                    # frame that fails every time is a real fault, and this
+                    # is the only record of it.
+                    _log.exception("analysis raised on a frame")
 
     def _analyse(self, frame: Frame) -> None:
         with self._lock:

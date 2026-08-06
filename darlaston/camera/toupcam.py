@@ -28,6 +28,7 @@ The SDK is never vendored -- see DISCOVERY.md 4c. Users install it themselves.
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 import platform
 import sys
@@ -43,6 +44,9 @@ from .base import CameraBackend, CameraInfo, Resolution
 from .buffers import BufferPool, Frame
 from .errors import (CameraBusy, NoCameraFound, SdkMissing,
                      SdkTooOld, is_retryable)
+
+_log = logging.getLogger(__name__)
+
 
 def library_name(soname: str) -> str:
     """The file this platform's build of a vendor library is called.
@@ -523,8 +527,7 @@ class ToupcamBackend(CameraBackend):
                 except Exception:
                     # Reported by the session's own health checks; raising
                     # here would mask the original capture error.
-                    import traceback
-                    traceback.print_exc()
+                    _log.exception("could not restart the stream after a grab")
 
     def _quiesce(self) -> None:
         """Stop the camera, ignoring the state it was in. Idempotent."""

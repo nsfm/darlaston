@@ -10,6 +10,7 @@ nothing in camera/ or live/ has ever heard of Qt.
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import shutil
 import signal
@@ -29,6 +30,7 @@ from ..capture.mosaic import MosaicSession
 from ..capture.stack import StackSession, StackTrigger
 from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
+from .. import __version__, log
 from ..live.focus import Illumination, Region
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
@@ -2228,10 +2230,20 @@ def main() -> int:
                          "are written as linear DNGs")
     ap.add_argument("--list-cameras", action="store_true",
                     help="show every camera darlaston can see, and exit")
+    ap.add_argument("--verbose", action="store_true",
+                    help="log every detail, not just what went wrong")
     args = ap.parse_args()
 
     if args.list_cameras:
         return _list_cameras()
+
+    # Before anything that can fail. The frozen build has no console, so
+    # until this exists every swallowed error goes to a handle that is not
+    # there -- which is why a report could only ever be "it did not work".
+    written = log.setup(logging.DEBUG if args.verbose else logging.INFO)
+    logging.getLogger(__name__).info(
+        "darlaston %s starting on %s; logging to %s",
+        __version__, sys.platform, written or "the console only")
 
     if args.mock:
         from ..camera.mock import MockCamera

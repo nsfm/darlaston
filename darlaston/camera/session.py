@@ -15,6 +15,7 @@ No Qt here. Callbacks only -- see ARCHITECTURE.md 4 and 5.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -26,6 +27,8 @@ from . import usb
 from .errors import CameraProblem, NoCameraFound
 from ..cpu import usable_cores
 from ..i18n import _
+
+_log = logging.getLogger(__name__)
 
 
 #: The preview rates the status bar offers, and therefore the only rates a
@@ -247,9 +250,9 @@ class CameraSession:
             return True
         except Exception:
             # The supervisor notices a dead stream and reconnects; saying so
-            # here would race with it.
-            import traceback
-            traceback.print_exc()
+            # in the interface here would race with it. It still goes in the
+            # log, which is the only place a report can come from.
+            _log.exception("could not restart the stream after a mode change")
             return False
 
     def set_framerate_cap(self, fps: int) -> bool:
@@ -424,5 +427,4 @@ class CameraSession:
         try:
             self._on_status(status)
         except Exception:
-            import traceback
-            traceback.print_exc()
+            _log.exception("a status handler raised")

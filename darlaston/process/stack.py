@@ -39,6 +39,7 @@ detail (they cannot fool a barely-pooled Laplacian).
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -48,6 +49,8 @@ import numpy as np
 from ..capture.stack import StackSession
 from . import develop, dng
 from .stitch import read_bayer_dng, read_metadata, read_white_level
+
+_log = logging.getLogger(__name__)
 
 #: Per-slice alignment beyond this many half-res pixels is not focus
 #: breathing, it is the stage having been bumped; the shift is refused and
@@ -483,6 +486,8 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
         if meta is not None:
             meta = meta.derived()
     except Exception:
+        _log.warning("could not read the middle slice's metadata; the merge "
+                     "will carry no provenance", exc_info=True)
         meta = None                    # provenance is a bonus, never a gate
     del raws
 
@@ -517,7 +522,11 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
         develop.write_jpeg(target.with_suffix(".jpg"), image)
         del image
     except Exception:
-        pass          # the merge is the product; the rendering is a bonus
+        # The merge is the product and the rendering is a bonus, so this
+        # does not fail the stack -- but the operator waited for a
+        # photograph that is now not there, and the reason has to go
+        # somewhere they can reach.
+        _log.exception("the stack was merged but could not be rendered")
 
     # The depth map, twice. depth.png is the *data*: plain grayscale, near
     # slices dark and far slices light, the conventional encoding every

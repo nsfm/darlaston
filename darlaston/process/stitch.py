@@ -25,6 +25,7 @@ one tile covers a pixel.
 """
 from __future__ import annotations
 
+import logging
 import struct
 import zlib
 import sys
@@ -36,6 +37,8 @@ import numpy as np
 
 from ..capture.mosaic import MosaicSession, Tile
 from . import develop, dng
+
+_log = logging.getLogger(__name__)
 
 #: Refinement beyond this fraction of the overlap strip is not a refinement,
 #: it is the wraparound or a decoy. The prediction stands instead.
@@ -658,6 +661,8 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
         if meta is not None:
             meta = meta.derived(scale)
     except Exception:
+        _log.warning("could not read the middle tile's metadata; the "
+                     "composite will carry no provenance", exc_info=True)
         meta = None                    # provenance is a bonus, never a gate
     written = dng.write_linear_streamed(
         target, lambda s, c: result[s:s + c], ch, cw,
@@ -675,7 +680,11 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
         develop.write_jpeg(target.with_suffix(".jpg"), image)
         del image
     except Exception:
-        pass          # the composite is the product; the rendering is a bonus
+        # The composite is the product and the rendering is a bonus, so this
+        # does not fail the stitch -- but somebody waited minutes for a
+        # photograph that is now not there, and needs to be able to find out
+        # why without a debugger.
+        _log.exception("the composite was written but could not be rendered")
     return written
 
 
@@ -718,7 +727,8 @@ def stitch(directory: Path | str, scale: float = 0.25,
     try:
         depth_path = composite_depth(session, positions, shapes, scale)
     except Exception:
-        pass                 # a mosaic of plain tiles simply has no depth
+        _log.debug("no depth map: a mosaic of plain tiles has none",
+                   exc_info=True)
     report = {
         "width": geom["w"], "height": geom["h"],
         "megapixels": round(geom["megapixels"], 1),

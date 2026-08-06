@@ -30,11 +30,19 @@ While collecting, a frame is taken only when all of these hold:
   * the stage is far enough from every patch already banked, because four
     frames of the same patch do not median away that patch's debris
   * enough time has passed since the last *attempt*, successful or not
+  * and then, once it has been taken, **the raw frame itself looks blank**
 
-and the pause is announced while it happens.
+That last one is the important one and it was missing. Everything above
+it is decided from a quarter-size preview, which is the cheap thing to
+look at and not the thing that goes into the flat. Asking the
+full-resolution frame is one resize of an array already in hand, and it
+is the only check that sees what is actually about to be banked.
+
+The pause is announced while it happens.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Callable
@@ -42,6 +50,8 @@ from typing import Callable
 import numpy as np
 
 from .service import FlatBank
+
+_log = logging.getLogger(__name__)
 
 
 class Opportunist:
@@ -63,6 +73,9 @@ class Opportunist:
         self._key: str | None = None
         self._last = 0.0
         self._grabbing = threading.Lock()
+        #: Built on first use, on the grab thread. The live pipeline has
+        #: its own; this one reads the raw frame rather than the preview.
+        self._blank = None
 
     # ---- configuration ---------------------------------------------------
 
@@ -120,6 +133,17 @@ class Opportunist:
             self._last = time.time()
             with backend.grab_raw() as frame:
                 raw = frame.copy()
+            # And now ask the frame itself, not the preview that triggered
+            # the grab. Blankness was decided once, on a quarter-size
+            # preview, and that single verdict gated the one outcome this
+            # module's docstring calls out as undetectable. This is the
+            # full-resolution frame that would actually go into the flat,
+            # where a specimen is several times better resolved and has
+            # not been through two rounds of area-averaging -- so it is
+            # strictly the better witness, and it costs one resize of a
+            # frame we are already holding.
+            if not self._blank_enough(raw):
+                return
             # Position is checked inside the bank, so a frame taken on a patch
             # we already have is discarded rather than silently duplicating it.
             if self.bank.offer(raw):
@@ -130,10 +154,33 @@ class Opportunist:
                     self.enabled = False
                 self._on_banked(self.bank.count, self.bank.wanted)
         except Exception:
-            pass          # a failed opportunistic grab must never surface
+            # Never surfaced: this is a background convenience and an
+            # error box for it would be an interruption nobody asked for.
+            # It is still a real failure -- a camera that refuses every
+            # grab means the bank never fills and nothing says why.
+            _log.exception("an opportunistic flat grab failed")
         finally:
             self._on_busy(False)
             self._grabbing.release()
+
+    def _blank_enough(self, raw: np.ndarray) -> bool:
+        """Does the grabbed frame itself look like empty slide?
+
+        Refuses on anything it cannot judge. A frame we are unsure about
+        is one skipped opportunity to bank a flat; a specimen baked into
+        the flat is on every photograph the rest of the session takes.
+        """
+        try:
+            from ..live.blank import BlankDetector, as_field
+
+            info = getattr(self._session.backend, "info", None)
+            depth = getattr(info, "max_bit_depth", 0) or 8
+            if self._blank is None:
+                self._blank = BlankDetector()
+            return self._blank.looks_blank(as_field(raw),
+                                           white=(1 << depth) - 1)
+        except Exception:
+            return False
 
     @property
     def frames(self) -> list[np.ndarray]:

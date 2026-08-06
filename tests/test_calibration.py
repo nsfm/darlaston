@@ -3,6 +3,7 @@
 Worth testing carefully: an error here is silent and corrupts every image that
 passes through, in ways that look like the microscope's fault.
 """
+import cv2
 import numpy as np
 import pytest
 
@@ -134,15 +135,65 @@ def test_calibration_repairs_a_colour_frame_without_raising():
     assert out[4, 4] == pytest.approx(out[0, 0], rel=1e-3)
 
 
-def test_blank_detector_rejects_a_subject():
-    rng = np.random.default_rng(1)
-    blank = (rng.normal(140, 1.5, (512, 512))).clip(0, 255).astype(np.uint8)
-    busy = blank.copy()
-    for cx in range(60, 500, 90):        # some diatoms
-        busy[cx:cx + 40, 100:400] = 40
+#: The shape the live pipeline actually hands the detector: a quarter of
+#: the preview in each axis. The tests used to call it at full preview
+#: size, which is a path production never takes. (Measured: the extra
+#: downsample moves the pooled maximum by under half a percent and has
+#: never changed a verdict -- so this is about testing what runs, not a
+#: defect that was hiding there.)
+_PREVIEW = (1216 // 4, 1824 // 4)
+
+
+def _slide(*, specks=(), dust=0, rng=None) -> np.ndarray:
+    """Empty glass with optical shading, plus whatever is on it.
+
+    `specks` is (radius, level) pairs at preview scale; `dust` is a count
+    of tiny high-contrast specks, which must *not* veto blankness -- a
+    flat is medianed across stage positions precisely so slide debris
+    cancels, and sensor dust is the thing a flat exists to correct.
+    """
+    rng = rng or np.random.default_rng(1)
+    h, w = _PREVIEW
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    shade = 1.0 - 0.18 * (((xx - w / 2) / (w / 2)) ** 2
+                          + ((yy - h / 2) / (h / 2)) ** 2)
+    img = 150.0 * shade + rng.normal(0, 1.4, (h, w))
+    for _ in range(dust):
+        cv2.circle(img, (int(rng.integers(0, w)), int(rng.integers(0, h))),
+                   int(rng.integers(1, 2)), float(rng.integers(30, 90)), -1)
+    for radius, level in specks:
+        cv2.circle(img, (int(rng.integers(radius * 2, w - radius * 2)),
+                         int(rng.integers(radius * 2, h - radius * 2))),
+                   radius, float(level), -1)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def test_blank_detector_accepts_empty_glass_with_dust_on_it():
+    """Dust is what a flat is *for*. Vetoing on it would mean never
+    banking one."""
     d = BlankDetector()
-    assert d.looks_blank(blank), "a genuinely empty field was rejected"
+    assert d.looks_blank(_slide()), "a genuinely empty field was rejected"
+    assert d.looks_blank(_slide(dust=15)), "dust vetoed an empty field"
+
+
+def test_blank_detector_rejects_a_subject():
+    d = BlankDetector()
+    busy = _slide(specks=[(10, 40)] * 4)
     assert not d.looks_blank(busy), "a field full of subject was banked"
+
+
+def test_blank_detector_sees_a_specimen_smaller_than_its_pooling_window():
+    """Pooling dilutes a subject by the ratio of its area to the window's,
+    so a single 16-wide window buried anything much smaller than itself.
+    One specimen a quarter of that window across used to read as empty
+    glass -- and a flat with a specimen in it stamps that specimen's
+    inverse onto every frame it ever corrects."""
+    d = BlankDetector()
+    for seed in range(8):
+        rng = np.random.default_rng(seed)
+        one = _slide(specks=[(3, 40)], rng=rng)
+        assert not d.looks_blank(one), (
+            f"seed {seed}: a lone small specimen was banked as empty slide")
 
 
 def test_flat_bank_requires_distinct_positions():
@@ -201,7 +252,7 @@ def test_coverage_requires_passing_through_focus():
     assert through.fraction > 0.95, "a full pass did not register"
 
 
-def test_coverage_ignores_empty_field():
+def test_coverage_ignores_empty_slide():
     """On darkfield most of the frame is empty and will never be sharp. If it
     counted, coverage could never reach 100% and the number would be useless."""
     from darlaston.live.coverage import FocusCoverage
@@ -394,19 +445,7 @@ def test_collecting_stops_itself_once_there_are_enough(qapp):
 
     from darlaston.calib.opportunist import Opportunist
 
-    class Grab:
-        def copy(self):
-            return np.zeros((4, 4), np.uint16)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    opportunist = Opportunist(
-        types.SimpleNamespace(backend=types.SimpleNamespace(
-            grab_raw=lambda: Grab())), wanted=2)
+    opportunist = _collector(_raw_field(), wanted=2)
     opportunist.enabled = True
     for step in range(2):
         opportunist.bank.note_motion(500.0, 0.0)      # a fresh patch each time
@@ -416,3 +455,57 @@ def test_collecting_stops_itself_once_there_are_enough(qapp):
         opportunist._grab()
     assert opportunist.bank.complete
     assert not opportunist.enabled, "left collecting after the bank filled"
+
+
+def _raw_field(specimen: bool = False) -> np.ndarray:
+    """A 12-bit raw blank field, optionally with a subject on it."""
+    rng = np.random.default_rng(3)
+    img = np.full((512, 512), 2000.0, np.float32) + rng.normal(0, 8, (512, 512))
+    if specimen:
+        cv2.circle(img, (300, 220), 24, 700.0, -1)
+    return np.clip(img, 0, 4095).astype(np.uint16)
+
+
+def _collector(raw, wanted=2):
+    """An Opportunist whose camera hands back exactly `raw`."""
+    import types
+
+    from darlaston.calib.opportunist import Opportunist
+
+    class Grab:
+        def copy(self):
+            return raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    backend = types.SimpleNamespace(
+        grab_raw=lambda: Grab(),
+        info=types.SimpleNamespace(max_bit_depth=12))
+    return Opportunist(types.SimpleNamespace(backend=backend), wanted=wanted)
+
+
+def test_a_raw_frame_with_a_subject_on_it_is_never_banked():
+    """Blankness was decided once, on a quarter-size preview, and that one
+    verdict gated the outcome this module calls undetectable: a specimen
+    baked into the flat, stamping its inverse on every frame thereafter.
+    The frame that is actually about to be banked gets asked too."""
+    opportunist = _collector(_raw_field(specimen=True))
+    opportunist.enabled = True
+    opportunist.bank.note_motion(500.0, 0.0)
+    opportunist._grabbing.acquire()
+    opportunist._grab()
+    assert opportunist.bank.count == 0, "banked a flat with a specimen in it"
+
+
+def test_a_raw_frame_of_empty_glass_still_gets_banked():
+    """The guard above must not be so strict that nothing is ever banked."""
+    opportunist = _collector(_raw_field())
+    opportunist.enabled = True
+    opportunist.bank.note_motion(500.0, 0.0)
+    opportunist._grabbing.acquire()
+    opportunist._grab()
+    assert opportunist.bank.count == 1, "refused a genuinely empty field"
