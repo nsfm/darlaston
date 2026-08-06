@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import fcntl
 import glob
+import os
 import struct
 import threading
 import time
@@ -172,7 +173,50 @@ def identity(node: str) -> str:
         except OSError:
             return node
         bus = bytes(buf[48:80]).split(b"\0")[0].decode("ascii", "replace")
-    return bus or node
+    if not bus:
+        return node
+
+    # The port alone is not unique. One camera can publish several
+    # capture nodes on one port -- measured on a laptop whose built-in
+    # camera and its infrared face-unlock sensor share a port and differ
+    # only by USB interface. Keyed on the port alone, remembering one
+    # could open the other, and an infrared sensor is a memorable thing
+    # to find yourself looking through.
+    return _key_from(bus, node)
+
+
+def _key_from(bus: str, node: str) -> str:
+    """Compose the key. Separated out so it can be asked directly.
+
+    Testing this through `enumerate_cameras` meant testing it against
+    whatever happened to be plugged in, which is not a test.
+    """
+    interface = _interface_of(node)
+    if interface:
+        return f"{bus}:{interface}"
+    # Sysfs would not say. Fall back to the node, which renumbers across
+    # reboots and is therefore a worse key -- but never a *colliding*
+    # one. Two cameras sharing a key is not instability, it is opening
+    # the wrong camera, and the wrong camera here is somebody's face.
+    return f"{bus}:{os.path.basename(node)}"
+
+
+def _interface_of(node: str) -> str:
+    """Which USB interface this node belongs to, from sysfs.
+
+    The device link for /dev/videoN ends in the interface address, like
+    `1-8:1.0` for the colour camera and `1-8:1.2` for the infrared one on
+    the same physical camera.
+    """
+    import os
+
+    name = os.path.basename(node)
+    try:
+        target = os.readlink(f"/sys/class/video4linux/{name}/device")
+    except OSError:
+        return ""
+    tail = os.path.basename(target.rstrip("/"))
+    return tail.split(":")[-1] if ":" in tail else ""
 
 
 def controls(node: str) -> list[dict]:

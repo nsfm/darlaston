@@ -112,6 +112,10 @@ class Settings:
     #: reason somebody has to account for an outbound request they did not
     #: choose to make.
     check_for_updates: bool = True
+    #: Which camera to open, as a `discovery.Camera.key`. Empty means
+    #: nobody has said, and the application picks the likeliest and shows
+    #: which -- rather than asking before it has done anything useful.
+    camera_choice: str = ""
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built
