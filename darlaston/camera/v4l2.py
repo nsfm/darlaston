@@ -426,6 +426,14 @@ class V4L2Backend(CameraBackend):
             # these cameras rarely publish it. Zero means "unknown", and
             # the scale bar refuses to draw rather than inventing one.
             Resolution(i, w, h, 0.0) for i, (w, h) in enumerate(sizes))
+        # The preview shows the field a capture will record, or framing
+        # on it is misleading. On this hardware the modes *crop*: at
+        # 1280x720 you are looking at the middle 44% of what a capture
+        # gets, which is the wrong way round for composing a shot.
+        #
+        # So the largest mode is the preview unless something else can
+        # show as much field for less bandwidth -- and on the camera this
+        # was written against, nothing can. It runs 30 fps there anyway.
         self._select(0)
 
         # What this device really offers, rather than what a UVC camera
@@ -457,6 +465,7 @@ class V4L2Backend(CameraBackend):
             brand=_manufacturer(self._node),
             raw_capable=bool(found["raw"]),
             software_trigger=True,
+            fingerprint=found.get("fingerprint", ""),
         )
         return self._info
 

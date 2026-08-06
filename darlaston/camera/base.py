@@ -66,6 +66,10 @@ class CameraInfo:
     cooled: bool = False
     has_fan: bool = False
     software_trigger: bool = True
+    #: A hash of what the device publishes about itself. Distinguishes a
+    #: camera from a *different* one plugged into the same USB port,
+    #: which the port-based serial cannot.
+    fingerprint: str = ""
 
     @property
     def is_colour(self) -> bool:

@@ -72,11 +72,18 @@ TRUSTED = 0.60
 #: so this sits well above noise and well below any real structure.
 MIN_TEXTURE = 5.0
 
-#: How much the picture has to move across a whole exposure sweep before
-#: the sweep is telling us anything. A dark field sits at the noise floor
-#: and a clipped one sits at the ceiling; both give a flat table that
-#: looks like a measurement.
-MIN_SWING = 40.0
+#: How much the picture has to move before a sweep is telling us
+#: anything at all. Deliberately small: this is a noise floor, not a
+#: quality bar. It was 40, which refused a sweep whose brightness
+#: visibly changed on screen -- a dim field can climb from 3 to 35 and
+#: be perfectly measurable.
+MIN_SWING = 8.0
+
+#: How well the level has to follow the control. This is the real
+#: question, and the one an absolute swing cannot answer: an unsettled
+#: sweep moves plenty and in no order, while a dim but honest one moves
+#: little and in perfect order.
+MIN_AGREEMENT = 0.80
 
 #: Scales worth trying. Cameras downsample by simple ratios, so this is
 #: a short list rather than a search -- and anything not on it comes back
@@ -168,7 +175,29 @@ class Response:
         levels = [l for _v, l in self.points]
         if max(levels) - min(levels) < MIN_SWING:
             return False
-        return len(self.usable) >= max(6, len(self.points) // 8)
+        return self.agreement >= MIN_AGREEMENT
+
+    @property
+    def agreement(self) -> float:
+        """How closely the level follows the control, from -1 to 1.
+
+        Rank correlation rather than a straight one, because the response
+        is not expected to be a straight line -- only to go the right
+        way. A camera with a kink in it still passes; a sweep that was
+        not settling does not.
+        """
+        if len(self.points) < 3:
+            return 0.0
+        order = sorted(range(len(self.points)),
+                       key=lambda i: self.points[i][1])
+        ranks = [0] * len(order)
+        for rank, index in enumerate(order):
+            ranks[index] = rank
+        n = len(ranks)
+        mean = (n - 1) / 2.0
+        top = sum((i - mean) * (r - mean) for i, r in enumerate(ranks))
+        bottom = sum((i - mean) ** 2 for i in range(n))
+        return top / bottom if bottom else 0.0
 
     def value_for(self, level: float) -> int | None:
         """The lowest control value that reaches this brightness.
@@ -220,7 +249,25 @@ def sweep_geometry(backend, progress=None) -> list[ModeGeometry]:
         if progress:
             progress(f"{res.width}x{res.height}")
         frames[(res.width, res.height)] = backend.snapshot(res.index)
-    return measure_geometry(reference, frames)
+    got = measure_geometry(reference, frames)
+
+    # The reference belongs in the list. It is measured against itself,
+    # so its answer is trivially "no scale, no offset" -- but leaving it
+    # out means anything reading the geometry cannot find the mode a
+    # capture actually uses, and has to assume what it should be told.
+    first = modes[0]
+    got.insert(0, ModeGeometry(width=first.width, height=first.height,
+                               scale=1.0, left=0, top=0, confidence=1.0))
+
+    # And a warning worth having: if any mode covers *more* field than
+    # the reference, the reference is itself a crop of the sensor and
+    # everything measured against it understates the true field. Not seen
+    # on any camera yet, and not detectable any other way from inside.
+    widest = max((g.width * g.scale for g in got if g.trusted), default=0)
+    if widest > first.width * 1.02:
+        got[0] = ModeGeometry(width=first.width, height=first.height,
+                              scale=1.0, confidence=0.0)
+    return got
 
 
 def plan_sweep(backend, span, points: int = 48) -> list:

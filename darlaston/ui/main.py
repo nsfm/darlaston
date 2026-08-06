@@ -535,8 +535,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_status(self, status: SessionStatus) -> None:
         info = status.info
         if info is not None and self.setup is None:
-            profile = self.library.remember_camera(info.serial, info.model,
-                                                  make=info.brand or "")
+            profile = self.library.remember_camera(
+                info.serial, info.model, make=info.brand or "",
+                fingerprint=getattr(info, "fingerprint", ""))
             # The stand this camera was last on, if we know it. Without this
             # lookup the setup editor wrote to disk correctly and was then
             # ignored on every subsequent launch -- a configured Zeiss

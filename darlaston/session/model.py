@@ -166,6 +166,11 @@ class CameraProfile:
     #: raw processors key their camera profiles on Make and Model, so a
     #: wrong one is worse than none.
     make: str = ""
+    #: What the camera says about itself, hashed. The serial is a USB
+    #: port, so a *different* camera plugged into the same socket arrives
+    #: wearing the previous occupant's identity -- its name, and worse,
+    #: its measured geometry and response. This is how that is caught.
+    fingerprint: str = ""
     #: What a profiling run measured, or empty until one has been done.
     #:
     #: `geometry` is one entry per resolution mode: its size, whether the
@@ -445,8 +450,8 @@ class Library:
         self.cameras.pop(serial, None)
         self.save()
 
-    def remember_camera(self, serial: str, model: str,
-                        make: str = "") -> CameraProfile:
+    def remember_camera(self, serial: str, model: str, make: str = "",
+                        fingerprint: str = "") -> CameraProfile:
         """First sight of a camera gets a provisional name the user can change."""
         if is_synthetic(serial):
             # The synthetic camera is a test fixture, not a device somebody
@@ -457,13 +462,33 @@ class Library:
                                  model=model, make=make)
         if serial not in self.cameras:
             self.cameras[serial] = CameraProfile(
-                serial=serial, name=model or "Camera", model=model, make=make)
+                serial=serial, name=model or "Camera", model=model,
+                make=make, fingerprint=fingerprint)
             self.save()
-        elif make and not self.cameras[serial].make:
-            # Filled in on a later sighting, for libraries written before
-            # anybody asked the camera who made it.
-            self.cameras[serial] = replace(self.cameras[serial], make=make)
-            self.save()
+        else:
+            known = self.cameras[serial]
+            if (fingerprint and known.fingerprint
+                    and fingerprint != known.fingerprint):
+                # Same socket, different camera. Everything filed against
+                # this key belongs to the previous occupant -- including
+                # its measured geometry and response, which would then be
+                # applied to a camera they were never measured on. Start
+                # again rather than inherit.
+                self.cameras[serial] = CameraProfile(
+                    serial=serial, name=model or "Camera", model=model,
+                    make=make, fingerprint=fingerprint)
+                self.save()
+            else:
+                changed = {}
+                if make and not known.make:
+                    changed["make"] = make
+                if fingerprint and not known.fingerprint:
+                    changed["fingerprint"] = fingerprint
+                if model and known.model != model:
+                    changed["model"] = model
+                if changed:
+                    self.cameras[serial] = replace(known, **changed)
+                    self.save()
         return self.cameras[serial]
 
     def rename_camera(self, serial: str, name: str) -> None:

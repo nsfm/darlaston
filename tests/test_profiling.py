@@ -164,3 +164,30 @@ def test_the_sweep_is_planned_from_the_field_not_from_the_range():
 
     assert plan_sweep(_Dark(), (100, 500_000)) == [], \
         "planned a sweep of a field that never responds"
+
+
+def test_a_dim_but_honest_sweep_is_accepted():
+    """Nate's report: the sweep refused a field whose brightness visibly
+    changed. The threshold was an absolute swing of 40 that I invented,
+    and a dim field can climb from 3 to 35 and be perfectly measurable.
+
+    The real question is whether the level *follows the control*, which
+    an absolute swing cannot answer either way."""
+    dim = Response(points=tuple((v, 3.0 + v * 1.2) for v in range(1, 28)))
+    assert max(l for _v, l in dim.points) < 40, "not a dim example any more"
+    assert dim.trustworthy, "refused a sweep that tracked the control exactly"
+    assert dim.agreement > 0.99
+
+
+def test_agreement_separates_dim_from_unsettled():
+    """The two look alike on any single number: one moves little, the
+    other moves a lot. What tells them apart is order."""
+    import random
+
+    dim = Response(points=tuple((v, 3.0 + v * 1.2) for v in range(1, 28)))
+    rng = random.Random(11)
+    unsettled = Response(points=tuple((v, rng.uniform(10, 200))
+                                      for v in range(1, 28)))
+
+    assert dim.agreement > unsettled.agreement
+    assert dim.trustworthy and not unsettled.trustworthy

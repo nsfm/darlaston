@@ -150,3 +150,42 @@ def test_a_camera_whose_cable_moved_is_still_the_same_camera():
     # And the port still wins when it is there.
     assert choose([moved, other], remembered="v4l2:port-C",
                   fingerprint="abc123") is other
+
+
+def test_a_different_camera_in_the_same_socket_is_a_different_camera():
+    """The serial is a USB port, so plugging another camera into the
+    socket where one used to live makes it arrive wearing the previous
+    occupant's identity -- its name, and worse, its measured geometry and
+    exposure response, which would then be applied to a camera they were
+    never measured on.
+
+    Nate hit exactly this: a cheap camera came up identified as the more
+    expensive one.
+    """
+    import tempfile
+    from dataclasses import replace
+    from pathlib import Path
+
+    from darlaston.session.model import Library
+
+    lib = Library(path=Path(tempfile.mkdtemp()) / "library.json")
+
+    first = lib.remember_camera("usb-port-1", "Expensive Camera",
+                                fingerprint="aaa111")
+    lib.cameras[first.serial] = replace(
+        lib.cameras[first.serial], name="My good camera",
+        geometry=[{"width": 1920, "height": 1080}])
+
+    # Same socket, different device.
+    second = lib.remember_camera("usb-port-1", "Cheap Camera",
+                                 fingerprint="bbb222")
+    assert second.model == "Cheap Camera"
+    assert second.name != "My good camera", \
+        "the new camera inherited the old one's name"
+    assert not second.geometry, \
+        "applied one camera's measurements to a different camera"
+
+    # And the same device coming back is still itself.
+    again = lib.remember_camera("usb-port-1", "Cheap Camera",
+                                fingerprint="bbb222")
+    assert again.model == "Cheap Camera"

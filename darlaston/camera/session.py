@@ -85,7 +85,12 @@ class CameraSession:
     def __init__(self, make_backend: Callable[[], CameraBackend],
                  on_status: Callable[[SessionStatus], None],
                  on_frame: Callable[[Frame], None],
-                 preview_resolution: int = 2,
+                 # Index 0: the full field. This was 2, which on a
+                 # ToupTek is a binned preview of the whole sensor and on
+                 # a UVC camera is an arbitrary mode -- and those modes
+                 # *crop*, so the preview showed the middle of what a
+                 # capture would record and framing on it was misleading.
+                 preview_resolution: int = 0,
                  is_present: Callable[[], bool] | None = None) -> None:
         # Presence is a property of the backend, not an assumption about USB.
         # A synthetic camera is always present; a tethered one may answer
