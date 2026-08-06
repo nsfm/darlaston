@@ -171,6 +171,12 @@ class MainWindow(QtWidgets.QMainWindow):
         setup = self.toolbar.add_menu("Setup", _("menu.setup"))
         setup.addAction(_("menu.setup.microscopes"), self._open_microscopes)
         setup.addAction(_("menu.setup.cameras"), self._open_cameras)
+        # Only when there is a question to answer. On a machine with one
+        # camera this is not a choice, and an entry offering to make it
+        # is a menu one line longer for no reason.
+        self.pick_action = setup.addAction(_("menu.setup.camera_pick"))
+        self.pick_action.triggered.connect(self._choose_camera)
+        self.pick_action.setVisible(False)
         # Attribution is the one part of a file's provenance the instrument
         # cannot supply. It used to have a menu to itself to keep it
         # visible, which does not work -- an entry is invisible until the
@@ -587,6 +593,47 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
         self.gain.set_value_text(f"{gain / 100:.1f}×")
         self._synced = True
+
+    def offer_camera_choice(self, cameras) -> None:
+        """Show the picker entry, if picking is a real question."""
+        self.pick_action.setVisible(len(cameras) > 1)
+
+    def _choose_camera(self) -> None:
+        from ..camera.discovery import backend_for, look
+        from .camera_ui import CameraPicker
+
+        cameras = look()
+        if not cameras:
+            return
+        dialog = CameraPicker(cameras, self.settings.camera_choice, self)
+        if not dialog.exec():
+            return
+        key = dialog.chosen()
+        if not key or key == self.settings.camera_choice:
+            return
+        self.settings.camera_choice = key
+        self.settings.save()
+        for camera in cameras:
+            if camera.key == key:
+                self._open_camera(camera)
+                break
+
+    def _open_camera(self, camera) -> None:
+        """Swap to a different camera without a restart.
+
+        The same shape as switching to the synthetic one: stop, rebuild,
+        start. Everything downstream reads from the session, so nothing
+        else has to know it changed.
+        """
+        from ..camera.discovery import backend_for
+
+        self.session.stop()
+        self._synced = False
+        self._make_backend = lambda: backend_for(camera)
+        self.session = CameraSession(self._make_backend,
+                                     self.bridge.status.emit,
+                                     self.pipeline.submit)
+        self.session.start()
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
@@ -2121,12 +2168,35 @@ def main() -> int:
         from ..camera.v4l2 import enumerate_cameras
         presence = lambda: bool(enumerate_cameras())
     else:
-        def make() -> CameraBackend:
-            from ..camera.toupcam import ToupcamBackend
-            return ToupcamBackend()
+        # No flag. Look at what is actually attached, across every access
+        # model, and open the likeliest -- or the one chosen last time.
+        # The ToupTek path is no longer the default by assumption; it is
+        # one of the things `look()` can find.
+        from ..camera.discovery import backend_for, choose, look
+
+        seen = look()
+        picked = choose(seen, Settings.load().camera_choice)
+        if picked is None and seen:
+            # Several attached and nobody has said which. Open the
+            # likeliest, so there is a picture to look at, and let the
+            # menu offer the rest. An empty window and a question, before
+            # the application has done anything useful, is a worse
+            # greeting than a picture and a way to change it.
+            picked = seen[0]
+
+        if picked is not None:
+            make: callable = lambda: backend_for(picked)
+            presence = lambda: bool(look())
+        else:
+            # Nothing found at all. The ToupTek path is still the right
+            # thing to try: its own errors explain a missing SDK or an
+            # absent camera far better than silence would.
+            def make() -> CameraBackend:
+                from ..camera.toupcam import ToupcamBackend
+                return ToupcamBackend()
+            from ..camera import usb
+            presence = usb.present
         allow_synthetic = False
-        from ..camera import usb
-        presence = usb.present               # real hardware lives on the bus
 
     # Before anything opens a camera. Measured to be the right setting for
     # the batch jobs too, not just the preview -- see cpu.py.
@@ -2137,6 +2207,9 @@ def main() -> int:
     theme.load_fonts()
     theme.identify(app)                  # after the fonts: the mark is a letter
     win = MainWindow(make, allow_synthetic=allow_synthetic, presence=presence)
+    if not (args.mock or args.usb):
+        from ..camera.discovery import look as _look
+        win.offer_camera_choice(_look())
     # Before show(), where the platform allows it. Changing a window flag
     # on a window that is already up destroys the native window and makes
     # a new one, which is a visible flash and, more to the point, tears

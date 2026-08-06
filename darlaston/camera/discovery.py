@@ -112,6 +112,93 @@ def _toupcam() -> list[Camera]:
     return out
 
 
+#: What XIMEA's library is called, per platform. Loaded by name and
+#: never shipped: the same rule as every other vendor SDK here.
+_XIMEA_LIBS = {
+    "linux": ("libm3api.so.2", "libm3api.so"),
+    "darwin": ("libm3api.dylib",
+               "/Library/Frameworks/m3api.framework/Versions/Current/m3api"),
+    "win32": ("xiapi64.dll", "xiapi32.dll"),
+}
+
+#: XIMEA's USB vendor id, for noticing a camera whose SDK is absent.
+XIMEA_VENDOR = "20f7"
+
+
+def _load_ximea():
+    """The XIMEA library, or the reason it would not load.
+
+    Returns (library, None) or (None, reason). The reason matters: a
+    vendor SDK that is installed and unloadable is a different problem
+    from one that was never installed, and the two need different
+    advice. Measured here: `libm3api.so.2` links against `libtiff.so.5`
+    and this distribution ships version 6, so the SDK is present, the
+    camera is attached, and nothing works.
+    """
+    import ctypes
+
+    names = _XIMEA_LIBS.get(sys.platform, _XIMEA_LIBS["linux"])
+    missing = True
+    for name in names:
+        try:
+            return ctypes.CDLL(name), None
+        except OSError as why:
+            text = str(why)
+            # "cannot open shared object file" for the library itself
+            # means it is simply not installed. Anything else -- an
+            # undefined symbol, a dependency it cannot find -- means it
+            # is installed and broken, which is worth saying out loud.
+            if name.split("/")[-1] not in text:
+                missing = False
+                reason = text
+    return None, (None if missing else reason)
+
+
+def ximea_attached() -> bool:
+    """Is there a XIMEA on the bus, whatever the SDK thinks?
+
+    Linux only, from sysfs, the same way `usb.present` answers for the
+    ToupTek family. There is no way to ask this on macOS or Windows
+    without a USB dependency we do not have, so elsewhere the answer is
+    False and the SDK's own opinion is all we get. That is a smaller
+    loss than it sounds: the case this catches is a camera attached with
+    no SDK installed, and on the platforms where we cannot see it, the
+    person is told the SDK is missing rather than told nothing.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    from pathlib import Path
+
+    for entry in Path("/sys/bus/usb/devices").glob("*/idVendor"):
+        try:
+            if entry.read_text().strip() == XIMEA_VENDOR:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def trouble() -> list[str]:
+    """Cameras we can see but cannot reach, and why.
+
+    Not errors and not offers. A camera that is plugged in and unusable
+    is the single most confusing state a person can be in, because the
+    application looks like it simply has not noticed. Saying so is most
+    of the fix.
+    """
+    said = []
+    library, reason = _load_ximea()
+    if library is None:
+        if reason:
+            said.append(f"A XIMEA camera library is installed but will not "
+                        f"load: {reason}")
+        elif ximea_attached():
+            said.append("A XIMEA camera is attached, but its library is not "
+                        "installed. darlaston loads it at runtime and never "
+                        "ships it.")
+    return said
+
+
 def _ximea() -> list[Camera]:
     """XIMEA, which has no V4L2 node and needs its own library.
 
@@ -121,10 +208,12 @@ def _ximea() -> list[Camera]:
     vendor SDK -- and a camera we cannot load is not a camera we should
     offer.
     """
-    try:
-        import ctypes
+    import ctypes
 
-        xi = ctypes.CDLL("libm3api.so.2")
+    xi, _why = _load_ximea()
+    if xi is None:
+        return []
+    try:
         xi.xiGetNumberDevices.argtypes = [ctypes.POINTER(ctypes.c_uint32)]
         count = ctypes.c_uint32(0)
         if xi.xiGetNumberDevices(ctypes.byref(count)) != 0 or not count.value:
