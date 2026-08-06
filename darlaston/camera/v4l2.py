@@ -275,6 +275,19 @@ def _key_from(bus: str, node: str) -> str:
     return f"{bus}:{os.path.basename(node)}"
 
 
+def _manufacturer(node: str) -> str:
+    """The USB manufacturer string, if the device publishes one."""
+    import os
+
+    name = os.path.basename(node)
+    try:
+        device = os.path.realpath(f"/sys/class/video4linux/{name}/device")
+        with open(os.path.join(os.path.dirname(device), "manufacturer")) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
 def _interface_of(node: str) -> str:
     """Which USB interface this node belongs to, from sysfs.
 
@@ -436,7 +449,12 @@ class V4L2Backend(CameraBackend):
             bayer_pattern="",              # decoded already; no CFA exists
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
-            brand=found["driver"],
+            # Who made it, not which kernel module drives it. Read from
+            # the USB descriptor, and frequently absent or a placeholder
+            # -- one camera here says "HD Camera Manufacturer" -- but a
+            # placeholder the device actually published beats a name we
+            # invented for it.
+            brand=_manufacturer(self._node),
             raw_capable=bool(found["raw"]),
             software_trigger=True,
         )

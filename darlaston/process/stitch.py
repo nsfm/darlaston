@@ -234,7 +234,7 @@ def read_metadata(path: Path | str):
 
     iso = exif.get(34855)
     return CaptureMetadata(
-        make=ascii_of(ifd0.get(271)) or "ToupTek",
+        make=ascii_of(ifd0.get(271)),
         model=ascii_of(ifd0.get(272)),
         unique_camera_model=ascii_of(ifd0.get(50708)),
         serial=ascii_of(ifd0.get(50735)),

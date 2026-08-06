@@ -162,6 +162,10 @@ class CameraProfile:
     serial: str
     name: str = "Camera"
     model: str = ""
+    #: Who made it. Written into EXIF as Make, and empty when unknown --
+    #: raw processors key their camera profiles on Make and Model, so a
+    #: wrong one is worse than none.
+    make: str = ""
     relay: str = ""              # travels with the camera, not the scope
     #: What the relay actually multiplies by. It sits between the objective
     #: and the sensor, so it belongs in the magnification chain like the
@@ -428,7 +432,8 @@ class Library:
         self.cameras.pop(serial, None)
         self.save()
 
-    def remember_camera(self, serial: str, model: str) -> CameraProfile:
+    def remember_camera(self, serial: str, model: str,
+                        make: str = "") -> CameraProfile:
         """First sight of a camera gets a provisional name the user can change."""
         if is_synthetic(serial):
             # The synthetic camera is a test fixture, not a device somebody
@@ -436,10 +441,15 @@ class Library:
             # then offered it as the camera to describe when nothing real
             # was plugged in.
             return CameraProfile(serial=serial, name=model or "Camera",
-                                 model=model)
+                                 model=model, make=make)
         if serial not in self.cameras:
             self.cameras[serial] = CameraProfile(
-                serial=serial, name=model or "Camera", model=model)
+                serial=serial, name=model or "Camera", model=model, make=make)
+            self.save()
+        elif make and not self.cameras[serial].make:
+            # Filled in on a later sighting, for libraries written before
+            # anybody asked the camera who made it.
+            self.cameras[serial] = replace(self.cameras[serial], make=make)
             self.save()
         return self.cameras[serial]
 

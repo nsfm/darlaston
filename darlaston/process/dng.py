@@ -118,7 +118,11 @@ def _our_tags(w: DngWriter, black: int, white: int,
         w.add(T.MODEL, T.ASCII, "camera")
         w.add(T.UNIQUE_CAMERA_MODEL, T.ASCII, "camera")
         return
-    w.add(T.MAKE, T.ASCII, meta.make or "darlaston")
+    # Omitted when unknown. It used to fall back to "darlaston", which
+    # names the software rather than the manufacturer and is a claim
+    # about hardware we did not make.
+    if meta.make:
+        w.add(T.MAKE, T.ASCII, meta.make)
     w.add(T.MODEL, T.ASCII, meta.model or "camera")
     w.add(T.UNIQUE_CAMERA_MODEL, T.ASCII,
           meta.unique_camera_model or meta.model or "camera")
