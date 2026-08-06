@@ -401,6 +401,11 @@ class V4L2Backend(CameraBackend):
         #: has told us it offers nothing, which is a real answer.
         self._controls: dict = {}
         self._usable: list = []
+        #: Control changes waiting for the reader thread. Guarded by its
+        #: own lock, which is only ever held for a dictionary write --
+        #: never across a frame read, which is the whole point.
+        self._pending: dict = {}
+        self._pending_lock = threading.Lock()
         self._current = 0
 
     # ---- lifecycle -------------------------------------------------------
@@ -596,44 +601,68 @@ class V4L2Backend(CameraBackend):
         if streaming and on_frame is not None:
             self.start_stream(on_frame)
 
-    def set_exposure(self, microseconds: int) -> None:
-        self._exposure_us = int(microseconds)
+    def _apply_pending(self) -> None:
+        """Write any queued control changes. Reader thread only."""
+        with self._pending_lock:
+            pending, self._pending = self._pending, {}
+        if not pending:
+            return
         with self._lock:
             if self._cap is None:
                 return
-            # V4L2 exposure is in 100 us units, and it is only writable
-            # once auto-exposure is off -- which is control 1 (manual) on
-            # UVC, not 0. Setting the value first silently does nothing.
+            for what, value in pending.items():
+                try:
+                    self._write_control(what, value)
+                except Exception:
+                    pass          # a dropped link surfaces elsewhere
+
+    def _queue(self, what: str, value) -> None:
+        """Ask for a control change without waiting for one.
+
+        When a stream is running the reader applies it between frames;
+        otherwise there is no reader and it is written here. Either way
+        the caller returns immediately, which is the point: this is
+        reached from a slider, on the interface thread.
+        """
+        if self._running.is_set():
+            with self._pending_lock:
+                self._pending[what] = value
+            return
+        with self._lock:
+            if self._cap is not None:
+                try:
+                    self._write_control(what, value)
+                except Exception:
+                    pass
+
+    def _write_control(self, what: str, value) -> None:
+        """The actual writes. Called holding `_lock`, never from the UI."""
+        if what == "exposure":
+            # Only writable once auto-exposure is off -- control 1
+            # (manual) on UVC, not 0. Setting the value first silently
+            # does nothing.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
-            self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, microseconds // 100))
-            # Deliberately not flushed here. The next frames do still
-            # carry the old exposure, and a *measurement* has to wait for
-            # that -- but this is also what a slider calls, on the
-            # interface thread, while holding the session lock. Reading
-            # three frames costs three frame periods, which at a half
-            # second exposure is a second and a half of frozen window.
-            #
-            # Waiting belongs to the code that needs a settled frame, and
-            # `level()` does it. Interactively, a couple of stale frames
-            # is a picture catching up, which is what every camera does.
+            self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, int(value) // 100))
+        elif what == "gain":
+            found = self._has("Gain")
+            if not found:
+                return
+            level = found["min"] + max(0, int(value) - 100)
+            self._cap.set(cv2.CAP_PROP_GAIN,
+                          min(found["max"], max(found["min"], level)))
+
+    def set_exposure(self, microseconds: int) -> None:
+        self._exposure_us = int(microseconds)
+        self._queue("exposure", int(microseconds))
 
     def set_gain(self, percent: int) -> None:
         """Map our percentage onto whatever scale this device uses.
 
-        This wrote the percentage straight through, which meant the
-        interface's floor of 100 landed on a camera whose gain range is
-        0..100 -- pinning it at maximum, where every further movement
-        clamped to the same place and appeared to do nothing at all.
+        Queued rather than written: this is reached from a slider, and
+        the reader holds the capture for a whole frame period at a time.
         """
         self._gain_pct = int(percent)
-        found = self._has("Gain")
-        with self._lock:
-            if self._cap is None or not found:
-                return
-            span = max(1, found["max"] - found["min"])
-            value = found["min"] + max(0, int(percent) - 100)
-            self._cap.set(cv2.CAP_PROP_GAIN,
-                          min(found["max"], max(found["min"], value)))
+        self._queue("gain", int(percent))
 
     def _flush(self) -> None:
         """Throw away the frames still carrying the old setting."""
@@ -680,6 +709,13 @@ class V4L2Backend(CameraBackend):
 
     def _loop(self, on_frame: Callable[[Frame], None]) -> None:
         while self._running.is_set():
+            # Controls are applied here, by the thread that owns the
+            # capture, between frames. Nothing else may touch it while a
+            # stream is running: `read` blocks for a whole frame period,
+            # so anyone waiting on the same lock waits that long, and at
+            # a half-second exposure that is a half-second of frozen
+            # window per slider movement.
+            self._apply_pending()
             with self._lock:
                 if self._cap is None:
                     return

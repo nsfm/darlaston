@@ -621,12 +621,17 @@ class MainWindow(QtWidgets.QMainWindow):
             changed["response"] = [list(p)
                                    for p in dialog.response_result.points]
         if not changed:
+            self._synced = False       # it still moved the camera
             return
 
         updated = replace(self.setup.camera, **changed)
         self.library.cameras[updated.serial] = updated
         self.library.save()
         self.setup.camera = updated
+        # Measuring drove the exposure and the resolution all over the
+        # place. Even having put them back, the sliders should read from
+        # the camera rather than from what they last remembered.
+        self._synced = False
 
     def _use_camera(self, key: str) -> None:
         """Remember a choice and act on it."""

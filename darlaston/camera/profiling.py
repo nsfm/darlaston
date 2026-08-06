@@ -243,6 +243,8 @@ def sweep_geometry(backend, progress=None) -> list[ModeGeometry]:
     modes = list(info.resolutions) if info else []
     if not modes:
         return []
+    # Same for the geometry pass, which walks every resolution mode.
+    before_mode = getattr(backend, "_current", None)
     reference = backend.snapshot(0)
     frames = {}
     for res in modes[1:]:
@@ -267,6 +269,11 @@ def sweep_geometry(backend, progress=None) -> list[ModeGeometry]:
     if widest > first.width * 1.02:
         got[0] = ModeGeometry(width=first.width, height=first.height,
                               scale=1.0, confidence=0.0)
+    if before_mode is not None:
+        try:
+            backend.set_resolution(before_mode)
+        except Exception:
+            pass
     return got
 
 
@@ -334,4 +341,13 @@ def sweep_response(backend, values=None, progress=None) -> Response:
             progress(str(v))
         backend.set_exposure(int(v) * 100)
 
-    return measure_response(backend.level, set_value, values)
+    # Put it back afterwards. A measurement that leaves the camera at
+    # whatever exposure it happened to finish on has changed the thing it
+    # was measuring, and the interface goes on showing the old number --
+    # so the slider and the picture disagree and neither is wrong.
+    before = getattr(backend, "_exposure_us", None)
+    try:
+        return measure_response(backend.level, set_value, values)
+    finally:
+        if before is not None:
+            backend.set_exposure(before)
