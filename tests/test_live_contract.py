@@ -134,6 +134,7 @@ def test_mock_camera_through_pipeline_produces_signals():
     pool is whole afterwards. Drop *semantics* are covered directly above."""
     from darlaston.camera.mock import MockCamera
     from darlaston.live.pipeline import LivePipeline
+    from darlaston.live.tracker import StageTracker
 
     received = []
     pipeline = LivePipeline(received.append)
@@ -153,7 +154,13 @@ def test_mock_camera_through_pipeline_produces_signals():
     assert 0.0 <= s.clipped_fraction <= 1.0
     assert s.focus_metric > 0
     assert s.preview.shape[2] == 3
-    assert s.xy_offset is not None, "tracker should lock after the first frame"
+    # The lock flag and the position, not `xy_offset is not None` -- that
+    # is non-None from the second frame however badly the correlation went,
+    # so it proved only that two frames arrived.
+    assert s.stage_tracking, "the tracker never locked"
+    assert s.stage_pos is not None, "locked without a position"
+    assert s.xy_confidence > StageTracker.CONFIDENCE, (
+        f"locked at confidence {s.xy_confidence:.3f}, which is the gate")
 
 
 def test_focus_metric_peaks_at_best_focus():

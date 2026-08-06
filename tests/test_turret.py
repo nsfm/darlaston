@@ -9,7 +9,7 @@ import pytest
 
 from darlaston.camera.mock import MockCamera, _RESOLUTIONS
 from darlaston.live.turret import TurretDetector
-from darlaston.session.model import Objective, Turret
+from darlaston.session.model import CameraProfile, Objective, Turret
 
 RES = _RESOLUTIONS[2]
 
@@ -477,22 +477,69 @@ def test_both_candidates_are_offered_until_the_handedness_is_known():
     assert not scope.rotation_sign_known
 
 
+def _learner(scope, raw_direction=-1):
+    """The real `_learn_rotation_sign`, bound to a stand and a proposal.
+
+    This used to be simulated with two `Turret.step` calls in the test,
+    which is arithmetic the method happens to use rather than the method
+    -- so nothing here checked that the flag is set, that the sign flips,
+    or that either reaches disk. Bound to a stand-in rather than a whole
+    MainWindow because the method touches only `setup`, `library` and the
+    status strip, and building a window per case would cost a second each.
+    """
+    import types
+
+    from darlaston.session.model import Setup
+    from darlaston.ui.main import MainWindow
+
+    saves = []
+    library = types.SimpleNamespace(
+        scopes={scope.id: scope},
+        save=lambda: saves.append(True))
+    fake = types.SimpleNamespace(
+        setup=Setup(camera=CameraProfile(serial="c"), scope=scope),
+        library=library,
+        _last_proposal=types.SimpleNamespace(raw_direction=raw_direction),
+        strip=types.SimpleNamespace(set_note=lambda _t: None))
+    return lambda actual: (
+        MainWindow._learn_rotation_sign(fake, actual), saves)
+
+
 def test_confirming_the_default_marks_it_known_without_flipping():
     """Being right by luck and being right on purpose should end in the same
     place: confirmed, so later proposals stop hedging."""
     from darlaston.session.model import ScopeProfile
 
     scope = ScopeProfile(id="z", turret=_turret(1), rotation_sign=1)
-    turret = scope.turret
-    probe = Turret(list(turret.positions), turret.current)
-    would_be = probe.step(-1 * 1)              # raw -1, sign +1
+    assert not scope.rotation_sign_known
+    # Position 0 is what the current sign predicts from a raw -1.
+    _, saves = _learner(scope)(0)
+    assert scope.rotation_sign == 1, "a confirmation must not flip the sign"
+    assert scope.rotation_sign_known, "a confirmation must settle the guess"
+    assert saves, "the stand learned something and did not write it down"
 
-    # Simulate the app's inference: the operator confirmed exactly what the
-    # current sign predicted.
-    assert would_be == 0
-    # A correction to the *other* candidate is what flips it.
-    probe2 = Turret(list(turret.positions), turret.current)
-    assert probe2.step(-1 * -1) == 2
+
+def test_correcting_to_the_other_candidate_flips_the_sign():
+    from darlaston.session.model import ScopeProfile
+
+    scope = ScopeProfile(id="z", turret=_turret(1), rotation_sign=1)
+    _, saves = _learner(scope)(2)          # the other neighbour
+    assert scope.rotation_sign == -1, "a correction must flip the sign"
+    assert scope.rotation_sign_known
+    assert saves
+
+
+def test_a_correction_to_neither_candidate_teaches_nothing():
+    """The operator saying "actually it is the 40x over there" is not
+    evidence about handedness, and guessing from it would settle the flag
+    on nothing at all."""
+    from darlaston.session.model import ScopeProfile
+
+    scope = ScopeProfile(id="z", turret=_turret(1), rotation_sign=1)
+    _, saves = _learner(scope)(1)          # neither neighbour of a -1 step
+    assert scope.rotation_sign == 1
+    assert not scope.rotation_sign_known
+    assert not saves, "wrote to disk having learned nothing"
 
 
 # ---- the application's belief tracking the real turret ----------------------
