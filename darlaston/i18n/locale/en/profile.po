@@ -1,0 +1,80 @@
+# Measuring what a camera actually does. Two stages that want opposite
+# fields, which is why the words matter: asking for both at once gets one
+# of them silently wrong.
+
+msgid "profile.title"
+msgstr "Measure this camera"
+
+msgid "profile.heading"
+msgstr "Measure this camera"
+
+#. Says what it buys, because a calibration nobody understands is a
+#. calibration nobody runs.
+msgid "profile.body"
+msgstr ""
+"Two short measurements, once per camera. They tell darlaston how much "
+"slide each resolution really shows, and how this camera's exposure "
+"control maps to brightness. Both are things cameras differ on and "
+"neither can be worked out from the numbers a camera reports."
+
+#. Stage one. Needs detail: matching has nothing to work with otherwise.
+msgid "profile.stage.geometry"
+msgstr ""
+"1. Field of view.  Put a slide in and focus it, or close the field "
+"diaphragm down so there is a sharp edge in view. This needs detail to "
+"measure against, and will say so rather than guess if it cannot see any."
+
+#. Stage two. Needs the opposite.
+msgid "profile.stage.response"
+msgstr ""
+"2. Exposure response.  Now defocus, so the field is even. This one "
+"measures brightness, so anything with structure in it would be "
+"measuring the specimen instead of the camera."
+
+msgid "profile.action.geometry"
+msgstr "Measure field of view"
+
+msgid "profile.action.response"
+msgstr "Measure exposure"
+
+msgid "profile.action.close"
+msgstr "Done"
+
+msgid "profile.measuring"
+msgstr "measuring {what}…"
+
+msgid "profile.geometry.done"
+msgstr "Measured {n} of {total} resolution modes."
+
+#. Not a failure of the camera. Almost always an unlit scope.
+msgid "profile.geometry.nothing"
+msgstr ""
+"Nothing to measure against. The field looks blank, so the lamp may be "
+"off or the light path blocked. Put something with detail in view and "
+"try again."
+
+msgid "profile.response.done"
+msgstr ""
+"Exposure behaves predictably from {low} to {high} ({n} of {total} steps "
+"measured)."
+
+msgid "profile.response.nothing"
+msgstr ""
+"The brightness barely changed across the sweep. Check the lamp is on "
+"and the exposure is not already clipping."
+
+msgid "profile.failed"
+msgstr "Could not finish: {why}"
+
+#. This camera has no way to be measured; a vendor SDK camera reports its
+#. own numbers and does not need it.
+msgid "profile.unavailable"
+msgstr "This camera does not support measuring."
+
+msgid "setup.cameras.action.profile"
+msgstr "Measure…"
+
+msgid "setup.cameras.profile.tooltip"
+msgstr ""
+"Measure what this camera really does: how much slide each resolution "
+"shows, and how its exposure control maps to brightness. Once per camera."

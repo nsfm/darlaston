@@ -684,6 +684,39 @@ class V4L2Backend(CameraBackend):
                            gain_pct=self._gain_pct, binned=True,
                            _pool=self._pool))
 
+    # ---- profiling -------------------------------------------------------
+
+    def snapshot(self, index: int):
+        """One settled greyscale frame from a given resolution mode.
+
+        For measuring what the camera does rather than for keeping. Mode
+        changes take about a second on this hardware and the first frames
+        after one still come from the old pipeline, so this waits rather
+        than trusting the first thing it is handed.
+        """
+        with self._lock:
+            if self._cap is None:
+                raise RuntimeError("camera is not open")
+            previous = self._current
+            self._select(index)
+            for _ in range(SETTLE_FRAMES + 5):
+                self._cap.read()
+            ok, image = self._cap.read()
+            self._select(previous)
+        if not ok or image is None:
+            raise RuntimeError(f"no frame from mode {index}")
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    def level(self) -> float:
+        """The mean level of a settled frame, for a photometric sweep."""
+        with self._lock:
+            if self._cap is None:
+                raise RuntimeError("camera is not open")
+            for _ in range(SETTLE_FRAMES):
+                self._cap.read()
+            ok, image = self._cap.read()
+        return float(image.mean()) if ok and image is not None else 0.0
+
     # ---- capture ---------------------------------------------------------
 
     def grab_raw(self, timeout_ms: int = 8000) -> Frame:

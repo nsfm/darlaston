@@ -619,7 +619,7 @@ def _present_dot() -> QtGui.QIcon:
 
 
 class CameraDialog(_LibraryDialog):
-    """The cameras you own, and which of them to use.
+    """The cameras you own, which of them to use, and what they do.
 
     This used to say there was no picker here on purpose: which camera is
     in front of you is not a preference, it is whichever one is plugged
@@ -637,6 +637,9 @@ class CameraDialog(_LibraryDialog):
                  parent=None) -> None:
         super().__init__(library, parent, width=520)
         self.setWindowTitle(_("setup.cameras.title"))
+        #: Which camera the session actually has open, as opposed to
+        #: merely attached. Measuring needs to drive it.
+        self._open_serial = current
 
         self.editor = CameraEditor()
         self.editor.changed.connect(self._refresh)
@@ -664,9 +667,18 @@ class CameraDialog(_LibraryDialog):
         self.use.clicked.connect(self._use)
         self.use.setEnabled(False)
 
+        # Only for the camera that is actually open, since measuring
+        # means driving it.
+        self.profile = QtWidgets.QPushButton(
+            _("setup.cameras.action.profile"))
+        self.profile.setToolTip(_("setup.cameras.profile.tooltip"))
+        self.profile.clicked.connect(self.measure_requested)
+        self.profile.setEnabled(False)
+
         list_buttons = QtWidgets.QHBoxLayout()
         list_buttons.setSpacing(6)
         list_buttons.addWidget(self.use)
+        list_buttons.addWidget(self.profile)
         list_buttons.addWidget(self.remove)
 
         left = QtWidgets.QVBoxLayout()
@@ -694,6 +706,10 @@ class CameraDialog(_LibraryDialog):
 
         self._reload(current)
         self.setStyleSheet(theme.stylesheet())
+
+    #: Emitted when somebody asks to measure the open camera. The window
+    #: owns the session, so it runs the measurement; this only asks.
+    measure_requested = QtCore.Signal()
 
     #: Set when a camera is chosen, and read by the caller afterwards.
     #: This dialog does not open cameras: it is a dialog.
@@ -756,7 +772,8 @@ class CameraDialog(_LibraryDialog):
         self.list.blockSignals(False)
 
         known = bool(cameras)
-        for w in (self.list, self.editor, self.bound, self.remove, self.use):
+        for w in (self.list, self.editor, self.bound, self.remove,
+                  self.use, self.profile):
             w.setVisible(known)
         self.empty.setVisible(not known)
         if known:
@@ -782,8 +799,10 @@ class CameraDialog(_LibraryDialog):
         self._refresh()
 
     def _refresh(self) -> None:
-        self.use.setEnabled(bool(self._selected)
-                            and self._selected in self._attached())
+        here = bool(self._selected) and self._selected in self._attached()
+        self.use.setEnabled(here)
+        # Measuring drives the camera, so only the one that is open.
+        self.profile.setEnabled(here and self._selected == self._open_serial)
         if not self._selected:
             self.bound.clear()
             return

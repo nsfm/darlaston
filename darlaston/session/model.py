@@ -166,6 +166,19 @@ class CameraProfile:
     #: raw processors key their camera profiles on Make and Model, so a
     #: wrong one is worse than none.
     make: str = ""
+    #: What a profiling run measured, or empty until one has been done.
+    #:
+    #: `geometry` is one entry per resolution mode: its size, whether the
+    #: mode crops or also downscales, and where it sits. A mode is not
+    #: simply more or fewer pixels of the same view -- measured on one
+    #: camera, 640x480 covers *more* slide than 800x600 -- so everything
+    #: converting pixels to micrometres needs this rather than arithmetic.
+    #:
+    #: `response` is (control value, mean level) pairs. The exposure
+    #: control's *timing* is honest, but its brightness is not monotonic,
+    #: so a slider that promises brightness drives through this table.
+    geometry: list = field(default_factory=list)
+    response: list = field(default_factory=list)
     relay: str = ""              # travels with the camera, not the scope
     #: What the relay actually multiplies by. It sits between the objective
     #: and the sensor, so it belongs in the magnification chain like the

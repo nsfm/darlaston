@@ -173,3 +173,50 @@ def measure_response(read_level, set_value, values) -> Response:
         set_value(value)
         points.append((value, float(read_level())))
     return Response(points=tuple(points))
+
+
+# ---- driving a real camera -------------------------------------------------
+
+def sweep_geometry(backend, progress=None) -> list[ModeGeometry]:
+    """Photograph the same field in every mode and work out the shape.
+
+    The largest mode is the reference, so every other is described
+    relative to what a capture actually records.
+    """
+    info = backend.info
+    modes = list(info.resolutions) if info else []
+    if not modes:
+        return []
+    reference = backend.snapshot(0)
+    frames = {}
+    for res in modes[1:]:
+        if progress:
+            progress(f"{res.width}x{res.height}")
+        frames[(res.width, res.height)] = backend.snapshot(res.index)
+    return measure_geometry(reference, frames)
+
+
+def sweep_response(backend, values=None, progress=None) -> Response:
+    """Step the exposure and record what the picture did.
+
+    Values are the device's own control units, not microseconds: the
+    point is to learn the mapping, so assuming one would defeat it.
+    """
+    info = backend.info
+    span = info.exposure_range_us if info else None
+    if span is None:
+        return Response()
+    # The control speaks in 100 us units, which the frame-rate knee
+    # confirmed to about 7%. Sampled densely at the short end, where the
+    # discontinuities were, and sparsely after.
+    if values is None:
+        low, high = max(1, span[0] // 100), min(span[1] // 100, 400)
+        values = list(range(low, min(64, high))) + \
+            list(range(64, high, max(1, (high - 64) // 16)))
+
+    def set_value(v):
+        if progress:
+            progress(str(v))
+        backend.set_exposure(int(v) * 100)
+
+    return measure_response(backend.level, set_value, values)

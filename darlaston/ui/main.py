@@ -594,6 +594,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text(f"{gain / 100:.1f}×")
         self._synced = True
 
+    def _measure_camera(self, parent=None) -> None:
+        """Run the profiling pass, and keep what it measured.
+
+        Only what it is confident about. A run against an unlit scope
+        measures nothing and says so, and writing that down as though it
+        were a result is how a wrong micrometres-per-pixel gets into
+        every file taken afterwards.
+        """
+        from dataclasses import asdict, replace
+
+        from .profile_ui import ProfileDialog
+
+        if self.setup is None:
+            return
+        dialog = ProfileDialog(self.session, self.setup.camera, parent or self)
+        dialog.exec()
+
+        changed = {}
+        if dialog.geometry_result:
+            trusted = [asdict(g) for g in dialog.geometry_result if g.trusted]
+            if trusted:
+                changed["geometry"] = trusted
+        if dialog.response_result and len(dialog.response_result.usable) >= 3:
+            changed["response"] = [list(p)
+                                   for p in dialog.response_result.points]
+        if not changed:
+            return
+
+        updated = replace(self.setup.camera, **changed)
+        self.library.cameras[updated.serial] = updated
+        self.library.save()
+        self.setup.camera = updated
+
     def _use_camera(self, key: str) -> None:
         """Remember a choice and act on it."""
         from ..camera.discovery import look
@@ -1773,6 +1806,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         current = self.setup.camera.serial if self.setup else None
         dialog = CameraDialog(self.library, current, self)
+        dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
         # and reloading the old one over the top of it would undo the
