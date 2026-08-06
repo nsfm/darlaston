@@ -73,6 +73,16 @@ _CTRL_FLAG_DISABLED = 0x0001
 #: naive "take the first format" negotiation.
 REFUSED_FOURCC = ("H264", "HEVC", "MPG4", "MJPGH264")
 
+#: Thrown away after opening, and after any control change. The first
+#: frame off a freshly opened UVC camera can be garbage -- measured at a
+#: mean of 254 where the settled value was 89 -- and an exposure change
+#: takes exactly two frames to appear: frame 0 carries the old value,
+#: frame 1 is transitional, frame 2 onward is stable. Repeatable in both
+#: directions across four transitions, so the number is measured rather
+#: than picked.
+SETTLE_FRAMES = 3
+WARMUP_FRAMES = 8
+
 #: Preferred in this order. Uncompressed first, because MJPG chroma
 #: subsampling and ringing land exactly on the fine detail this program
 #: exists to record -- a diatom's striae are a few pixels wide. The cost
@@ -309,6 +319,9 @@ class V4L2Backend(CameraBackend):
         self._seq = 0
         self._exposure_us = 20000
         self._gain_pct = 100
+        #: Filled in by `open`, from the driver. Empty means the device
+        #: has told us it offers nothing, which is a real answer.
+        self._controls: dict = {}
         self._current = 0
 
     # ---- lifecycle -------------------------------------------------------
@@ -337,17 +350,94 @@ class V4L2Backend(CameraBackend):
             # the scale bar refuses to draw rather than inventing one.
             Resolution(i, w, h, 0.0) for i, (w, h) in enumerate(sizes))
         self._select(0)
+
+        # What this device really offers, rather than what a UVC camera
+        # might. Measured on two cameras in one machine: sixteen controls
+        # on one, none whatsoever on the other. Claiming a range we
+        # cannot drive puts a slider in front of somebody that moves and
+        # does nothing.
+        self._controls = {c["name"]: c for c in controls(self._node)}
+        self._settle()
+
         self._info = CameraInfo(
             model=found["card"], serial=self._node,
             resolutions=resolutions, max_bit_depth=8,
             bayer_pattern="",              # decoded already; no CFA exists
-            exposure_range_us=(100, 1_000_000),
-            gain_range_pct=(100, 1600),
+            exposure_range_us=self._exposure_range(),
+            gain_range_pct=self._gain_range(),
             brand=found["driver"],
             raw_capable=bool(found["raw"]),
             software_trigger=True,
         )
         return self._info
+
+    def _has(self, *names: str) -> dict | None:
+        for name in names:
+            found = self._controls.get(name)
+            if found:
+                return found
+        return None
+
+    def _exposure_range(self) -> tuple[int, int] | None:
+        """In microseconds, from the control's own limits.
+
+        UVC reports exposure in 100 us units, so the driver's 1..5000
+        becomes 100 us to half a second. Taking the device's word for it
+        beats the range we used to assert, which was the same on every
+        camera and true of none.
+        """
+        found = self._has("Exposure Time, Absolute", "Exposure (Absolute)")
+        if not found:
+            return None
+        return (max(1, found["min"]) * 100, max(1, found["max"]) * 100)
+
+    def _gain_range(self) -> tuple[int, int] | None:
+        """As a percentage where 100 is the device's own floor.
+
+        UVC gain units are device-defined and mean nothing across
+        cameras: this one runs 0..100 and measured 2.8x end to end, so
+        the number is a position on its scale rather than a true
+        multiplier. Said here rather than converted, because inventing a
+        multiplier we have not measured would be worse than a scale that
+        is honestly just a scale.
+        """
+        found = self._has("Gain")
+        if not found:
+            return None
+        return (100, 100 + max(1, found["max"] - found["min"]))
+
+    def _settle(self) -> None:
+        """Put the camera into a known state, and let it get there.
+
+        Three things, each learned the hard way on real hardware:
+
+        * **Manual exposure**, where the device has it. Automatic
+          exposure re-exposes between frames, which shows up as tiles
+          that do not match across a mosaic and slices that do not match
+          within a stack.
+        * **Auto white balance off.** It adjusts channel gains underneath
+          a measurement. It also has no business anywhere near a
+          calibration sweep, and it is what makes a tungsten-lit field
+          come out yellow.
+        * **Discard the first frames.** The first frame after opening can
+          be a blown or empty one -- measured at 254 mean where the
+          settled value was 89 -- and after any control change the next
+          two frames still carry the old setting.
+        """
+        if self._cap is None:
+            return
+        try:
+            if self._has("Auto Exposure"):
+                self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)     # manual
+            if self._has("White Balance, Automatic", "White Balance Temperature, Auto"):
+                self._cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+        except Exception:
+            pass
+        for _ in range(WARMUP_FRAMES):
+            try:
+                self._cap.grab()
+            except Exception:
+                break
 
     def close(self) -> None:
         self.stop_stream()
@@ -393,10 +483,31 @@ class V4L2Backend(CameraBackend):
             self._cap.set(cv2.CAP_PROP_EXPOSURE, max(1, microseconds // 100))
 
     def set_gain(self, percent: int) -> None:
+        """Map our percentage onto whatever scale this device uses.
+
+        This wrote the percentage straight through, which meant the
+        interface's floor of 100 landed on a camera whose gain range is
+        0..100 -- pinning it at maximum, where every further movement
+        clamped to the same place and appeared to do nothing at all.
+        """
         self._gain_pct = int(percent)
+        found = self._has("Gain")
         with self._lock:
-            if self._cap is not None:
-                self._cap.set(cv2.CAP_PROP_GAIN, percent)
+            if self._cap is None or not found:
+                return
+            span = max(1, found["max"] - found["min"])
+            value = found["min"] + max(0, int(percent) - 100)
+            self._cap.set(cv2.CAP_PROP_GAIN,
+                          min(found["max"], max(found["min"], value)))
+            self._flush()
+
+    def _flush(self) -> None:
+        """Throw away the frames still carrying the old setting."""
+        for _ in range(SETTLE_FRAMES):
+            try:
+                self._cap.grab()
+            except Exception:
+                return
 
     def get_exposure(self) -> int:
         with self._lock:

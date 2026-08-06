@@ -551,6 +551,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sync_optovar()
             self._push_turret()
 
+        if info is not None:
+            self._fit_controls_to(info)
         self.strip.update_status(status, self.setup)
         self.strip.select_resolution(self.session.preview_resolution)
         self.strip.select_rate(self.session.framerate_cap)
@@ -634,6 +636,34 @@ class MainWindow(QtWidgets.QMainWindow):
                                      self.bridge.status.emit,
                                      self.pipeline.submit)
         self.session.start()
+
+    def _fit_controls_to(self, info) -> None:
+        """Show only the controls this camera really has.
+
+        A slider over a control that does not exist is worse than no
+        slider, because it moves and nothing happens -- and the person
+        reasonably concludes the program is broken rather than the
+        camera. Measured on two cameras in one machine: one exposes
+        sixteen controls, the other none whatsoever.
+
+        Where the control exists, the widget takes the device's own
+        range. It used to assert 100..2000 on everything, which on a
+        camera whose gain runs 0..100 meant our floor was its ceiling:
+        the slider pinned gain at maximum and every movement clamped to
+        the same place, looking for all the world like a dead control.
+        """
+        for widget, span, why in (
+                (self.exposure, info.exposure_range_us, _("rail.no_exposure")),
+                (self.gain, info.gain_range_pct, _("rail.no_gain"))):
+            if span is None:
+                widget.setEnabled(False)
+                widget.setToolTip(why)
+                continue
+            widget.setEnabled(True)
+            widget.setToolTip("")
+            low, high = span
+            if widget is self.gain:
+                widget.setRange(int(low), int(high))
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera

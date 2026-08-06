@@ -90,3 +90,39 @@ def test_a_camera_that_cannot_be_loaded_is_not_offered():
     listing it, but it must not raise either."""
     found = look()               # must not raise, whatever is installed
     assert all(c.key and c.kind and c.name for c in found)
+
+
+# ---- what the rail is allowed to offer ------------------------------------
+
+def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp):
+    """A slider over a control that does not exist is worse than no
+    slider: it moves, nothing happens, and the person reasonably decides
+    the program is broken rather than the camera."""
+    from darlaston.camera.base import CameraInfo, Resolution
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+
+    sealed = CameraInfo(
+        model="UVC Camera", serial="x",
+        resolutions=(Resolution(0, 1920, 1080, 0.0),),
+        max_bit_depth=8, bayer_pattern="",
+        exposure_range_us=None, gain_range_pct=None)
+    win._fit_controls_to(sealed)
+    assert not win.exposure.isEnabled(), "offered an exposure it cannot set"
+    assert not win.gain.isEnabled(), "offered a gain it cannot set"
+    assert win.exposure.toolTip(), "disabled it without saying why"
+
+    able = CameraInfo(
+        model="HD USB Camera", serial="y",
+        resolutions=(Resolution(0, 1920, 1080, 0.0),),
+        max_bit_depth=8, bayer_pattern="",
+        exposure_range_us=(100, 500000), gain_range_pct=(100, 200))
+    win._fit_controls_to(able)
+    assert win.exposure.isEnabled() and win.gain.isEnabled()
+    assert not win.exposure.toolTip()
+    # And the gain slider takes the device's range rather than asserting
+    # one: our old floor of 100 was this camera's ceiling.
+    assert win.gain.minimum() == 100 and win.gain.maximum() == 200
+    win.shutdown()

@@ -50,8 +50,12 @@ class CameraInfo:
     resolutions: tuple[Resolution, ...]
     max_bit_depth: int
     bayer_pattern: str
-    exposure_range_us: tuple[int, int]
-    gain_range_pct: tuple[int, int]
+    #: None when the device has no such control. Not a zero-width range
+    #: and not a guess: a UVC camera can genuinely offer neither, and a
+    #: slider over a control that does not exist is worse than no slider,
+    #: because it moves and nothing happens.
+    exposure_range_us: tuple[int, int] | None
+    gain_range_pct: tuple[int, int] | None
     #: Which vendor library answered. One family ships under a dozen
     #: brand names, so this is what to print rather than guessing.
     brand: str = ""
