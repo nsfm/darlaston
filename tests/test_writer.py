@@ -285,3 +285,36 @@ def test_the_fill_never_sits_at_full_waiting():
     assert fraction <= 0.95, f"filled to {fraction}"
     gate.set()
     _drained(q)
+
+
+# ---- the gauge -------------------------------------------------------------
+
+def test_the_gauge_is_absent_until_there_is_something_to_say(qapp):
+    """It lives under the stack window, and the stack window is what the
+    operator is looking at while racking. Furniture that is always there
+    is furniture that gets looked at."""
+    from darlaston.ui.widgets import SaveGauge
+
+    g = SaveGauge()
+    assert not g.isVisible()
+    g.set_progress(2, 0.4)
+    assert g.isVisibleTo(g.parentWidget() or g)
+    g.set_progress(0, 0.0)
+    assert not g.isVisible(), "stayed up with nothing left to write"
+
+
+def test_the_gauge_paints_at_every_depth_without_falling_over(qapp):
+    """Including past what cells can legibly say."""
+    from PySide6 import QtGui
+    from darlaston.ui.widgets import SaveGauge
+
+    g = SaveGauge()
+    g.resize(160, SaveGauge.HEIGHT)
+    for depth in (1, 2, 8, WriteQueue.MAX_PENDING, 99):
+        for fraction in (0.0, 0.5, 0.95):
+            g.set_progress(depth, fraction)
+            img = QtGui.QImage(160, SaveGauge.HEIGHT,
+                               QtGui.QImage.Format.Format_RGB32)
+            img.fill(QtGui.QColor("#0b0d0b"))
+            g.render(img)                       # must not raise
+    assert g.toolTip(), "no way to ask what it is"

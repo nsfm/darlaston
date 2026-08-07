@@ -105,29 +105,10 @@ msgstr "hold still · {n}/{total}"
 msgid "note.moved.discarded"
 msgstr "discarded, the stage moved"
 
-#. Over the live view after the shutter closes, while the frame is being
-#. calibrated and written. Movement is harmless by now -- this is here so
-#. the pause between slices is explained rather than mysterious.
-msgid "note.writing"
-msgstr "saving"
-
 #. While waiting for the operator to point at a neutral patch.
 msgid "note.wb.point"
 msgstr "point at something grey"
 
-#. Replaces the ordinary "slice n ✓" once the write queue passes its
-#. watermark. {count} is how many are still being written. Said before the
-#. queue starts refusing captures rather than after: a shutter that
-#. quietly ignores a deliberate pause is exactly what made a slow write
-#. feel like a trigger firing at the wrong moment.
-msgid "note.slice_landed.behind"
-msgid_plural "note.slice_landed.behind"
-msgstr[0] "slice {n} ✓, keep racking. 1 still writing"
-msgstr[1] "slice {n} ✓, keep racking. {count} still writing"
-
-#. While a stack finishes and the last exposed slices are still being
-#. written. {count} is how many. Brief, and only ever seen when somebody
-#. presses Finish while the queue is still catching up.
 msgid "note.stack_settling"
 msgid_plural "note.stack_settling"
 msgstr[0] "saving the last slice…"

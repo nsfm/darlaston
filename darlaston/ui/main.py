@@ -64,7 +64,7 @@ from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .widgets import (BalanceSwatch, FocusGroup, Histogram, LiveView,
-                      ValueBar)
+                      SaveGauge, ValueBar)
 
 _log = logging.getLogger(__name__)
 
@@ -79,11 +79,16 @@ def _exposing_notice(state: str) -> str | None:
     one message that never reached the catalogue: untranslated, and
     invisible to the check that every displayed string exists.
     """
-    if state in ("calibrating", "writing"):
-        # Motion is harmless by now, so this does not ask for stillness --
-        # it exists because writing a 40 MB frame takes a few seconds, and
-        # during a stack that silence reads as "why has nothing happened".
-        return _("note.writing")
+    # "calibrating" and "writing" used to put "saving" here. That was
+    # right when the operator genuinely had to wait through it: a 40 MB
+    # frame took a few seconds and the silence read as the program having
+    # stopped. It is wrong now. Both happen on the write queue, the camera
+    # is already free, and the word lands over the live view in the space
+    # "hold still -- exposing" has just left. Nate stopped racking every
+    # time, knowing perfectly well he did not have to. A banner in the
+    # place that governs somebody's hands is an instruction whatever it
+    # says. The depth gauge under the stack window says the same thing
+    # where it costs nothing to ignore.
     if not state.startswith("exposing"):
         return None
     bits = state.split(":")
@@ -394,7 +399,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.assembly.close_requested.connect(self.stack_window.hide)
         self.assembly.configure(self.settings)
         self.stack_window.set_relative(0.55, 0.55)
-        _fill(self.stack_window, self.assembly)
+        # Under the assembly, inside the same panel: the gauge belongs
+        # beside the work rather than in the strip that tells the operator
+        # when to hold still.
+        self.save_gauge = SaveGauge()
+        _fill(self.stack_window, self.assembly, self.save_gauge)
+        # Its own timer rather than the frame signal: it must keep filling
+        # while a write is in flight and no frames are arriving, which is
+        # exactly the moment it exists for.
+        self._gauge_tick = QtCore.QTimer(self)
+        self._gauge_tick.setInterval(80)
+        self._gauge_tick.timeout.connect(self._refresh_gauge)
+        self._gauge_tick.start()
         self.stack_window.hide()
         self.stack_window.closed.connect(
             lambda: self.focus.stack.setChecked(False))
@@ -1312,6 +1328,10 @@ class MainWindow(QtWidgets.QMainWindow):
         elif not result.ok and self.stack_session is not None:
             self.stack_trigger.capture_failed()
 
+    def _refresh_gauge(self) -> None:
+        """Ten times a second, and cheap: two ints off the queue."""
+        self.save_gauge.set_progress(*self.capture.progress())
+
     def _on_capture_exposed(self) -> None:
         """The frame is off the sensor. Let the trigger watch again.
 
@@ -1357,19 +1377,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_preview = (self._last_preview.copy()
                                   if self._last_preview is not None else None)
         self._read_slice_for_preview(self.stack_session.dir / s.filename)
-        if self.capture.catching_up:
-            # The confirmation leads and the queue trails it. A message
-            # that opens with "saving" lands in the space "hold still"
-            # just vacated and reads as an instruction to wait, however
-            # much the operator knows better -- Nate felt it and stopped
-            # racking. What is wanted here is a quiet depth gauge, which
-            # is a small bar under the stack window rather than a line of
-            # prose in the banner. Until that exists, this at least never
-            # opens with the word that makes a hand stop moving.
-            self.strip.set_note(n_("note.slice_landed.behind",
-                                   self.capture.writing,
-                                   n=s.index))
-        elif self.mosaic is not None:
+        # Nothing here about the queue. It lives in the gauge under the
+        # stack window now: the strip is where "hold still -- exposing"
+        # appears, and a line about saving arriving in that space read as
+        # an instruction to wait however well Nate knew better.
+        if self.mosaic is not None:
             self.strip.set_note(_("note.slice_landed.first", n=s.index))
         else:
             self.strip.set_note(_("note.slice_landed", n=s.index))
@@ -2571,11 +2583,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
 # --------------------------------------------------------------------------
 
-def _fill(panel, widget) -> None:
-    """Put a panel's content inside its floating frame."""
+def _fill(panel, *widgets) -> None:
+    """Put a panel's content inside its floating frame.
+
+    More than one when something belongs *under* the panel's main content
+    rather than inside it -- the save gauge sits below the assembly, hard
+    against it, which is why the spacing is nothing.
+    """
     lay = QtWidgets.QVBoxLayout(panel.body)
     lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(widget)
+    lay.setSpacing(0)
+    for widget in widgets:
+        lay.addWidget(widget)
 
 
 def _invite(button, on: bool) -> None:

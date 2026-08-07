@@ -151,6 +151,11 @@ class StillCapture:
         rather than from a button that does nothing."""
         return self._writer.under_pressure
 
+    def progress(self) -> tuple[int, float]:
+        """(writes outstanding, how far through the running one). For the
+        gauge under the stack window."""
+        return self._writer.progress()
+
     def drain(self, timeout: float = 30.0) -> bool:
         """Wait for every exposed frame to reach disk. Before closing."""
         return self._writer.drain(timeout)
