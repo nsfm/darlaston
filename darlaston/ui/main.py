@@ -1834,7 +1834,8 @@ class MainWindow(QtWidgets.QMainWindow):
         while it is sitting on the bench.
         """
         current = self.setup.camera.serial if self.setup else None
-        dialog = CameraDialog(self.library, current, self)
+        dialog = CameraDialog(self.library, current, self,
+                              settings=self.settings)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
@@ -2265,12 +2266,19 @@ def _list_cameras() -> int:
     found = enumerate_cameras()
     print(f"\nV4L2 / UVC: {len(found)} capture device"
           f"{'' if len(found) == 1 else 's'}")
+    # What the operator has passed over. Said out loud here, because this
+    # command exists to explain what the application can see and a camera
+    # it has been told to skip is exactly the sort of thing somebody would
+    # otherwise spend an evening puzzling over.
+    ignored = Settings.load().ignored_cameras or {}
     for cam in found:
         w, h = cam["sizes"][0]
         raw = (", raw: " + ", ".join(cam["raw"])) if cam["raw"] else \
             ", no raw (linear DNG only)"
+        skip = ("  -- passed over on startup"
+                if f"v4l2:{cam.get('key', '')}" in ignored else "")
         print(f"    {cam['node']}  {cam['card']}  [{cam['driver']}]  "
-              f"{w}x{h}  {'/'.join(cam['formats'])}{raw}")
+              f"{w}x{h}  {'/'.join(cam['formats'])}{raw}{skip}")
     if found:
         print("\n    run with --usb to use one")
     return 0
@@ -2335,10 +2343,13 @@ def main() -> int:
         # The ToupTek path is no longer the default by assumption; it is
         # one of the things `look()` can find.
         from ..camera.discovery import (backend_for, choose, look,
-                                        presence_for)
+                                        offerable, presence_for)
 
         seen = look()
         _kept = Settings.load()
+        # An explicit choice wins over the ignore list, because it is the
+        # same operator saying the more specific thing. The list only
+        # decides what gets opened when nobody has said.
         picked = choose(seen, _kept.camera_choice, _kept.camera_fingerprint)
         if picked is None and seen:
             # Several attached and nobody has said which. Open the
@@ -2346,7 +2357,13 @@ def main() -> int:
             # menu offer the rest. An empty window and a question, before
             # the application has done anything useful, is a worse
             # greeting than a picture and a way to change it.
-            picked = seen[0]
+            #
+            # "Likeliest" is sensor size, which on a laptop with nothing
+            # else attached is the laptop's own webcam. That is the right
+            # answer to the question the ranking asks and the wrong answer
+            # to the operator's, so anything they have marked as not the
+            # microscope steps aside here.
+            picked = offerable(seen, _kept.ignored_cameras)[0]
 
         if picked is not None:
             make: callable = lambda: backend_for(picked)

@@ -120,6 +120,27 @@ class Settings:
     #: The chosen camera's fingerprint, so a cable moved to another
     #: socket is recognised rather than treated as a stranger.
     camera_fingerprint: str = ""
+    #: Cameras the operator has said are not the microscope, as
+    #: `key -> fingerprint`. A laptop's own webcam and the infrared sensor
+    #: beside it are on the bus at every launch, and on a machine with no
+    #: other camera attached the likeliest-first rule opens one of them.
+    #:
+    #: This is a *preference*, not a rule the program worked out, and the
+    #: distinction is the whole reason it is allowed to exist:
+    #: `discovery.look` deliberately hides nothing, because a heuristic
+    #: confident enough to hide a device will one day hide the right one.
+    #: An operator saying "not this one" is not a heuristic. It is still
+    #: never a filter -- the picker lists every ignored camera, says so,
+    #: and lets it be taken back -- it only stops one being opened by
+    #: default.
+    #:
+    #: Stored per machine because it describes a bench, not a camera: the
+    #: same model may be somebody else's microscope camera.
+    #:
+    #: The fingerprint rides along so this cannot silently hide a
+    #: *different* device that later appears at the same port. A port is a
+    #: socket; ignoring a socket is not what anybody meant.
+    ignored_cameras: dict[str, str] = field(default_factory=dict)
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built

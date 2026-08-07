@@ -354,3 +354,57 @@ def test_the_remembered_port_is_not_enough_on_its_own():
     mine = _cam("v4l2:port-A", fingerprint="mine")
     assert choose([mine, spare], remembered="v4l2:port-A",
                   fingerprint="mine") is mine
+
+
+# ---- cameras the operator has passed over ---------------------------------
+
+def test_a_passed_over_camera_is_not_opened_by_default():
+    """A laptop's own webcam is on the bus at every launch, and with
+    nothing else attached the likeliest-first rule opens it."""
+    from darlaston.camera.discovery import offerable, rank
+
+    webcam = _cam("v4l2:built-in", name="Integrated Camera",
+                  width=1920, height=1080, fingerprint="w")
+    scope = _cam("v4l2:port-8", name="UVC Camera",
+                 width=1280, height=1024, fingerprint="s")
+    order = sorted([webcam, scope], key=rank, reverse=True)
+    assert order[0] is webcam, "the premise: the webcam ranks first"
+    assert offerable(order, {"v4l2:built-in": "w"})[0] is scope
+
+
+def test_passing_a_camera_over_never_hides_it():
+    """`look` deliberately hides nothing -- a rule confident enough to hide
+    a device will one day hide the right one. This is a preference about
+    what opens, not a filter."""
+    from darlaston.camera.discovery import is_ignored, offerable
+
+    webcam = _cam("v4l2:built-in", fingerprint="w")
+    scope = _cam("v4l2:port-8", fingerprint="s")
+    seen = [webcam, scope]
+    ignored = {"v4l2:built-in": "w"}
+    assert is_ignored(webcam, ignored) and not is_ignored(scope, ignored)
+    # An explicit choice still wins: `choose` never consults the list.
+    assert choose(seen, remembered="v4l2:built-in", fingerprint="w") is webcam
+
+
+def test_passing_over_the_only_camera_still_leaves_one():
+    """Somebody can pass over every camera on the machine -- by ignoring
+    the only one, or by unplugging the microscope camera and leaving the
+    laptop's. A picture and a way to change it beats a blank window
+    explaining that everything has been hidden."""
+    from darlaston.camera.discovery import offerable
+
+    only = _cam("v4l2:built-in", fingerprint="w")
+    assert offerable([only], {"v4l2:built-in": "w"}) == [only]
+
+
+def test_a_different_camera_in_a_passed_over_port_is_offered():
+    """A key is a socket. Passing over a socket is not what anybody meant,
+    and inheriting the verdict would hide a camera nobody has judged."""
+    from darlaston.camera.discovery import is_ignored
+
+    stranger = _cam("v4l2:built-in", fingerprint="something-else")
+    assert not is_ignored(stranger, {"v4l2:built-in": "w"})
+    # An entry written before fingerprints existed carries an empty one
+    # and is still honoured, rather than being forgotten on upgrade.
+    assert is_ignored(stranger, {"v4l2:built-in": ""})

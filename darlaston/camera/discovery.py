@@ -338,6 +338,40 @@ def presence_for(camera: Camera):
     return None
 
 
+def is_ignored(camera: Camera, ignored: dict[str, str] | None) -> bool:
+    """Has the operator said this one is not the microscope?
+
+    Matched on the key, and only while the fingerprint still agrees. A key
+    is a socket -- ignoring a socket is not what anybody meant by "not
+    this camera", and a different device appearing in it later must be
+    offered normally rather than inheriting somebody else's verdict.
+
+    An entry written before fingerprints existed carries an empty one and
+    is honoured on the key alone; the alternative is silently forgetting
+    a preference on upgrade.
+    """
+    if not ignored:
+        return False
+    if camera.key not in ignored:
+        return False
+    was = ignored[camera.key]
+    return not (was and camera.fingerprint and was != camera.fingerprint)
+
+
+def offerable(cameras: list[Camera],
+              ignored: dict[str, str] | None) -> list[Camera]:
+    """The cameras worth opening without being asked.
+
+    Never empty when `cameras` is not. Ignoring every camera on the
+    machine is a thing somebody can do -- by ignoring the only one, or by
+    unplugging the microscope camera and leaving the laptop's -- and the
+    right answer to it is a picture and a way to change it, not a blank
+    window explaining that everything has been hidden.
+    """
+    kept = [c for c in cameras if not is_ignored(c, ignored)]
+    return kept or cameras
+
+
 def choose(cameras: list[Camera], remembered: str = "",
            fingerprint: str = "") -> Camera | None:
     """Which one to open, or None when a person has to say.
