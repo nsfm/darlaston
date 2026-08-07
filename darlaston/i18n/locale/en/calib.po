@@ -80,11 +80,6 @@ msgstr "{banked}/{wanted}  3+ rejects debris"
 msgid "calib.flat.detail.ready"
 msgstr "{banked}/{wanted}  ready to build"
 
-#. Said after banking a frame that does not look like empty slide. Never
-#. a refusal: the operator looked and pressed the button.
-msgid "calib.flat.warn.not_blank"
-msgstr "that field did not look blank -- a specimen in a flat ghosts every frame it corrects"
-
 #. Said after banking without having moved the stage.
 msgid "calib.flat.warn.same_patch"
 msgstr "the view has not moved -- debris in this field will survive the median"

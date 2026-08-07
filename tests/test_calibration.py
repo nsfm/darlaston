@@ -503,19 +503,26 @@ def _collector(raw, wanted=2):
     return Opportunist(types.SimpleNamespace(backend=backend), wanted=wanted)
 
 
-def test_a_raw_frame_with_a_subject_on_it_is_banked_but_flagged():
+def test_a_raw_frame_with_a_subject_on_it_is_banked_without_argument(caplog):
     """The operator looked through the eyepiece and pressed a button.
-    Refusing them on a threshold measured against synthetic fields would
-    be this module deciding it knows better than the person at the
-    microscope -- but a specimen in a flat ghosts every frame that flat
-    ever corrects, so it says so."""
+
+    The blank threshold behind this was calibrated against synthetic
+    fields and, on the first real session, disagreed with all four of four
+    good flats -- so it says nothing in the interface. A warning that is
+    wrong every time teaches people to ignore the place warnings appear.
+    It goes to the log, as evidence for recalibrating it."""
+    import logging
+
     said = []
     opportunist = _collector(_raw_field(specimen=True))
     opportunist._on_warn = said.append
-    opportunist._grabbing.acquire()
-    opportunist._grab()
+    with caplog.at_level(logging.INFO, logger="darlaston.calib.opportunist"):
+        opportunist._grabbing.acquire()
+        opportunist._grab()
     assert opportunist.bank.count == 1, "refused the operator"
-    assert said == ["calib.flat.warn.not_blank"], f"said {said}"
+    assert said == [], f"put an unverified threshold in the interface: {said}"
+    assert any("blank check disagreed" in r.message for r in caplog.records), \
+        "said nothing at all, so there is nothing to recalibrate from"
 
 
 def test_a_raw_frame_of_empty_glass_is_banked_without_complaint():
