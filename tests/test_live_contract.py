@@ -129,6 +129,7 @@ def test_frame_context_manager_releases():
 
 # ---- end to end through the synthetic camera --------------------------------
 
+@pytest.mark.serial
 def test_mock_camera_through_pipeline_produces_signals():
     """Integration: frames flow camera -> cell -> analysis -> signals, and the
     pool is whole afterwards. Drop *semantics* are covered directly above."""

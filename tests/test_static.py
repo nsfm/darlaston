@@ -79,3 +79,42 @@ def test_every_name_a_function_reads_from_module_scope_exists(name, path):
              | {s.get_name() for s in table.get_symbols() if s.is_local()})
     missing = sorted({n for n in free_names(table) if n not in known})
     assert not missing, f"{name} reads undefined name(s): {missing}"
+
+
+def test_no_test_builds_a_widget_without_asking_for_the_application():
+    """Constructing a QWidget with no QApplication does not raise, it
+    segfaults.
+
+    A test that skips the `qapp` fixture passes anyway as long as some
+    earlier test in the same process happened to make one -- an ordering
+    accident, not a guarantee. Running the suite across processes turns it
+    into a crash, which is how this was found, and it would equally be a
+    crash for anyone running a single test file on its own.
+    """
+    import ast
+    from pathlib import Path
+
+    #: Suffixes that name a Qt object in this codebase.
+    WIDGETS = ("Dialog", "View", "Panel", "Editor", "Bar", "Window", "Group",
+               "Meter", "Swatch", "Picker", "Assembly", "Widget", "Button")
+
+    offenders = []
+    for path in sorted(Path(__file__).parent.glob("test_*.py")):
+        tree = ast.parse(path.read_text())
+        for fn in tree.body:
+            if not (isinstance(fn, ast.FunctionDef)
+                    and fn.name.startswith("test_")):
+                continue
+            if {"qapp", "window"} & {a.arg for a in fn.args.args}:
+                continue
+            for node in ast.walk(fn):
+                if (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and any(node.func.id.endswith(w) for w in WIDGETS)):
+                    offenders.append(f"{path.name}:{fn.lineno} {fn.name} "
+                                     f"builds {node.func.id}()")
+                    break
+    assert not offenders, (
+        "these build a Qt object without requesting `qapp`, and pass only "
+        "because something else made the application first: "
+        + "; ".join(offenders))

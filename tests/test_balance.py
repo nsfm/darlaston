@@ -312,6 +312,20 @@ def test_the_button_becomes_pressable_when_the_camera_arrives(qapp, tmp_path,
 
     win = MainWindow(lambda: MockCamera(fps=30.0))
     try:
+        # The window drives a real session against the synthetic camera,
+        # and its supervisor thread publishes status of its own -- which
+        # overwrites anything injected here, at whatever moment the
+        # scheduler chooses. Stopping it first makes this a test of the
+        # rule rather than of the race.
+        win.session.stop()
+        # Said out loud rather than assumed. The window starts a real
+        # session against the synthetic camera, so "before there is a
+        # camera" is a race the moment the machine is busy -- it can come
+        # up between the constructor and this line. Stating the state
+        # tests the rule instead of the scheduler.
+        dark = SessionStatus(CameraState.DISCONNECTED)
+        win.session._status = dark
+        win._on_status(dark)
         assert not win.wb_pick.isEnabled(), "offered before there is a camera"
 
         live = SessionStatus(CameraState.STREAMING, info=CameraInfo(
@@ -339,6 +353,12 @@ def test_the_button_says_which_of_its_three_states_it_is_in(qapp, tmp_path,
 
     win = MainWindow(lambda: MockCamera(fps=30.0))
     try:
+        # The window drives a real session against the synthetic camera,
+        # and its supervisor thread publishes status of its own -- which
+        # overwrites anything injected here, at whatever moment the
+        # scheduler chooses. Stopping it first makes this a test of the
+        # rule rather than of the race.
+        win.session.stop()
         live = SessionStatus(CameraState.STREAMING, info=CameraInfo(
             model="m", serial="s", resolutions=(), max_bit_depth=12,
             bayer_pattern="GBRG", exposure_range_us=(100, 10 ** 6),

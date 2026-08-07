@@ -99,7 +99,7 @@ def test_a_camera_that_cannot_be_loaded_is_not_offered():
 
 # ---- what the rail is allowed to offer ------------------------------------
 
-def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp):
+def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp, window):
     """A slider over a control that does not exist is worse than no
     slider: it moves, nothing happens, and the person reasonably decides
     the program is broken rather than the camera."""
@@ -107,7 +107,7 @@ def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp):
     from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
 
-    win = MainWindow(lambda: MockCamera(fps=30.0))
+    win = window()
 
     sealed = CameraInfo(
         model="UVC Camera", serial="x",
@@ -130,7 +130,6 @@ def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp):
     # And the gain slider takes the device's range rather than asserting
     # one: our old floor of 100 was this camera's ceiling.
     assert win.gain.minimum() == 100 and win.gain.maximum() == 200
-    win.shutdown()
 
 
 def test_a_camera_whose_cable_moved_is_still_the_same_camera():
@@ -197,7 +196,7 @@ def test_a_different_camera_in_the_same_socket_is_a_different_camera():
     assert again.model == "Cheap Camera"
 
 
-def test_editing_a_camera_keeps_what_the_editor_cannot_show():
+def test_editing_a_camera_keeps_what_the_editor_cannot_show(qapp):
     """The editor showed six fields and rebuilt the profile from those
     six, so everything else was reset by construction -- the maker, the
     fingerprint that stops one camera inheriting another's identity, and

@@ -152,6 +152,7 @@ def _run(tl, seconds=5.0):
     assert not tl.running, "the timelapse did not end"
 
 
+@pytest.mark.serial
 def test_timelapse_takes_the_asked_number_and_stops(tmp_path):
     from darlaston.capture.timelapse import Timelapse
 
@@ -173,6 +174,7 @@ def test_timelapse_takes_the_asked_number_and_stops(tmp_path):
     assert len([s for s in statuses if s.running]) >= 3
 
 
+@pytest.mark.serial
 def test_timelapse_counts_photographs_and_not_triggers():
     """`trigger` returns True the moment the shutter is claimed. A run
     where every capture then failed used to finish saying it took them
@@ -192,6 +194,7 @@ def test_timelapse_counts_photographs_and_not_triggers():
     assert "4 failed" in statuses[-1].message
 
 
+@pytest.mark.serial
 def test_timelapse_notices_the_dark_expiring_mid_run():
     """The dark ages out and the capture path stops applying it without
     saying so. Elapsed run time is the wrong thing to measure: it called
@@ -211,6 +214,7 @@ def test_timelapse_notices_the_dark_expiring_mid_run():
     assert statuses[-1].dark_stale, "the dark expired and nothing said so"
 
 
+@pytest.mark.serial
 def test_a_run_that_never_had_a_dark_is_not_reported_as_stale():
     """Uncalibrated is not the same as expired, and "reshoot it" is bad
     advice about a thing that never existed."""
@@ -224,6 +228,7 @@ def test_a_run_that_never_had_a_dark_is_not_reported_as_stale():
     assert not statuses[-1].dark_stale
 
 
+@pytest.mark.serial
 def test_timelapse_stop_ends_the_run(tmp_path):
     from darlaston.capture.timelapse import Timelapse
 

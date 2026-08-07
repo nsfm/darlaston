@@ -53,6 +53,12 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Tests
+        # One pass, deliberately. The suite forks across cores in about
+        # half the time (`make test-fast`), and it fails roughly one run
+        # in three or four while doing it -- a different test each time,
+        # and every one investigated so far was starvation rather than a
+        # defect. A build that goes red at random teaches people to press
+        # re-run, which is worse than a slow one.
         run: pytest -q
 
   build:
