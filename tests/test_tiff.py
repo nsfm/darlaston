@@ -337,48 +337,6 @@ def test_the_declared_illuminant_matches_the_matrix_we_actually_write():
         f"{ifd0[CALIBRATION_ILLUMINANT1][2]}")
 
 
-def test_a_stale_objective_is_written_as_a_guess_not_as_a_fact():
-    """Every tile of Nate's 260729 mosaic says 16x/0.4 and was shot at
-    25x/0.65. The software recorded the belief faithfully; the belief was
-    old, and nothing in the file said so.
-
-    An unanswered turret proposal left a "?" in the rail and nowhere else,
-    so a capture taken in that state stated a stale number plainly. The
-    scale bar is derived from that number now, which makes a confident
-    wrong objective something somebody can publish a measurement off.
-    """
-    from darlaston.process.metadata import from_setup
-    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
-                                         Objective, ScopeProfile, Setup,
-                                         Turret)
-
-    scope = ScopeProfile(id="z", name="Zeiss Universal",
-                         turret=Turret([Objective(40, 0.75)], current=0),
-                         optovar=[1.0], optovar_current=0)
-    setup = Setup(camera=CameraProfile(serial="x", name="cam"), scope=scope,
-                  illumination=BUILTIN_ILLUMINATION[0])
-
-    sure = from_setup(setup, exposure_us=8330, gain_pct=100)
-    guess = from_setup(setup, exposure_us=8330, gain_pct=100,
-                       objective_confirmed=False)
-
-    assert "unconfirmed" not in sure.lens_model, "cried wolf on a good file"
-    assert "objective_belief" not in sure.comment, \
-        "a field that says 'confirmed' on every file trains the eye past it"
-
-    # Marked, not blanked. The label is still the best guess we have, and a
-    # reader seeing "40x/0.75 (unconfirmed)" knows both what we believed
-    # and how far to trust it; a blank would discard the guess and say
-    # nothing in its place.
-    assert sure.lens_model and sure.lens_model in guess.lens_model
-    assert "unconfirmed" in guess.lens_model
-    assert "objective_belief=unconfirmed" in guess.comment
-
-    # The derived optics stay consistent with the belief rather than
-    # vanishing: they are wrong in exactly the way the label admits to.
-    assert guess.focal_length_mm == sure.focal_length_mm
-
-
 def test_a_frame_carries_where_it_sat_in_the_larger_work():
     """A manifest is one file in one folder. Move the slices, or hand
     three stacks to somebody, and they become sixty photographs of similar

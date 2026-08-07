@@ -25,12 +25,24 @@
       during stacking and stitching, because a moving exposure ruins both.
       Being manual is why that has never bitten us, and it would have to be
       reproduced along with the feature.
-- [ ] **Turret belief is the rotation sign, not the detector.** The A/B
-      above reproduces it cleanly and rules out the arithmetic: driving the
-      mock through a rotation with direction +1 reads back as -1, and four
-      of five rotations name the wrong objective on _both_ routes. So this
-      is the optical path's sign convention, which is the UX question
-      already raised rather than a detection-tuning one.
+- [x] ~~**Turret belief, three ways.**~~ Closed 2026-08-07, by decision
+      rather than by code. The rotation-sign question, the stale-belief
+      question, and the mosaic that recorded 16×/0.4 while shooting
+      25×/0.65 were three entries all circling the same premise: that a
+      wrong objective in a file is a problem the software should solve.
+
+      It is not, here. The detector fires on ordinary movements -- the
+      objective crossing the coverslip ink border, a lighting change, a
+      filter change, an opaque object passing through the field -- so
+      "unconfirmed" would be noise rather than signal, and a file marked
+      that way most of the time says nothing at all. Marking the EXIF was
+      built and reverted for exactly this reason.
+
+      The answer is better UX around the prompt, not assuming the
+      operator cannot keep records. We are not a scientific tool. If this
+      comes back it comes back as a UX item about the dialog, not as
+      metadata, and not as detection tuning.
+
 - [ ] **The tracker must not run at a divisor**, recorded so it is not
       re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
       0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
@@ -96,30 +108,10 @@
       block on it or phone home with anything identifying — a lookup of a
       static file, no telemetry, and an off switch in settings. Ship the
       switch before the check.
-- [ ] **The turret-belief question is a UX one, not a detection one.**
-      The 16×/0.4-on-a-25× session traced to a prompt being ignored and
-      the turret never being set before the capture, which the software
-      then faithfully recorded. Detection is not the thing to tune. The
-      question is what the app should do when its belief is _stale rather
-      than wrong_: an ignored proposal already marks the objective
-      uncertain, but nothing stops a capture from being written with an
-      uncertain belief, and nothing surfaces it at the moment it matters.
-      Options worth weighing: refuse-and-ask at capture time (harsh but
-      unmissable), write "objective: unconfirmed" into the file rather
-      than a confident wrong number, or make the uncertain state loud in
-      the rail instead of a small "?".
 - [ ] **The slide map as a finding aid.** The other half of the plate
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that
       is an archival artifact, and Victorian mounters drew them by hand.
-- [ ] **Nate's mosaic EXIF says 16×/0.4 and it was shot at 25×/0.65.**
-      Found while building the plate: every file in
-      `260729-230442_mosaic_tiles` records the wrong objective, so the
-      turret belief was stale for that whole session (the stack folders
-      from the same evening are correct). Worth finding out whether an
-      unanswered proposal, a missed detent, or the startup guess is
-      responsible — the optics metadata is only as good as that belief,
-      and now the scale bar depends on it too.
 - [ ] **Down-then-back-up stacks.** Nate racks down through the subject
       and back up, so slice order revisits planes: the merge is untouched
       (argmax picks the sharpest wherever it lives) but slice index stops
