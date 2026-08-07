@@ -173,9 +173,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merges: list[tuple[int, Path]] = []
         self._tile_merging: int | None = None
         self._last_preview = None
-        #: Where the balance is taken from. Not persisted: the box is
-        #: about this slide, while the gains are about this bench.
-        self._wb_rect = self.DEFAULT_WB_RECT
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
@@ -192,7 +189,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # one click. Applied before the first frame, so the preview is
         # never briefly the wrong colour.
         self.pipeline.set_white_balance(self.settings.white_balance_gains)
-        self.pipeline.set_balance_rect(self._wb_rect)
+        self.pipeline.set_balance_rect(self.DEFAULT_WB_RECT)
         self._refresh_wb()
         self._refresh_disk()
         self._disk_timer = QtCore.QTimer(self)
@@ -1099,7 +1096,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for r, b in self._region_buttons.items():
             b.setChecked(r is region)
 
-    #: Where a balance is taken from until somebody drags the box. The
+    #: Where a balance is taken from until somebody points somewhere. The
     #: middle fifth: big enough to average sensor noise away, small enough
     #: to sit on a patch of mountant between subjects.
     DEFAULT_WB_RECT = (0.40, 0.40, 0.20, 0.20)
@@ -1112,7 +1109,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_balance_region(self, rect: tuple) -> None:
         """Where they pointed. Sample there, and take the balance."""
-        self._wb_rect = rect
+        # The pipeline owns where the balance comes from -- it is the
+        # thing that samples there. A second copy here would only be a
+        # fact in two places waiting to disagree.
         self.pipeline.set_balance_rect(rect)
         self.strip.set_note("")
         self._refresh_wb()               # the view disarmed itself
@@ -1160,6 +1159,14 @@ class MainWindow(QtWidgets.QMainWindow):
         gains = balance.sane(self.settings.white_balance_gains)
         live = self.session.status.is_live
         armed = self.view.armed_for_balance
+        if armed and not live:
+            # The camera left while somebody was choosing where to point.
+            # Left alone this strands them: the cursor stays a crosshair,
+            # there is nothing to sample, and the button that would let
+            # them out is the one greyed out for having no camera.
+            self.view.arm_balance(False)
+            self.strip.set_note("")
+            armed = False
         self.wb_pick.setEnabled(live)
         self.wb_pick.setChecked(armed)
         self.wb_reset.setEnabled(gains != balance.UNITY)

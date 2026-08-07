@@ -53,20 +53,6 @@ def sane(gains) -> tuple[float, float, float]:
             min(max(b, 1 / MAX_GAIN), MAX_GAIN))
 
 
-def combine(current, picked) -> tuple[float, float, float]:
-    """Apply `picked` on top of `current`.
-
-    The operator picks a region off the image *as it is displayed*, which
-    is already corrected by whatever is in force. So a pick is relative,
-    not absolute: it says "make this grey, starting from what I can see".
-    Multiplying is what makes the control behave the way a hand expects --
-    each press moves further, and picking a region that is already neutral
-    changes nothing.
-    """
-    c, p = sane(current), sane(picked)
-    return sane((c[0] * p[0], 1.0, c[2] * p[2]))
-
-
 def from_region(bgr: np.ndarray) -> tuple[float, float, float]:
     """Gains that would make this patch of preview neutral.
 

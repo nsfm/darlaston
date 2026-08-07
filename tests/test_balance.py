@@ -35,18 +35,6 @@ def test_picking_again_on_a_corrected_image_changes_nothing():
     first = B.from_region(blue)
     fixed = B.applied(blue, B.lut(first))
     assert B.from_region(fixed) == pytest.approx(B.UNITY, abs=0.02)
-    assert B.combine(first, B.from_region(fixed)) == pytest.approx(first, rel=0.02)
-
-
-def test_combining_two_relative_picks_multiplies_them():
-    """`combine` is no longer on the picking path -- a press reads the
-    uncorrected frame and computes the answer outright -- but it is the
-    right operation whenever two corrections genuinely stack, so it stays
-    and stays tested."""
-    a = B.combine(B.UNITY, (2.0, 1.0, 0.5))
-    b = B.combine(a, (1.5, 1.0, 0.5))
-    assert b[0] == pytest.approx(3.0)
-    assert b[2] == pytest.approx(0.25)
 
 
 def test_green_is_the_reference_whatever_it_is_handed():
@@ -387,5 +375,37 @@ def test_the_button_says_which_of_its_three_states_it_is_in(qapp, tmp_path,
         win._refresh_wb()
         assert win.wb_reset.isEnabled()
         assert win.wb_reset.property("invite") == "true"
+    finally:
+        win.shutdown()
+
+
+def test_a_camera_leaving_mid_gesture_does_not_strand_the_operator(
+        qapp, tmp_path, monkeypatch):
+    """Armed, then the cable is nudged. Without this the cursor stays a
+    crosshair over a dead preview, there is nothing to sample, and the
+    control that would let them out is greyed out for having no camera."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.base import CameraInfo, CameraState
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import SessionStatus
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        win.session.stop()
+        live = SessionStatus(CameraState.STREAMING, info=CameraInfo(
+            model="m", serial="s", resolutions=(), max_bit_depth=12,
+            bayer_pattern="GBRG", exposure_range_us=(100, 10 ** 6),
+            gain_range_pct=(100, 2000)))
+        win.session._status = live
+        win._on_status(live)
+
+        win._arm_white_balance()
+        assert win.view.armed_for_balance
+
+        gone = SessionStatus(CameraState.DISCONNECTED)
+        win.session._status = gone
+        win._on_status(gone)
+        assert not win.view.armed_for_balance, "left waiting for a point"
     finally:
         win.shutdown()
