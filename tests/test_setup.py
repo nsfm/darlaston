@@ -469,3 +469,64 @@ def test_cancelling_does_not_pass_a_camera_over(qapp, tmp_path, monkeypatch):
     dialog.ignore.setChecked(True)
     dialog.reject()
     assert settings.ignored_cameras == {}
+
+
+# ---- working out the pixel pitch --------------------------------------------
+
+def test_a_sensor_format_and_a_resolution_give_the_pitch():
+    """Nate's question: how does anybody actually determine um per pixel?
+    The manufacturer does not publish it. What they do publish is a format
+    and a megapixel count, and those are one division apart.
+
+    E3ISPM20000KPA: 1 inch, 5440 across. The IMX183 datasheet says 2.40 um
+    and this arithmetic says 2.43, which is the nominal format being a
+    little larger than the real active area.
+    """
+    from darlaston.session.model import pitch_from_format
+
+    pitch = pitch_from_format(13.2, 5440)
+    assert abs(pitch - 2.43) < 0.01
+    assert abs(pitch - 2.40) < 0.05, "datasheet disagreement"
+
+    assert pitch_from_format(0, 5440) is None
+    assert pitch_from_format(13.2, 0) is None
+
+
+def test_the_inch_in_a_sensor_format_is_not_an_inch():
+    """It descends from the outside diameter of the vidicon tube whose
+    scanned area matched. Anybody deriving these from the name is wrong by
+    about a third, which is the sort of silent error a scale bar must
+    never be built on."""
+    from darlaston.session.model import SENSOR_FORMATS
+
+    one_inch = dict((n, (w, h)) for n, w, h in SENSOR_FORMATS)['1"']
+    assert one_inch == (13.2, 8.8)
+    assert one_inch[0] < 25.4 / 1.8, "somebody has been reading it as inches"
+
+
+def test_a_format_that_does_not_fit_the_sensor_is_caught():
+    """The check that catches a wrong pick, before it becomes a confident
+    bar built on the wrong number."""
+    from darlaston.session.model import format_fits
+
+    # 1 inch is 3:2 and so is this sensor.
+    assert format_fits(13.2, 8.8, 5440, 3648)
+    # 2/3 inch is 4:3. Same ballpark of size, wrong shape.
+    assert not format_fits(8.8, 6.6, 5440, 3648)
+    # And a genuine 4:3 sensor matches the 4:3 format.
+    assert format_fits(8.8, 6.6, 3264, 2448)
+    assert not format_fits(0, 8.8, 5440, 3648)
+
+
+def test_every_listed_format_is_a_plausible_shape():
+    """A typo in the table is a wrong scale bar on somebody's photograph."""
+    from darlaston.session.model import SENSOR_FORMATS
+
+    seen = set()
+    for name, w, h in SENSOR_FORMATS:
+        assert name not in seen, f"{name} listed twice"
+        seen.add(name)
+        assert 0 < w < 50 and 0 < h < 40, name
+        assert 1.2 <= w / h <= 1.8, f"{name} is neither 4:3 nor 3:2"
+    widths = [w for _n, w, _h in SENSOR_FORMATS]
+    assert widths == sorted(widths), "the list should run small to large"
