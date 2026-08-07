@@ -36,18 +36,18 @@ class Dot(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, _e) -> None:
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        c = QtGui.QColor(self.COLOURS.get(self._state, theme.DIM))
-        if self._state in (CameraState.STREAMING, CameraState.ERROR):
-            glow = QtGui.QColor(c)
-            glow.setAlpha(70)
-            p.setBrush(glow)
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            c = QtGui.QColor(self.COLOURS.get(self._state, theme.DIM))
+            if self._state in (CameraState.STREAMING, CameraState.ERROR):
+                glow = QtGui.QColor(c)
+                glow.setAlpha(70)
+                p.setBrush(glow)
+                p.setPen(QtCore.Qt.PenStyle.NoPen)
+                p.drawEllipse(1, 1, 12, 12)
+            p.setBrush(c)
             p.setPen(QtCore.Qt.PenStyle.NoPen)
-            p.drawEllipse(1, 1, 12, 12)
-        p.setBrush(c)
-        p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.drawEllipse(4, 4, 6, 6)
+            p.drawEllipse(4, 4, 6, 6)
 
 
 class Chip(QtWidgets.QLabel):
@@ -137,29 +137,29 @@ class CaptionButton(QtWidgets.QWidget):
             self.update()
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        if self.hot or self.down:
-            # Red for close, as every Windows application does. Getting
-            # this wrong is more jarring than having no highlight at all.
-            if self.kind == "close":
-                wash = QtGui.QColor(0xC4, 0x2B, 0x1C, 255 if self.down else 220)
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+            if self.hot or self.down:
+                # Red for close, as every Windows application does. Getting
+                # this wrong is more jarring than having no highlight at all.
+                if self.kind == "close":
+                    wash = QtGui.QColor(0xC4, 0x2B, 0x1C, 255 if self.down else 220)
+                else:
+                    wash = QtGui.QColor(255, 255, 255, 38 if self.down else 24)
+                p.fillRect(self.rect(), wash)
+            ink = (QtGui.QColor(theme.INK) if self.kind != "close" or not
+                   (self.hot or self.down) else QtGui.QColor("#ffffff"))
+            p.setPen(QtGui.QPen(ink, 1.1))
+            cx, cy, arm = self.width() / 2, self.height() / 2, 5.0
+            if self.kind == "minimise":
+                p.drawLine(QtCore.QPointF(cx - arm, cy), QtCore.QPointF(cx + arm, cy))
+            elif self.kind == "maximise":
+                p.drawRect(QtCore.QRectF(cx - arm, cy - arm, arm * 2, arm * 2))
             else:
-                wash = QtGui.QColor(255, 255, 255, 38 if self.down else 24)
-            p.fillRect(self.rect(), wash)
-        ink = (QtGui.QColor(theme.INK) if self.kind != "close" or not
-               (self.hot or self.down) else QtGui.QColor("#ffffff"))
-        p.setPen(QtGui.QPen(ink, 1.1))
-        cx, cy, arm = self.width() / 2, self.height() / 2, 5.0
-        if self.kind == "minimise":
-            p.drawLine(QtCore.QPointF(cx - arm, cy), QtCore.QPointF(cx + arm, cy))
-        elif self.kind == "maximise":
-            p.drawRect(QtCore.QRectF(cx - arm, cy - arm, arm * 2, arm * 2))
-        else:
-            p.drawLine(QtCore.QPointF(cx - arm, cy - arm),
-                       QtCore.QPointF(cx + arm, cy + arm))
-            p.drawLine(QtCore.QPointF(cx + arm, cy - arm),
-                       QtCore.QPointF(cx - arm, cy + arm))
+                p.drawLine(QtCore.QPointF(cx - arm, cy - arm),
+                           QtCore.QPointF(cx + arm, cy + arm))
+                p.drawLine(QtCore.QPointF(cx + arm, cy - arm),
+                           QtCore.QPointF(cx - arm, cy + arm))
 
 
 class ToolBar(QtWidgets.QFrame):
@@ -829,25 +829,25 @@ class _Pulse(QtWidgets.QWidget):
             self.update()
 
     def paintEvent(self, _e) -> None:
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
 
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE), 1))
-        p.drawEllipse(1, 1, 50, 50)
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE), 1))
+            p.drawEllipse(1, 1, 50, 50)
 
-        if self._running:
-            c = QtGui.QColor(theme.BRASS)
-            c.setAlphaF(max(0.0, 0.55 * (1.0 - self._t)))
-            p.setPen(QtGui.QPen(c, 1))
-            grow = self._t * 22
-            p.drawEllipse(QtCore.QRectF(1 - grow / 2, 1 - grow / 2,
-                                        50 + grow, 50 + grow))
+            if self._running:
+                c = QtGui.QColor(theme.BRASS)
+                c.setAlphaF(max(0.0, 0.55 * (1.0 - self._t)))
+                p.setPen(QtGui.QPen(c, 1))
+                grow = self._t * 22
+                p.drawEllipse(QtCore.QRectF(1 - grow / 2, 1 - grow / 2,
+                                            50 + grow, 50 + grow))
 
-        colour = theme.BRASS if self._running else theme.BAD
-        p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(colour))
-        p.drawEllipse(22, 22, 8, 8)
+            colour = theme.BRASS if self._running else theme.BAD
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(QtGui.QColor(colour))
+            p.drawEllipse(22, 22, 8, 8)
 
 
 class ObjectiveStepper(QtWidgets.QWidget):

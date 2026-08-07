@@ -103,7 +103,21 @@ def _our_tags(w: DngWriter, black: int, white: int,
     w.add(T.DNG_VERSION, T.BYTE, [1, 4, 0, 0])
     w.add(T.DNG_BACKWARD, T.BYTE, [1, 1, 0, 0])
     w.add(T.COLOR_MATRIX1, T.SRATIONAL, NEUTRAL_MATRIX)
-    w.add(T.CALIBRATION_ILLUMINANT1, T.SHORT, 17)      # Standard light A
+    # D65, because that is what the matrix above actually is.
+    #
+    # This said 17, Standard light A, next to a matrix the line defining it
+    # calls "XYZ -> sRGB (D65)". The tag and the numbers disagreed, and a
+    # reader has to believe the tag: it is the only statement in the file
+    # about which white the matrix is referred to. A developer that honours
+    # it chromatically adapts from A to D65 -- a correction of about 2900 K
+    # applied to a matrix that needed none.
+    #
+    # Reported alongside this, and consistent with the symptom although I
+    # have not read the source myself: darktable's rawspeed decoder accepts
+    # a DNG colour matrix *only* under illuminant 21, and falls back to
+    # CalibrationIlluminant2 otherwise. We write no second set, so on that
+    # path our matrix was discarded outright rather than merely adapted.
+    w.add(T.CALIBRATION_ILLUMINANT1, T.SHORT, 21)      # D65
     w.add(T.AS_SHOT_NEUTRAL, T.RATIONAL,
           [_ratio(neutral[0]), _ratio(neutral[1]), _ratio(neutral[2])])
     w.add(T.BLACK_LEVEL, T.SHORT, black, where="raw")

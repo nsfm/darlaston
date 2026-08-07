@@ -321,10 +321,40 @@ def test_a_camera_can_be_forgotten(qapp, tmp_path):
     assert dialog.list.count() == 2
     assert dialog.editor.isHidden() is False
 
-    library.remove_camera("WEBCAM-1")
+    # Through the dialog's own copy, which is what the button touches.
+    dialog._library.remove_camera("WEBCAM-1")
     dialog._reload("TP2112071101")
     assert dialog.list.count() == 1
+    dialog._save()
     assert list(Library(tmp_path / "library.json").cameras) == ["TP2112071101"]
+    assert list(library.cameras) == ["TP2112071101"], (
+        "the window is still holding the old library after Save")
+
+
+def test_cancelling_the_camera_window_keeps_the_camera(qapp, tmp_path):
+    """Remove reached straight into the application's own Library. It wrote
+    no file itself, which made it look safe -- but the object is shared, so
+    Cancel left the removal in memory and the next save from anywhere
+    committed it. A stand taken this way goes with its turret, its learned
+    brightness signatures and the calibration key every stored flat is
+    filed under."""
+    from darlaston.session.model import Library
+    from darlaston.ui.setup_ui import CameraDialog
+
+    library = Library(tmp_path / "library.json")
+    library.remember_camera("WEBCAM-1", "Integrated Camera")
+    library.remember_camera("TP2112071101", "E3ISPM20000KPA")
+
+    dialog = CameraDialog(library, "TP2112071101", None)
+    dialog._library.remove_camera("WEBCAM-1")
+    dialog.reject()
+
+    assert list(library.cameras) == ["WEBCAM-1", "TP2112071101"], (
+        "a cancelled removal survived in memory")
+    # And the next save from anywhere at all must not commit it either.
+    library.save()
+    assert list(Library(tmp_path / "library.json").cameras) == [
+        "WEBCAM-1", "TP2112071101"]
 
 
 def test_an_unplugged_camera_is_still_editable(qapp, tmp_path):
@@ -385,3 +415,57 @@ def test_the_mock_camera_cannot_get_into_the_library_by_any_route(qapp, tmp_path
     library.file_camera(real)
     library.save()
     assert list(Library(tmp_path / "library.json").cameras) == ["TP2112071101"]
+
+
+def test_passing_a_camera_over_survives_a_restart(qapp, tmp_path, monkeypatch):
+    """The whole point of the flag: say it once, not every morning."""
+    import types
+
+    from darlaston.camera.discovery import Camera
+    from darlaston.session.model import Library
+    from darlaston.session.settings import Settings
+    from darlaston.ui import setup_ui
+    from darlaston.ui.setup_ui import CameraDialog
+
+    library = Library(tmp_path / "library.json")
+    library.remember_camera("built-in", "Integrated Camera")
+    here = {"built-in": Camera(key="v4l2:built-in", kind="v4l2",
+                               name="Integrated Camera", fingerprint="w")}
+    monkeypatch.setattr(CameraDialog, "_attached", lambda self: here)
+
+    settings = Settings(capture_root=str(tmp_path))
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(settings, "save", lambda: Settings.save(settings, path))
+
+    dialog = CameraDialog(library, "built-in", None, settings=settings)
+    assert dialog.ignore.isEnabled(), "the camera is attached and selected"
+    assert not dialog.ignore.isChecked()
+
+    dialog.ignore.setChecked(True)
+    dialog._save()
+    assert Settings.load(path).ignored_cameras == {"v4l2:built-in": "w"}
+
+    # And it comes back ticked, rather than needing to be said again.
+    again = CameraDialog(library, "built-in", None,
+                         settings=Settings.load(path))
+    assert again.ignore.isChecked()
+
+
+def test_cancelling_does_not_pass_a_camera_over(qapp, tmp_path, monkeypatch):
+    from darlaston.camera.discovery import Camera
+    from darlaston.session.model import Library
+    from darlaston.session.settings import Settings
+    from darlaston.ui.setup_ui import CameraDialog
+
+    library = Library(tmp_path / "library.json")
+    library.remember_camera("built-in", "Integrated Camera")
+    monkeypatch.setattr(
+        CameraDialog, "_attached",
+        lambda self: {"built-in": Camera(key="v4l2:built-in", kind="v4l2",
+                                         name="Integrated", fingerprint="w")})
+
+    settings = Settings(capture_root=str(tmp_path))
+    dialog = CameraDialog(library, "built-in", None, settings=settings)
+    dialog.ignore.setChecked(True)
+    dialog.reject()
+    assert settings.ignored_cameras == {}

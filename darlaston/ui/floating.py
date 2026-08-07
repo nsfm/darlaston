@@ -50,12 +50,12 @@ class _Grip(QtWidgets.QWidget):
 
     def paintEvent(self, _event) -> None:
         """Three hairlines, at the weight everything else is drawn at."""
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.INK), 1))
-        for offset in (1, 5, 9):
-            p.drawLine(self.SIZE - 2 - offset, self.SIZE - 2,
-                       self.SIZE - 2, self.SIZE - 2 - offset)
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.INK), 1))
+            for offset in (1, 5, 9):
+                p.drawLine(self.SIZE - 2 - offset, self.SIZE - 2,
+                           self.SIZE - 2, self.SIZE - 2 - offset)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() is QtCore.Qt.MouseButton.LeftButton:
@@ -206,23 +206,22 @@ class FloatingPanel(QtWidgets.QWidget):
         super().resizeEvent(event)
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))
-        p.setBrush(QtGui.QColor(16, 18, 16, 235))
-        p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5,
-                                                              -0.5, -0.5),
-                          5.0, 5.0)
-        # Title row, and the grab affordance: a person must be able to see
-        # where the panel can be picked up.
-        f = p.font()
-        f.setPointSizeF(7.5)
-        f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.0)
-        p.setFont(f)
-        p.setPen(QtGui.QColor(theme.DIM))
-        p.drawText(QtCore.QRect(9, 3, self.width() - 40, TITLE_H - 4),
-                   QtCore.Qt.AlignmentFlag.AlignVCenter,
-                   self._title.upper())
-        p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))
-        p.drawLine(1, TITLE_H, self.width() - 2, TITLE_H)
-        p.end()
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))
+            p.setBrush(QtGui.QColor(16, 18, 16, 235))
+            p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5,
+                                                                  -0.5, -0.5),
+                              5.0, 5.0)
+            # Title row, and the grab affordance: a person must be able to see
+            # where the panel can be picked up.
+            f = p.font()
+            f.setPointSizeF(7.5)
+            f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.0)
+            p.setFont(f)
+            p.setPen(QtGui.QColor(theme.DIM))
+            p.drawText(QtCore.QRect(9, 3, self.width() - 40, TITLE_H - 4),
+                       QtCore.Qt.AlignmentFlag.AlignVCenter,
+                       self._title.upper())
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))
+            p.drawLine(1, TITLE_H, self.width() - 2, TITLE_H)

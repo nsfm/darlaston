@@ -22,8 +22,10 @@ class _Row(QtWidgets.QWidget):
     """One product: its state, and the way to fix it."""
 
     act = QtCore.Signal()
+    act2 = QtCore.Signal()
 
-    def __init__(self, label: str, action: str, hint: str = "") -> None:
+    def __init__(self, label: str, action: str, hint: str = "",
+                 second: str = "", second_hint: str = "") -> None:
         super().__init__()
         self.mark = QtWidgets.QLabel("○")
         self.mark.setFixedWidth(12)
@@ -37,6 +39,18 @@ class _Row(QtWidgets.QWidget):
         self.button.setToolTip(hint)
         self.button.clicked.connect(self.act)
 
+        # A second action, for the one row that genuinely has two jobs:
+        # gathering blank fields and then combining them. One button
+        # cannot offer both, and cycling a single button through them
+        # hides whichever is not showing.
+        self.second: QtWidgets.QPushButton | None = None
+        if second:
+            self.second = QtWidgets.QPushButton(second)
+            self.second.setProperty("role", "seg")
+            self.second.setFixedWidth(64)
+            self.second.setToolTip(second_hint)
+            self.second.clicked.connect(self.act2)
+
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(7)
@@ -45,6 +59,8 @@ class _Row(QtWidgets.QWidget):
         row.addStretch(1)
         row.addWidget(self.detail)
         row.addWidget(self.button)
+        if self.second is not None:
+            row.addWidget(self.second)
 
     def set_state(self, present: bool, detail: str = "",
                   actionable: bool = True) -> None:
@@ -110,20 +126,19 @@ class CalibrationPanel(QtWidgets.QWidget):
     capture_dark = QtCore.Signal()
     build_flat = QtCore.Signal()
     build_lut = QtCore.Signal()
-    #: Start or stop gathering blank fields.
-    collect_flat = QtCore.Signal(bool)
+    #: Take one blank field, now. A press rather than a mode: the
+    #: automatic version could not work, because deciding the view had
+    #: moved needed the tracker, and the tracker cannot follow empty glass.
+    bank_flat = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self.dark = _Row(_("calib.dark.label"), _("calib.dark.action"),
                          _("calib.dark.tooltip"))
-        self.flat = _Row(_("calib.flat.label"), _("calib.flat.action.collect"),
-                         _("calib.flat.tooltip"))
-        self._collecting = False
-        #: What the flat row's button will do if pressed. Tracked rather
-        #: than read back off the label: comparing against display text
-        #: works exactly until the first translation.
-        self._flat_does = "collect"
+        self.flat = _Row(_("calib.flat.label"), _("calib.flat.action.bank"),
+                         _("calib.flat.tooltip"),
+                         second=_("calib.flat.action.build"),
+                         second_hint=_("calib.flat.build.tooltip"))
         self.wb = _Row(_("calib.wb.label"), _("calib.wb.action"),
                        _("calib.wb.tooltip"))
         self.wb.button.setEnabled(False)
@@ -132,6 +147,7 @@ class CalibrationPanel(QtWidgets.QWidget):
 
         self.dark.act.connect(self.capture_dark)
         self.flat.act.connect(self._on_flat)
+        self.flat.act2.connect(self.build_flat)
         self.lut.act.connect(self.build_lut)
 
         self.progress = QtWidgets.QProgressBar()
@@ -156,50 +172,33 @@ class CalibrationPanel(QtWidgets.QWidget):
     # ---- state -----------------------------------------------------------
 
     def _on_flat(self) -> None:
-        """One row, three jobs: start collecting, stop, or build."""
-        if self._flat_does == "stop":
-            self.collect_flat.emit(False)
-        elif self._flat_does == "build":
-            self.build_flat.emit()
-        else:
-            self.collect_flat.emit(True)
+        self.bank_flat.emit()
 
     def set_status(self, status: dict, banked: int = 0, wanted: int = 4,
                    live: bool = True, collecting: bool = False) -> None:
         self.dark.set_state(status.get("dark", False), actionable=live)
         have_flat = status.get("flat", False)
-        self._collecting = collecting
-        # Three states, because collecting is a mode with a cost: while it
-        # runs the preview freezes for a second at a time, so it has to be
-        # visible that it is running and stoppable without finishing.
         counts = {"banked": banked, "wanted": wanted}
+
+        # Two jobs, two buttons. Bank stays available until there are
+        # enough; Build appears once a median means anything, which is two
+        # -- and says so at two, because a median of two rejects nothing.
         if have_flat:
-            does, detail, actionable = "build", "", False
-        elif collecting:
-            does = "stop"
-            detail = _("calib.flat.detail.collecting", **counts)
-            actionable = True
+            detail = ""
+        elif banked == 0:
+            detail = _("calib.flat.detail.how")
+        elif banked >= wanted:
+            detail = _("calib.flat.detail.ready", **counts)
         elif banked >= 2:
-            does = "build"
-            # Both spelled out, for the same reason as the actions below.
-            detail = (_("calib.flat.detail.count", **counts) if banked >= 3
-                      else _("calib.flat.detail.debris", **counts))
-            actionable = live
+            detail = _("calib.flat.detail.debris", **counts)
         else:
-            does = "collect"
             detail = _("calib.flat.detail.count", **counts)
-            actionable = live
-        self._flat_does = does
-        # Spelled out rather than built from `does`. A key assembled at
-        # runtime is invisible to the check that every named key exists,
-        # and that check is the only thing standing between a typo and a
-        # window with `calib.flat.action.buidl` written on it.
-        self.flat.button.setText({
-            "collect": _("calib.flat.action.collect"),
-            "stop": _("calib.flat.action.stop"),
-            "build": _("calib.flat.action.build"),
-        }[does])
-        self.flat.set_state(have_flat, detail, actionable=actionable)
+
+        self.flat.button.setEnabled(live and not have_flat
+                                    and banked < wanted)
+        if self.flat.second is not None:
+            self.flat.second.setEnabled(live and not have_flat and banked >= 2)
+        self.flat.set_state(have_flat, detail, actionable=self.flat.button.isEnabled())
         self.wb.set_state(status.get("white_balance", False),
                           _("calib.wb.detail"), actionable=False)
         self.lut.set_state(status.get("preview_lut", False), actionable=live)

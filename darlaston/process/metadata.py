@@ -102,6 +102,47 @@ class CaptureMetadata:
                   "unique_id", "subsec"):
             object.__setattr__(self, f, ascii_safe(getattr(self, f)))
 
+    def derived(self, scale: float = 1.0) -> "CaptureMetadata":
+        """Provenance for an image made *from* this capture.
+
+        A merge inherits the middle source's tags -- photographer, optics,
+        exposure -- because a composite is one photograph made of many
+        exposures and should say who took it and through what. Two things
+        cannot come along unchanged.
+
+        Every scale in here is per pixel, so a merge that resamples
+        invalidates all of them at once. A stitched composite is built at
+        a fraction of tile resolution and used to take the middle tile's
+        metadata as it stood: `um_per_px` then described a *tile* pixel
+        while the image was half the size, and `plate` drew the scale bar
+        straight from it. A bar labelled 20 um came out 40 um long at the
+        default scale of 0.5, and 160 um at "preview". Publishing that is
+        the exact failure `plate`'s docstring exists to prevent.
+
+        And `unique_id` identifies *these pixels*. A composite is not the
+        tile it was built from, and two files answering to one id is the
+        opposite of what the tag is for.
+        """
+        from dataclasses import replace
+
+        if scale <= 0:
+            raise ValueError(f"a pixel scale must be positive, not {scale}")
+        parts = []
+        for part in self.comment.split():
+            key, sep, value = part.partition("=")
+            if key == "um_per_px" and sep:
+                try:
+                    # One output pixel covers 1/scale input pixels, so it
+                    # covers 1/scale as much slide.
+                    part = f"um_per_px={float(value) / scale:.4g}"
+                except ValueError:
+                    pass
+            parts.append(part)
+        return replace(
+            self, comment=" ".join(parts), unique_id="",
+            focal_plane_per_mm=(self.focal_plane_per_mm * scale
+                                if self.focal_plane_per_mm else None))
+
     def as_exif(self) -> dict:
         """Tag names as ExifTool and most DNG writers know them."""
         out = {

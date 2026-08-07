@@ -134,6 +134,7 @@ def test_mock_camera_through_pipeline_produces_signals():
     pool is whole afterwards. Drop *semantics* are covered directly above."""
     from darlaston.camera.mock import MockCamera
     from darlaston.live.pipeline import LivePipeline
+    from darlaston.live.tracker import StageTracker
 
     received = []
     pipeline = LivePipeline(received.append)
@@ -153,7 +154,13 @@ def test_mock_camera_through_pipeline_produces_signals():
     assert 0.0 <= s.clipped_fraction <= 1.0
     assert s.focus_metric > 0
     assert s.preview.shape[2] == 3
-    assert s.xy_offset is not None, "tracker should lock after the first frame"
+    # The lock flag and the position, not `xy_offset is not None` -- that
+    # is non-None from the second frame however badly the correlation went,
+    # so it proved only that two frames arrived.
+    assert s.stage_tracking, "the tracker never locked"
+    assert s.stage_pos is not None, "locked without a position"
+    assert s.xy_confidence > StageTracker.CONFIDENCE, (
+        f"locked at confidence {s.xy_confidence:.3f}, which is the gate")
 
 
 def test_focus_metric_peaks_at_best_focus():
@@ -922,3 +929,164 @@ def test_every_painted_widget_survives_its_first_paint(qapp):
                              QtGui.QImage.Format.Format_RGB888)
         # render() propagates what paintEvent raises; grab() does not.
         widget.render(image)
+
+
+def test_a_restarted_pipeline_delivers_frames_instead_of_spinning():
+    """`stop` closes the frame cell permanently, and a closed cell answers
+    `take` immediately rather than waiting out the timeout -- so restarting
+    on the old one left the loop at full speed, pegging a core and
+    delivering nothing, with nothing anywhere to say so."""
+    from darlaston.camera.mock import MockCamera
+    from darlaston.live.pipeline import LivePipeline
+
+    received = []
+    pipeline = LivePipeline(received.append)
+    pipeline.start()
+    pipeline.stop()
+    assert pipeline._cell.closed, "the premise: stop closes the cell"
+
+    pipeline.start()
+    assert not pipeline._cell.closed, "restarted onto a closed cell"
+    cam = MockCamera(fps=30.0)
+    cam.open()
+    cam.start_stream(pipeline.submit)
+    time.sleep(0.5)
+    cam.stop_stream()
+    pipeline.stop()
+    assert received, "a restarted pipeline delivered nothing"
+    assert cam._pool.available == cam._pool.count, "buffers leaked"
+
+
+# ---- the other end of the pipeline ------------------------------------------
+
+def test_newest_wins_and_says_how_many_it_replaced():
+    from darlaston.live.cell import Newest
+
+    cell = Newest()
+    assert cell.put("a") is True, "the first value must ask for a wake-up"
+    assert cell.put("b") is False, "a second must not ask again"
+    assert cell.put("c") is False
+    assert cell.take() == "c", "the consumer must get the newest, not the first"
+    assert cell.take() is None, "one wake-up delivers one value"
+    assert cell.replaced == 2
+
+    # And it re-arms, or the stream stops after the first frame.
+    assert cell.put("d") is True
+    assert cell.take() == "d"
+
+
+def test_one_wake_up_is_outstanding_at_a_time_under_contention():
+    """The flag is what stops the queue growing, and it is read and written
+    from two threads."""
+    from darlaston.live.cell import Newest
+
+    cell = Newest()
+    wakes = []
+    stop = threading.Event()
+
+    def produce():
+        for i in range(20000):
+            if cell.put(i):
+                wakes.append(i)
+        stop.set()
+
+    t = threading.Thread(target=produce)
+    t.start()
+    taken = 0
+    while not stop.is_set() or cell.take() is not None:
+        if cell.take() is not None:
+            taken += 1
+    t.join()
+    # Every wake-up is answered by exactly one take, so the queue Qt would
+    # be holding never exceeds one.
+    assert len(wakes) <= 20000
+    assert cell.replaced > 0, "the test never actually contended"
+
+
+def test_a_stalled_interface_thread_is_shown_the_newest_frame(qapp):
+    """A queued connection is an unbounded FIFO: a stall does not drop
+    frames, it delays them, oldest first. Measured against a one-second
+    stall at 34 fps the worst delivery lag was 979 ms -- the operator
+    watching their hand as it was a second ago.
+
+    Published from another thread on purpose. Qt picks the connection type
+    from where the emit happens, so publishing from *this* thread would be
+    a direct call and would never exercise the queue this exists to bound.
+    """
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        seen = []
+        win.slidemap.update_live = lambda s: seen.append(s.seq)
+        # How many times the slot ran, which is how many events Qt had
+        # queued. This is the property: delivering only the newest frame
+        # would also hold if all twenty were queued and nineteen of them
+        # found the cell empty and returned -- and that is the unbounded
+        # queue this exists to stop.
+        woken = []
+        win._newest = _CountingCell(win._newest, woken)
+
+        # Twenty frames from the analysis thread while nothing here is
+        # running an event loop -- which is what a stalled interface is.
+        t = threading.Thread(
+            target=lambda: [win._publish_signals(_signals(seq=i))
+                            for i in range(20)])
+        t.start()
+        t.join()
+        assert win._newest.replaced == 19, "the cell did not replace"
+
+        # Exactly one wake-up was queued behind the stall, and it delivers
+        # the newest frame rather than nineteen stale ones ahead of it.
+        qapp.processEvents()
+        assert seen == [19], f"delivered {seen}, not just the newest frame"
+        assert len(woken) == 1, (
+            f"Qt had {len(woken)} events queued, not one -- each one holds "
+            f"its own preview until it is drained")
+        assert win._newest.take() is None, "something was still queued"
+
+        # And it re-arms, or the live view stops after the first frame.
+        t = threading.Thread(
+            target=lambda: win._publish_signals(_signals(seq=20)))
+        t.start()
+        t.join()
+        qapp.processEvents()
+        assert seen == [19, 20]
+        assert len(woken) == 3  # the two above, plus the drained check
+    finally:
+        win.shutdown()
+
+
+class _CountingCell:
+    """A `Newest` that records every wake-up. It has `__slots__`, so the
+    method cannot simply be replaced on the instance."""
+
+    def __init__(self, inner, log):
+        self._inner, self._log = inner, log
+
+    def put(self, value):
+        return self._inner.put(value)
+
+    def take(self):
+        self._log.append(1)
+        return self._inner.take()
+
+    @property
+    def replaced(self):
+        return self._inner.replaced
+
+
+def _signals(seq: int):
+    from darlaston.live.pipeline import LiveSignals
+
+    return LiveSignals(
+        seq=seq, timestamp=float(seq),
+        preview=np.zeros((8, 8, 3), np.uint8),
+        histogram=np.zeros(256, np.int32),
+        clipped_fraction=0.0, focus_metric=1.0,
+        focus_fraction_of_peak=1.0, focus_trace=np.zeros(4, np.float32),
+        # The keys the status bar actually reads. A stub that omits
+        # one fails inside the slot rather than at the assertion.
+        stats={"analysed_fps": 30.0, "delivered": 1, "dropped": 0,
+               "exposure_us": 8000, "gain_pct": 100})

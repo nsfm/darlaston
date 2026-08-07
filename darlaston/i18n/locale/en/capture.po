@@ -120,3 +120,14 @@ msgstr "EXAMPLE"
 #. {reason} is the failure, which is not translated.
 msgid "capture.files.preview.invalid"
 msgstr "invalid pattern: {reason}"
+
+#. Shown under the filename field, and blocks Save. Every other token is
+#. constant for a run, so without {seq} each capture overwrites the last.
+msgid "capture.files.filename.needs_seq"
+msgstr ""
+"a filename needs {{seq}}, or every capture in a folder overwrites the one "
+"before it"
+
+#. Shown under the filename field, and blocks Save.
+msgid "capture.files.filename.empty"
+msgstr "a filename pattern cannot be empty"

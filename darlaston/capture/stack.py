@@ -26,7 +26,6 @@ composition boring to build.
 from __future__ import annotations
 
 import json
-import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +33,8 @@ from typing import Callable
 
 import cv2
 import numpy as np
+
+from .files import claim, discard
 
 
 @dataclass
@@ -59,6 +60,8 @@ class StackSession:
         self.subject = subject
         self.slices: list[Slice] = []
         self._meta: dict = {}
+        # Empty, but written: see MosaicSession.__init__ for why.
+        self._save()
 
     @classmethod
     def at(cls, directory: Path | str, subject: str = "") -> "StackSession":
@@ -74,6 +77,10 @@ class StackSession:
         session.subject = subject
         session.slices = []
         session._meta = {}
+        # The mosaic does not record this tile until `adopt_stack` seals it,
+        # but the folder should still describe itself: the stitcher merges
+        # any stack it finds undone, and merging goes through `load`.
+        session._save()
         return session
 
     def set_meta(self, **meta) -> None:
@@ -83,8 +90,11 @@ class StackSession:
     def adopt(self, capture_path: Path, metric: float,
               coverage: float | None = None) -> Slice:
         index = len(self.slices) + 1
-        filename = f"slice_{index:03d}.dng"
-        shutil.move(str(capture_path), self.dir / filename)
+        # `claim`, not a bare move: the derived name is only free while the
+        # manifest and the directory agree, and the move used to happen
+        # before the save that keeps them in step.
+        target = claim(capture_path, self.dir / f"slice_{index:03d}.dng")
+        filename = target.name
         piece = Slice(index=index, filename=filename, metric=float(metric),
                       coverage=coverage)
         self.slices.append(piece)
@@ -95,7 +105,7 @@ class StackSession:
         if not self.slices:
             return None
         piece = self.slices.pop()
-        (self.dir / piece.filename).unlink(missing_ok=True)
+        discard(self.dir / piece.filename)
         self._save()
         return piece
 

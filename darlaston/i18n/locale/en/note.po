@@ -90,3 +90,23 @@ msgstr "Mosaic finished"
 
 msgid "moved.title"
 msgstr "Moved during exposure"
+
+#. Over the live view while the shutter is open. Short, because it is read
+#. out of the corner of an eye by somebody with a hand on the focus knob.
+#. It is only shown for the moment when movement actually spoils the frame.
+msgid "note.exposing"
+msgstr "hold still"
+
+#. The same, for an averaged capture: {n} of {total} frames pulled so far.
+msgid "note.exposing.counted"
+msgstr "hold still · {n}/{total}"
+
+#. Shown when a capture is thrown away because the stage moved during it.
+msgid "note.moved.discarded"
+msgstr "discarded, the stage moved"
+
+#. Over the live view after the shutter closes, while the frame is being
+#. calibrated and written. Movement is harmless by now -- this is here so
+#. the pause between slices is explained rather than mysterious.
+msgid "note.writing"
+msgstr "saving"

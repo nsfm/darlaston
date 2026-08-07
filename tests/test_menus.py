@@ -178,3 +178,49 @@ def test_measure_from_can_be_turned_off_and_back_on(win):
     assert chosen() == []
     b[Region.SPOT].click()
     assert chosen() == [Region.SPOT]
+
+
+# ---- closing while something is still writing a file ----------------------
+
+def test_an_idle_window_closes_without_a_question(win):
+    """The guard must not stand in front of every ordinary quit."""
+    assert win._work_in_flight() == []
+
+
+def test_a_running_stitch_is_noticed_before_the_window_closes(win):
+    """Every long job is a daemon thread with no join, so quitting kills it
+    wherever it is -- in the middle of a composite the dialog advertises as
+    up to 1.6 GB, with its strip offsets not yet patched in."""
+    import threading
+
+    stop = threading.Event()
+    # The name is the whole mechanism: the guard reads live threads rather
+    # than a register somebody has to remember to update.
+    worker = threading.Thread(target=stop.wait, daemon=True, name="stitch")
+    worker.start()
+    try:
+        assert win._work_in_flight() == ["stitching a mosaic"]
+    finally:
+        stop.set()
+        worker.join(timeout=2)
+    assert win._work_in_flight() == []
+
+
+def test_every_long_job_the_window_starts_is_one_the_guard_knows(win):
+    """A job added later with a name the guard has never heard of is a
+    silently lost guarantee, which is the state this replaced."""
+    import inspect
+    import re
+
+    #: Threads short enough that asking about them would be noise. A slice
+    #: read is about a fifth of a second and produces a preview, not a
+    #: file -- losing one costs a redraw. Named rather than pattern-matched
+    #: so adding a long job under a new name still fails this.
+    BRIEF = {"slice-preview"}
+
+    source = inspect.getsource(type(win))
+    started = set(re.findall(r'name="([a-z-]+)"\)\.start\(\)', source))
+    assert started, "the search found no threads at all, so it proves nothing"
+    unguarded = started - set(win.LONG_JOBS) - BRIEF
+    assert not unguarded, (
+        f"threads nobody would be warned about: {sorted(unguarded)}")

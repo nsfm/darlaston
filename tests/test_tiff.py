@@ -166,9 +166,18 @@ def test_linear_composite_round_trips(tmp_path):
     sub = _ifd(data, _ifd(data, first)[330][2])
     assert sub[262][2] == 34892, "linear raw"
     assert sub[277][2] == 3
-    off = sub[273][2] if sub[273][1] == 1 else None
-    counts = sub[279][1]
-    assert counts >= 1
+    assert sub[279][1] >= 1
+
+    # And the pixels, which is what "round trips" claimed and did not check.
+    # Every assertion above is about tags; a writer that emitted a correctly
+    # described block of zeros satisfied all of them.
+    from darlaston.process.wiggle import _read_composite
+
+    back, white = _read_composite(p)
+    assert white == 65535
+    # `_read_composite` hands back BGR, because that is what every consumer
+    # of a composite in this package works in. The planes on disk are RGB.
+    assert np.array_equal(back[:, :, ::-1].astype(np.uint16), img)
 
 
 # ---- the optics, in fields a photographer reads ----------------------------
@@ -228,7 +237,10 @@ def test_thumbnail_extracts_preview_without_reading_the_file(tmp_path):
     from darlaston.process.thumbnail import preview, write_thumbnail
 
     rng = np.random.default_rng(4)
-    h, w = 600, 900
+    # Big enough that "did not read the file" is a claim with content. At
+    # 600x900 the file is under a megabyte, and the old limit below was
+    # eight -- so a thumbnailer that slurped the whole thing passed.
+    h, w = 1200, 1800
     raw = np.clip(rng.normal(1800, 300, (h, w)), 0, 4095).astype(np.uint16)
     path = tmp_path / "big.dng"
     dng.write_bayer_streamed(
@@ -278,5 +290,48 @@ def test_thumbnail_extracts_preview_without_reading_the_file(tmp_path):
         preview(path)
     finally:
         builtins.open = real_open
-    assert sum(pulled) <= 8 << 20, \
-        f"read {sum(pulled)} bytes; a thumbnailer must not slurp the file"
+    size = path.stat().st_size
+    assert size > 3 << 20, "the file is too small for the claim to mean much"
+    # Relative to the file, not an absolute number that the file might be
+    # smaller than. The embedded preview is a few hundred kilobytes however
+    # large the image is, so a quarter is generous and still bites.
+    assert sum(pulled) < size // 4, (
+        f"read {sum(pulled)} of {size} bytes; a thumbnailer must not slurp "
+        f"the file it is asked about")
+
+
+def test_the_declared_illuminant_matches_the_matrix_we_actually_write():
+    """The tag is the only statement in the file about which white the
+    colour matrix is referred to, so a reader has to believe it. This said
+    17 (Standard light A) beside the D65 sRGB matrix, which asks every
+    developer that honours the tag to chromatically adapt by about 2900 K
+    for no reason."""
+    import numpy as np
+
+    from darlaston.process import dng
+    from darlaston.process.tiff import (CALIBRATION_ILLUMINANT1,
+                                        COLOR_MATRIX1)
+
+    #: EXIF LightSource. 21 is D65; 17 is Standard light A.
+    D65 = 21
+
+    # The matrix is the D65-referred XYZ->sRGB one, by construction.
+    assert dng._XYZ_TO_SRGB[0] == 3.2406, "the matrix changed; recheck the white"
+
+    raw = np.full((32, 32), 2000, np.uint16)
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as td:
+        p = dng.write_bayer_streamed(
+            Path(td) / "m.dng", lambda s, c: raw[s:s + c], 32, 32,
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            pattern="GBRG", white=4095, bits=12)
+        data = p.read_bytes()
+        (first,) = struct.unpack_from("<I", data, 4)
+        ifd0 = _ifd(data, first)
+
+    assert COLOR_MATRIX1 in ifd0, "no colour matrix at all"
+    assert ifd0[CALIBRATION_ILLUMINANT1][2] == D65, (
+        f"matrix is D65 but the file declares illuminant "
+        f"{ifd0[CALIBRATION_ILLUMINANT1][2]}")

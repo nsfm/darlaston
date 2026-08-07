@@ -56,7 +56,11 @@ def test_no_position_until_first_lock():
     t.advance(None, 0.0, (100, 100))
     assert t.position is None, "a map must never be seeded from nothing"
     t.advance((1.0, 1.0), 0.9, (100, 100))
-    assert t.position is not None
+    # The value, not merely that there is one: a property that answered
+    # (0.0, 0.0) from the first frame would satisfy "is not None" and would
+    # be the bug this guards against. The sense is inverted on purpose --
+    # when the scene slides left, the view has moved right over the slide.
+    assert t.position == (-1.0, -1.0)
 
 
 # ---- the map's banking policy ------------------------------------------------
@@ -165,9 +169,14 @@ def test_guard_reads_near_zero_when_still():
 
 
 def test_guard_stays_silent_without_a_lock():
-    _cam, pipe, _push, _ = _rig()
+    cam, pipe, push, _ = _rig()
     assert pipe.guard_begin() is None, \
-        "no frames yet, nothing to measure against — the guard must not arm"
+        "no frames yet, nothing to measure against -- the guard must not arm"
+    # And it does arm once there is something to measure against, or the
+    # assertion above would hold just as well for a guard that never armed.
+    push(); push()
+    assert pipe.guard_begin() is not None, "the guard never arms at all"
+    cam.close()
 
 
 def test_guard_reports_unmeasurable_as_infinite():
@@ -186,10 +195,20 @@ def test_guard_reports_unmeasurable_as_infinite():
 
 
 def test_guard_times_out_to_none_when_no_frames_arrive():
+    import time as _t
+
     cam, pipe, push, _ = _rig()
     push(); push()
     token = pipe.guard_begin()
+    t0 = _t.perf_counter()
     assert pipe.guard_measure(token, timeout=0.05) is None
+    waited = _t.perf_counter() - t0
+    # It *waited*, rather than answering None straight away. Without this
+    # the test cannot tell a timeout from a guard that never measures
+    # anything -- and a capture that returns instantly having measured
+    # nothing is the failure, not the timeout.
+    assert waited >= 0.04, f"returned after {waited * 1e3:.0f} ms; never waited"
+    assert waited < 1.0, f"waited {waited:.2f}s for a 0.05s timeout"
     cam.close()
 
 
@@ -362,3 +381,33 @@ def test_an_unmeasurable_shift_asks_for_a_new_keyframe():
     pos, locked, rekey = t.anchor((0.0, 380.0), 0.9, (400, 400))
     assert not locked and rekey
     assert t.gated == before + 1
+
+
+def test_a_gated_jump_does_not_teleport_the_position_backwards():
+    """The frame after a rejected jump is measured against a *new*
+    keyframe, so the anchor has to have moved to the last position we
+    actually measured. Leaving it behind made the next frame compute
+    `old_anchor - small_offset`: the position jumped back by however far
+    the view had travelled since the last rekey, and said it was locked.
+    One fast crank re-origined the whole map."""
+    from darlaston.live.tracker import StageTracker
+
+    shape = (400, 400)
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    # Sixty pixels of travel: measurable, and not far enough to rekey, so
+    # the position and the anchor are deliberately apart when the jump
+    # arrives. That gap is the size of the teleport.
+    pos, _, rekey = t.anchor((60.0, 0.0), 0.9, shape)
+    assert pos == (-60.0, 0.0) and not rekey
+
+    held, locked, rekey = t.anchor((0.0, 380.0), 0.9, shape)
+    assert not locked and rekey, "an unmeasurable jump should gate"
+    assert held == pos, "the position moved on a rejected measurement"
+
+    # The caller takes a fresh keyframe here. Five more pixels of travel
+    # should read five pixels on from where we last knew we were.
+    after, locked, _ = t.anchor((5.0, 0.0), 0.9, shape)
+    assert locked
+    assert after == (-65.0, 0.0), (
+        f"position teleported to {after} instead of (-65.0, 0.0)")

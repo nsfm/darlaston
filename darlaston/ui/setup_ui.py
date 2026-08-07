@@ -20,6 +20,8 @@ place to describe them rather than to pick between them.
 """
 from __future__ import annotations
 
+import copy
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
@@ -445,7 +447,17 @@ class _LibraryDialog(QtWidgets.QDialog):
 
     def __init__(self, library, parent=None, width: int = 680) -> None:
         super().__init__(parent)
-        self._library = library
+        # Edited on a copy, and merged back only by Save.
+        #
+        # Remove and New used to reach straight into the application's own
+        # Library. Neither wrote the file itself, which made it look safe
+        # -- but the object is shared, so Cancel left the change in memory
+        # and the next save from anywhere at all committed it. A removed
+        # stand takes its turret, its learned brightness signatures, and
+        # the calibration key every stored flat is filed under, so the
+        # thing being quietly kept was not a name in a list.
+        self._real = library
+        self._library = copy.deepcopy(library)
         self._selected: str | None = None
         self.setMinimumWidth(width)
 
@@ -461,6 +473,21 @@ class _LibraryDialog(QtWidgets.QDialog):
 
     def _switch(self, row: int) -> None:
         raise NotImplementedError
+
+    def _commit_to_library(self) -> None:
+        """Move the edited copy back onto the real one, and write it.
+
+        In place, on the object the window and everything it built are
+        holding -- rebinding `self._real` here would leave every one of
+        them pointing at the copy nobody merged into.
+        """
+        self._real.scopes = self._library.scopes
+        self._real.cameras = self._library.cameras
+        self._real.save()
+        # From here on the dialog is looking at what was saved, so a
+        # caller reading `selected` after `exec()` gets the live object
+        # rather than a copy that will not be updated again.
+        self._library = self._real
 
     def _save(self) -> None:
         raise NotImplementedError
@@ -607,7 +634,7 @@ class MicroscopeDialog(_LibraryDialog):
 
     def _save(self) -> None:
         self._commit()
-        self._library.save()
+        self._commit_to_library()
         self.accept()
 
 
@@ -645,12 +672,18 @@ class CameraDialog(_LibraryDialog):
     """
 
     def __init__(self, library, current: str | None = None,
-                 parent=None) -> None:
+                 parent=None, settings=None) -> None:
         super().__init__(library, parent, width=520)
         self.setWindowTitle(_("setup.cameras.title"))
         #: Which camera the session actually has open, as opposed to
         #: merely attached. Measuring needs to drive it.
         self._open_serial = current
+        #: Where the passed-over list lives. Optional so a test, or any
+        #: caller that only wants to describe cameras, need not carry one.
+        self._settings = settings
+        #: Edited here and written by Save, like everything else in this
+        #: window -- see `_LibraryDialog` for why Cancel has to mean it.
+        self._ignored = dict(getattr(settings, "ignored_cameras", None) or {})
 
         self.editor = CameraEditor()
         self.editor.changed.connect(self._refresh)
@@ -686,6 +719,19 @@ class CameraDialog(_LibraryDialog):
         self.profile.clicked.connect(self.measure_requested)
         self.profile.setEnabled(False)
 
+        # A laptop's own webcam and the infrared sensor beside it are on
+        # the bus at every launch, and with nothing else attached the
+        # likeliest-first rule opens one of them. This is how somebody
+        # says so once instead of every morning.
+        #
+        # Not a filter: `look()` deliberately hides nothing, because a
+        # rule confident enough to hide a device will one day hide the
+        # right one. A passed-over camera stays in this list, says that it
+        # is passed over, and Use still opens it.
+        self.ignore = QtWidgets.QCheckBox(_("setup.cameras.ignore.label"))
+        self.ignore.setToolTip(_("setup.cameras.ignore.tooltip"))
+        self.ignore.toggled.connect(self._set_ignored)
+
         list_buttons = QtWidgets.QHBoxLayout()
         list_buttons.setSpacing(6)
         list_buttons.addWidget(self.use)
@@ -695,6 +741,7 @@ class CameraDialog(_LibraryDialog):
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(6)
         left.addWidget(self.list, 1)
+        left.addWidget(self.ignore)
         left.addLayout(list_buttons)
 
         right = QtWidgets.QVBoxLayout()
@@ -767,13 +814,14 @@ class CameraDialog(_LibraryDialog):
         attached = self._attached()
         for camera in cameras:
             item = QtWidgets.QListWidgetItem(camera.display)
-            if camera.serial in attached:
+            found = attached.get(camera.serial)
+            if found is not None:
                 # A brass dot, which is already what this program means
                 # by "state, at a glance". The list is 170 px wide and
                 # the word "attached" does not fit in it; a dot does, and
                 # is read faster anyway.
                 item.setIcon(_present_dot())
-                item.setToolTip(_("setup.cameras.attached.tooltip"))
+                self._mark(item, found, found.key in self._ignored)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, camera.serial)
             self.list.addItem(item)
         if cameras:
@@ -809,8 +857,46 @@ class CameraDialog(_LibraryDialog):
             self.editor.load(self._library.cameras[serial])
         self._refresh()
 
+    def _set_ignored(self, on: bool) -> None:
+        """Pass this camera over on startup, or stop doing so.
+
+        Keyed on the same `Camera.key` that `camera_choice` uses, and the
+        fingerprint rides along so a *different* device appearing at the
+        same port later is offered normally instead of inheriting this
+        verdict. Only offered for a camera that is attached, because that
+        is the only time we hold the record that carries either.
+        """
+        found = self._attached().get(self._selected or "")
+        if found is None:
+            return
+        if on:
+            self._ignored[found.key] = found.fingerprint
+        else:
+            self._ignored.pop(found.key, None)
+        row = self.list.currentRow()
+        if row >= 0:
+            self._mark(self.list.item(row), found, on)
+
+    @staticmethod
+    def _mark(item, camera, passed_over: bool) -> None:
+        """Say in the list that a camera will be passed over."""
+        item.setToolTip(_("setup.cameras.ignored.tooltip") if passed_over
+                        else _("setup.cameras.attached.tooltip"))
+        font = item.font()
+        font.setItalic(passed_over)
+        item.setFont(font)
+
     def _refresh(self) -> None:
-        here = bool(self._selected) and self._selected in self._attached()
+        attached = self._attached()
+        here = bool(self._selected) and self._selected in attached
+        found = attached.get(self._selected or "")
+        # Only for a camera in front of us: passing over one that is not
+        # here is a decision about nothing, and the key it would be filed
+        # under is not knowable from the library entry alone.
+        self.ignore.setEnabled(here and self._settings is not None)
+        self.ignore.blockSignals(True)
+        self.ignore.setChecked(bool(found) and found.key in self._ignored)
+        self.ignore.blockSignals(False)
         self.use.setEnabled(here)
         # Measuring drives the camera, so only the one that is open.
         self.profile.setEnabled(here and self._selected == self._open_serial)
@@ -828,7 +914,10 @@ class CameraDialog(_LibraryDialog):
 
     def _save(self) -> None:
         self._commit()
-        self._library.save()
+        self._commit_to_library()
+        if self._settings is not None:
+            self._settings.ignored_cameras = dict(self._ignored)
+            self._settings.save()
         self.accept()
 
 

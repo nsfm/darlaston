@@ -20,7 +20,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .model import config_dir
+from ..i18n import N_
+from .model import config_dir, known_fields, write_atomically
 
 
 def pictures_dir() -> Path:
@@ -119,6 +120,27 @@ class Settings:
     #: The chosen camera's fingerprint, so a cable moved to another
     #: socket is recognised rather than treated as a stranger.
     camera_fingerprint: str = ""
+    #: Cameras the operator has said are not the microscope, as
+    #: `key -> fingerprint`. A laptop's own webcam and the infrared sensor
+    #: beside it are on the bus at every launch, and on a machine with no
+    #: other camera attached the likeliest-first rule opens one of them.
+    #:
+    #: This is a *preference*, not a rule the program worked out, and the
+    #: distinction is the whole reason it is allowed to exist:
+    #: `discovery.look` deliberately hides nothing, because a heuristic
+    #: confident enough to hide a device will one day hide the right one.
+    #: An operator saying "not this one" is not a heuristic. It is still
+    #: never a filter -- the picker lists every ignored camera, says so,
+    #: and lets it be taken back -- it only stops one being opened by
+    #: default.
+    #:
+    #: Stored per machine because it describes a bench, not a camera: the
+    #: same model may be somebody else's microscope camera.
+    #:
+    #: The fingerprint rides along so this cannot silently hide a
+    #: *different* device that later appears at the same port. A port is a
+    #: socket; ignoring a socket is not what anybody meant.
+    ignored_cameras: dict[str, str] = field(default_factory=dict)
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built
@@ -224,16 +246,29 @@ class Settings:
     @classmethod
     def load(cls, path: Path | None = None) -> "Settings":
         path = path or (config_dir() / "settings.json")
-        if path.exists():
-            try:
-                return cls(**json.loads(path.read_text()))
-            except (ValueError, TypeError):
-                pass          # a corrupt file must not stop the app opening
-        return cls()
+        if not path.exists():
+            return cls()
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return cls()      # a corrupt file must not stop the app opening
+        if not isinstance(raw, dict):
+            return cls()
+        try:
+            # Only the keys this version knows. Handing the whole file to
+            # the constructor made every schema change a reset: one key
+            # added by a newer build, or removed by a later one, raised
+            # TypeError and *every* setting went back to its default --
+            # capture folder, filename pattern, artist, the lot. Catching a
+            # corrupt file is deliberate; catching schema drift the same
+            # way was not.
+            return cls(**known_fields(cls, raw))
+        except (ValueError, TypeError):
+            return cls()
 
     def save(self, path: Path | None = None) -> None:
         path = path or (config_dir() / "settings.json")
-        path.write_text(json.dumps(asdict(self), indent=2) + "\n")
+        write_atomically(path, json.dumps(asdict(self), indent=2) + "\n")
 
 
 def _fill(pattern: str, tokens: dict[str, str]) -> str:
@@ -244,6 +279,25 @@ def _fill(pattern: str, tokens: dict[str, str]) -> str:
     # dropped, so a typo in a pattern is obvious in the filename.
     out = re.sub(r"_{2,}", "_", out).strip("_-")
     return out or "capture"
+
+
+def filename_problem(pattern: str) -> str | None:
+    """The message key for why this pattern would lose captures, or None.
+
+    `{seq}` is not decoration. Every other token is constant across a run
+    -- same subject, same objective, same illumination, same date -- so a
+    pattern without it resolves to one name and each capture silently
+    overwrites the one before. At speed, during a timelapse, that is a
+    whole night's work landing in a single file.
+
+    A key rather than a sentence, because this is shown in the interface
+    and everything shown there is translated.
+    """
+    if not pattern.strip():
+        return N_("capture.files.filename.empty")
+    if "{seq}" not in pattern:
+        return N_("capture.files.filename.needs_seq")
+    return None
 
 
 def next_sequence(folder: Path, pattern: str) -> int:

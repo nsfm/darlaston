@@ -155,6 +155,20 @@ class StageTracker:
             self._gated += 1
             # A shift too big to trust is also a shift that has outrun its
             # keyframe, so ask for a fresh one rather than gating for ever.
+            #
+            # The anchor has to move with it. Asking for a new keyframe
+            # while leaving the anchor where it was meant the next frame
+            # computed `old_anchor - small_offset`: the position jumped
+            # *backwards* by however far the view had travelled since the
+            # last rekey, and reported itself locked while doing it. One
+            # fast crank re-origined the map, and every pin and tile banked
+            # afterwards was wrong by that much.
+            #
+            # Moving it to the last position we actually measured loses the
+            # unmeasured jump instead, which is the limitation this module's
+            # docstring already names and `gated` already counts. Lost is
+            # recoverable; silently wrong is not.
+            self._anchor = self._pos
             return self.position, False, True
         self._pos = (self._anchor[0] - offset[0], self._anchor[1] - offset[1])
         self._tracking = True

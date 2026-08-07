@@ -119,30 +119,109 @@ def _shoot_with(cam, frames):
     return results[-1]
 
 
+class _Bench:
+    """A capture that fires instantly and reports back, as the window does.
+
+    `trigger` returning True only means the shutter was claimed. The
+    verdict arrives separately, on another thread, through `note_result`
+    -- so a harness that only implements `trigger` is not exercising the
+    thing that decides what a run reports.
+    """
+
+    busy = False
+
+    def __init__(self, timelapse=None, ok=True, applied=("dark",)):
+        self.shots = 0
+        self.timelapse = timelapse
+        self.ok = ok
+        self.applied = applied
+
+    def trigger(self, setup=None, subject="", slide="", frames=1):
+        self.shots += 1
+        if self.timelapse is not None:
+            self.timelapse.note_result(types.SimpleNamespace(
+                ok=self.ok, path=None, applied=self.applied))
+        return True
+
+
+def _run(tl, seconds=5.0):
+    import time as _t
+    t0 = _t.monotonic()
+    while tl.running and _t.monotonic() - t0 < seconds:
+        _t.sleep(0.02)
+    assert not tl.running, "the timelapse did not end"
+
+
 def test_timelapse_takes_the_asked_number_and_stops(tmp_path):
     from darlaston.capture.timelapse import Timelapse
 
-    class InstantCapture:
-        def __init__(self):
-            self.shots = 0
-            self.busy = False
-        def trigger(self, setup=None, subject="", slide="", frames=1):
-            self.shots += 1
-            return True
-
-    cap = InstantCapture()
     statuses = []
-    tl = Timelapse(cap, statuses.append)
+    tl = Timelapse(None, statuses.append)
+    cap = _Bench(tl)
+    tl._capture = cap
     assert tl.start(0.05, count=3)
-    deadline = 5.0
-    import time as _t
-    t0 = _t.monotonic()
-    while tl.running and _t.monotonic() - t0 < deadline:
-        _t.sleep(0.02)
-    assert not tl.running
+    _run(tl)
     assert cap.shots == 3
+    # Three *triggers* and three *photographs*, which are not the same
+    # claim -- see the failure test below.
     assert statuses[-1].shot == 3
+    assert statuses[-1].failed == 0
     assert "finished" in statuses[-1].message
+    # The schedule was honoured rather than fired as fast as the loop
+    # could go: three shots at 50 ms start-to-start cannot finish in less
+    # than two intervals.
+    assert len([s for s in statuses if s.running]) >= 3
+
+
+def test_timelapse_counts_photographs_and_not_triggers():
+    """`trigger` returns True the moment the shutter is claimed. A run
+    where every capture then failed used to finish saying it took them
+    all -- and nobody is watching a timelapse, so that line is the only
+    account of the night."""
+    from darlaston.capture.timelapse import Timelapse
+
+    statuses = []
+    tl = Timelapse(None, statuses.append)
+    cap = _Bench(tl, ok=False)
+    tl._capture = cap
+    assert tl.start(0.05, count=4)
+    _run(tl)
+    assert cap.shots == 4, "the run should still have tried four times"
+    assert statuses[-1].shot == 0, "reported photographs that do not exist"
+    assert statuses[-1].failed == 4
+    assert "4 failed" in statuses[-1].message
+
+
+def test_timelapse_notices_the_dark_expiring_mid_run():
+    """The dark ages out and the capture path stops applying it without
+    saying so. Elapsed run time is the wrong thing to measure: it called
+    a dark shot just under eight hours ago fresh."""
+    from darlaston.capture.timelapse import Timelapse
+
+    statuses = []
+    tl = Timelapse(None, statuses.append)
+    cap = _Bench(tl, applied=("dark",))
+    tl._capture = cap
+    assert tl.start(0.05, count=3)
+    import time as _t
+    while cap.shots < 1:
+        _t.sleep(0.01)
+    cap.applied = ()                       # the store stops handing it over
+    _run(tl)
+    assert statuses[-1].dark_stale, "the dark expired and nothing said so"
+
+
+def test_a_run_that_never_had_a_dark_is_not_reported_as_stale():
+    """Uncalibrated is not the same as expired, and "reshoot it" is bad
+    advice about a thing that never existed."""
+    from darlaston.capture.timelapse import Timelapse
+
+    statuses = []
+    tl = Timelapse(None, statuses.append)
+    tl._capture = _Bench(tl, applied=())
+    assert tl.start(0.05, count=2)
+    _run(tl)
+    assert not statuses[-1].dark_stale
 
 
 def test_timelapse_stop_ends_the_run(tmp_path):
@@ -812,16 +891,43 @@ def test_tiles_and_slices_keep_their_raw_whatever_the_preference(tmp_path):
     cap = StillCapture(session=None, settings=s)
     assert cap.raw_required is False, "a plain capture is a photograph"
 
-    # The rule the capture path applies, stated here so it cannot drift.
-    def raw_wanted(cap):
-        return s.image_format != "jpeg" or cap.raw_required
+    # By shooting, not by restating the rule. This test used to define
+    # `raw_wanted` locally and assert against its own copy, so deleting the
+    # real check in `still.py` left it passing -- which is the one thing a
+    # data-loss guarantee must never do.
+    for image_format, raw_required, want_dng in (
+            ("jpeg", False, False),      # a photograph, as asked
+            ("jpeg", True, True),        # a tile, whatever the preference
+            ("both", False, True),
+            ("raw", False, True)):
+        into = tmp_path / f"{image_format}-{raw_required}"
+        made = _shoot_into(into, image_format=image_format,
+                           raw_required=raw_required)
+        assert made.ok, made.message
+        dngs = list(into.rglob("*.dng"))
+        assert bool(dngs) is want_dng, (
+            f"{image_format} with raw_required={raw_required} wrote "
+            f"{[p.name for p in into.rglob('*')]}")
 
-    assert raw_wanted(cap) is False
-    cap.raw_required = True
-    assert raw_wanted(cap) is True
-    s.image_format = "both"
-    cap.raw_required = False
-    assert raw_wanted(cap) is True
+
+def _shoot_into(root, *, image_format: str, raw_required: bool):
+    """One real capture through the real path, into `root`."""
+    from darlaston.capture.still import StillCapture
+    from darlaston.session.settings import Settings
+
+    root.mkdir(parents=True, exist_ok=True)
+    session = types.SimpleNamespace(backend=MockCamera(fps=30.0))
+    session.backend.open()
+    results, done = [], threading.Event()
+    cap = StillCapture(session,
+                       Settings(capture_root=str(root),
+                                image_format=image_format),
+                       on_result=lambda r: (results.append(r), done.set()))
+    cap.raw_required = raw_required
+    assert cap.trigger(None, subject="t")
+    assert done.wait(30), "the capture never finished"
+    session.backend.close()
+    return results[-1]
 
 
 def test_a_file_never_claims_a_manufacturer_we_do_not_know():

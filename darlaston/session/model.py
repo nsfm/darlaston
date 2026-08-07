@@ -27,6 +27,36 @@ def config_dir() -> Path:
     return d
 
 
+def write_atomically(path: Path, text: str) -> None:
+    """Write a whole file or none of it.
+
+    `write_text` truncates first and then writes, so anything that
+    interrupts it -- a crash, a full disk, the machine losing power --
+    leaves a *shorter, valid-looking* file at the real path. That is the
+    worst of the failure modes, because the next read gets no error, only
+    less. The session manifests have always done this; the configuration
+    files, which hold everything anybody has typed in by hand, did not.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def known_fields(cls, raw: dict) -> dict:
+    """Only the keys this version of `cls` has a field for.
+
+    Handing a whole stored dictionary to a dataclass constructor makes
+    every schema change a data-loss event: one key added by a newer
+    version, or removed by a later one, raises TypeError and the caller
+    falls back to defaults for *everything*. A file this version cannot
+    read in full is not a corrupt file.
+    """
+    from dataclasses import fields as _fields
+
+    names = {f.name for f in _fields(cls)}
+    return {k: v for k, v in raw.items() if k in names}
+
+
 # --------------------------------------------------------------------------
 # Illumination
 # --------------------------------------------------------------------------
@@ -381,18 +411,59 @@ class Library:
         self.load()
 
     def load(self) -> None:
+        """Read what is there, and never raise.
+
+        This runs from `__init__`, which runs from `main` before any window
+        exists, in a build that sets `console=False` -- so an exception here
+        is the application failing to start with nothing on screen and
+        nowhere for the traceback to go. A truncated `library.json` did
+        exactly that, and that file holds every objective anybody has ever
+        typed in.
+
+        Entries are read one at a time for the same reason. One camera
+        written by a newer version should not take every scope with it.
+        """
         if not self.path.exists():
             return
-        raw = json.loads(self.path.read_text())
-        self.cameras = {k: CameraProfile(**v) for k, v in raw.get("cameras", {}).items()}
+        try:
+            raw = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            self._set_aside()
+            return
+        if not isinstance(raw, dict):
+            self._set_aside()
+            return
+
+        self.cameras = {}
+        for k, v in (raw.get("cameras") or {}).items():
+            try:
+                self.cameras[k] = CameraProfile(**known_fields(CameraProfile, v))
+            except Exception:
+                continue
         self.scopes = {}
-        for k, v in raw.get("scopes", {}).items():
-            v = dict(v)
-            v["turret"] = _turret_from(v.get("turret", {}))
-            self.scopes[k] = ScopeProfile(**v)
+        for k, v in (raw.get("scopes") or {}).items():
+            try:
+                v = dict(v)
+                v["turret"] = _turret_from(v.get("turret", {}))
+                self.scopes[k] = ScopeProfile(**known_fields(ScopeProfile, v))
+            except Exception:
+                continue
+
+    def _set_aside(self) -> None:
+        """Keep an unreadable library rather than saving over it.
+
+        Starting empty is survivable; starting empty and then writing two
+        cameras on top of the file that held eleven objectives is not. The
+        broken copy stays next to it under a name that says so, so it can
+        be repaired by hand.
+        """
+        try:
+            self.path.replace(self.path.with_suffix(".json.unreadable"))
+        except OSError:
+            pass
 
     def save(self) -> None:
-        self.path.write_text(json.dumps({
+        write_atomically(self.path, json.dumps({
             "cameras": {k: asdict(v) for k, v in self.cameras.items()},
             "scopes": {k: asdict(v) for k, v in self.scopes.items()},
         }, indent=2) + "\n")

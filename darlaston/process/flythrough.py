@@ -186,20 +186,27 @@ def flythrough(directory: Path | str, *, stops: int = 3, hold: float = 1.0,
     if not source.exists():
         raise FileNotFoundError(f"no composite.dng in {directory}")
 
-    rgb, white = _read_composite(source)
+    # BGR, as that function's docstring says and as `wiggle` -- its only
+    # other caller -- treats it. Passing it to `develop` as RGB reversed
+    # it a second time, so every frame of every flythrough came out with
+    # red and blue swapped. `wiggle`, `plate`, `stack` and `stitch` all
+    # agree about this; only here did the two reversals stack up.
+    bgr, white = _read_composite(source)
     # Grey-world, as the composite's own sidecar does. Without a neutral a
     # raw microscope field renders as a green rectangle -- correct, and
     # useless to look at. A mosaic of diatoms on plain mountant is exactly
     # the case the assumption holds for: the field really is neutral on
     # average, because most of it is mountant.
-    step = max(1, max(rgb.shape[:2]) // 400)
-    thumb = rgb[::step, ::step]
+    step = max(1, max(bgr.shape[:2]) // 400)
+    thumb = bgr[::step, ::step]
     means = [float(thumb[:, :, c][thumb[:, :, c] > 0].mean() or 1.0)
              for c in range(3)]
-    neutral = tuple(m / max(means[1], 1e-6) for m in means)
-    image = develop(rgb, pattern=None, white=white, neutral=neutral,
-                    rgb_input=True)
-    del rgb, thumb
+    # AsShotNeutral is RGB. The means above are BGR, so the tuple has to
+    # be turned round -- otherwise the correction is applied to the wrong
+    # two channels and makes the cast worse rather than removing it.
+    neutral = tuple(m / max(means[1], 1e-6) for m in reversed(means))
+    image = develop(bgr, pattern=None, white=white, neutral=neutral)
+    del bgr, thumb
     image = _on_mountant(image)
     h, w = image.shape[:2]
 

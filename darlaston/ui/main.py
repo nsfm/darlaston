@@ -10,6 +10,7 @@ nothing in camera/ or live/ has ever heard of Qt.
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import shutil
 import signal
@@ -29,12 +30,14 @@ from ..capture.mosaic import MosaicSession
 from ..capture.stack import StackSession, StackTrigger
 from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
+from .. import __version__, log
 from ..live.focus import Illumination, Region
+from ..live.cell import Newest
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
                              ScopeProfile, Setup, Turret)
-from ..i18n import _, n_
+from ..i18n import N_, _, n_
 from ..session.settings import Settings
 from . import theme
 from .about import AboutDialog
@@ -59,6 +62,31 @@ from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .widgets import FocusGroup, Histogram, LiveView, ValueBar
 
+_log = logging.getLogger(__name__)
+
+
+def _exposing_notice(state: str) -> str | None:
+    """The words over the live view while the shutter is open, or None.
+
+    The state arrives as an identifier -- "exposing", or
+    "exposing:3:16" for the third of sixteen averaged frames -- and the
+    words are made here. It used to be an f-string in the slot, which
+    meant the one message shown over the operator's own live view was the
+    one message that never reached the catalogue: untranslated, and
+    invisible to the check that every displayed string exists.
+    """
+    if state in ("calibrating", "writing"):
+        # Motion is harmless by now, so this does not ask for stillness --
+        # it exists because writing a 40 MB frame takes a few seconds, and
+        # during a stack that silence reads as "why has nothing happened".
+        return _("note.writing")
+    if not state.startswith("exposing"):
+        return None
+    bits = state.split(":")
+    if len(bits) == 3:
+        return _("note.exposing.counted", n=bits[1], total=bits[2])
+    return _("note.exposing")
+
 
 class Bridge(QtCore.QObject):
     """Thread hop. Qt's queued connection is the marshalling."""
@@ -71,10 +99,12 @@ class Bridge(QtCore.QObject):
     stitch = QtCore.Signal(object)
     stack_merge = QtCore.Signal(object)
     tile_merge = QtCore.Signal(object)
+    slice_preview = QtCore.Signal(object)
     wiggle = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
+    bank_warn = QtCore.Signal(str)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -97,14 +127,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.bridge = Bridge()
         self.bridge.signals.connect(self._on_signals)
+        #: Newest-wins between the analysis thread and this one. Qt's
+        #: queued connection is a FIFO with no bound, so a stall here does
+        #: not drop frames, it delays them -- and each one waiting holds a
+        #: 6.65 MB preview. See `live/cell.Newest`.
+        self._newest: Newest = Newest()
+        self.bridge.slice_preview.connect(self._on_slice_preview)
+        #: Set while a slice is being read for the assembly preview.
+        self._reading_slice = threading.Event()
         self.bridge.status.connect(self._on_status)
         self.bridge.capture_state.connect(self._on_capture_state)
         self.bridge.capture_result.connect(self._on_capture_result)
         self.bridge.calib_progress.connect(self._on_calib_progress)
         self.bridge.banked.connect(self._on_banked)
         self.bridge.banking.connect(self._on_banking)
+        self.bridge.bank_warn.connect(self._on_bank_warn)
 
-        self.pipeline = LivePipeline(self.bridge.signals.emit,
+        self.pipeline = LivePipeline(self._publish_signals,
                                      illumination=Illumination.BRIGHTFIELD)
         self.session = CameraSession(make_backend,
                                      self.bridge.status.emit,
@@ -136,7 +175,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
                                        self.bridge.banked.emit,
-                                       self.bridge.banking.emit)
+                                       self.bridge.banking.emit,
+                                       self.bridge.bank_warn.emit)
         self._build()
         # After the widgets exist and before the first frame arrives, so the
         # preview is never briefly drawn at a quality nobody chose.
@@ -300,7 +340,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_panel = CalibrationPanel()
         self.calib_panel.capture_dark.connect(self._do_dark)
         self.calib_panel.build_flat.connect(self._do_flat)
-        self.calib_panel.collect_flat.connect(self._collect_flat)
+        self.calib_panel.bank_flat.connect(self._bank_flat)
         self.calib_panel.build_lut.connect(self._do_lut)
         # Performance, in a floating panel like the others. Off by
         # default: it is a diagnostic, and a permanent cost table is a
@@ -1027,17 +1067,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calibration.capture_dark()
 
     @QtCore.Slot(bool)
-    def _collect_flat(self, on: bool) -> None:
-        """Start or stop gathering blank fields.
+    def _bank_flat(self) -> None:
+        """Take one blank field, because the operator asked for one.
 
-        A mode rather than a background habit: each frame freezes the
-        preview for about a second, and a flat is only valid at the
-        illumination it was shot under -- which nothing here can read, so
-        the operator saying "now" is the only reliable signal there is.
+        A press rather than a mode. The automatic version watched for a
+        blank, still view and grabbed on its own, and it could not work:
+        the bank required the stage to have *moved* between frames, that
+        motion was measured by phase-correlating consecutive frames, and a
+        blank field is the one subject that cannot be correlated. It banked
+        one and refused everything after it. See
+        `FlatBank.looks_like_the_same_patch`.
         """
-        self.opportunist.enabled = on
-        self.strip.set_note(
-            "collecting blank fields -- move to empty glass" if on else "")
+        if not self.opportunist.bank_now():
+            return
         self._refresh_calibration()
 
     def _do_flat(self) -> None:
@@ -1065,6 +1107,11 @@ class MainWindow(QtWidgets.QMainWindow):
         so say so. A tool that stalls unexplained is worse than one that asks."""
         self.strip.set_note(_("note.banking") if busy else "")
 
+    @QtCore.Slot(str)
+    def _on_bank_warn(self, key: str) -> None:
+        """A banked field that is worth a second look. Never a refusal."""
+        self.strip.set_note(_(key))
+
     def _refresh_calibration(self) -> None:
         if self.setup is None:
             return
@@ -1073,8 +1120,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                    self.subject.slide_note)
         live = self.session.status.is_live and not self.calibration.busy
         self.calib_panel.set_status(status, self.opportunist.count,
-                                    self.opportunist.bank.wanted, live=live,
-                                    collecting=self.opportunist.enabled)
+                                    self.opportunist.bank.wanted, live=live)
         self.calib_button.set_status(status, busy=self.calibration.busy)
 
     def _on_capture(self) -> None:
@@ -1088,11 +1134,12 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(str)
     def _on_capture_state(self, state: str) -> None:
         self.shutter.set_state(state)
-        # The notice spans exactly the window where motion does damage. Once
-        # the frame is pulled, cranking is harmless and the message would be
-        # a lie that teaches people to ignore it.
-        self.view.set_notice(f"hold still -- {state}"
-                             if state.startswith("exposing") else None)
+        # Two different notices, because they say different things. While
+        # the shutter is open, movement spoils the frame. After it closes
+        # the frame is still being calibrated and written, which takes a
+        # few seconds on a 40 MB capture -- harmless to move during, but
+        # silence there reads as the program having stopped.
+        self.view.set_notice(_exposing_notice(state))
         if state == "idle":
             self.shutter.set_available(self.session.status.is_live)
 
@@ -1100,11 +1147,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_capture_result(self, result: CaptureResult) -> None:
         self.shutter.set_result(result.summary,
                                 ok=result.ok and not result.moved)
-        if result.ok and self.timelapse.running:
-            try:
-                self.timelapse.note_written(result.path.stat().st_size)
-            except OSError:
-                pass
+        if self.timelapse.running:
+            # Every result, not only the good ones: counting the successes
+            # is the whole reason this is fed back, and a run that failed
+            # forty times used to report forty frames.
+            self.timelapse.note_result(result)
         # Not during a timelapse: an unattended run must never park itself
         # behind a modal question. The summary already says it moved.
         discarded = False
@@ -1144,16 +1191,64 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_frame = (w, h)
             self._tile_preview = (self._last_preview.copy()
                                   if self._last_preview is not None else None)
-        try:
-            from ..process.stitch import read_bayer_dng
-            self.assembly.add_slice(
-                read_bayer_dng(self.stack_session.dir / s.filename)[::2, ::2])
-        except Exception:
-            pass                       # the preview must never block capture
+        self._read_slice_for_preview(self.stack_session.dir / s.filename)
         if self.mosaic is not None:
             self.strip.set_note(_("note.slice_landed.first", n=s.index))
         else:
             self.strip.set_note(_("note.slice_landed", n=s.index))
+
+    def _read_slice_for_preview(self, path) -> None:
+        """Fold a landed slice into the assembly preview, off this thread.
+
+        Measured on a 20 MP 12-bit slice, which is the camera this was
+        written for: `read_bayer_dng` takes 208 ms, of which only 8.6 ms is
+        reading the file -- the rest is unpacking 12-bit samples. Done here
+        it froze the window for a quarter of a second at exactly the moment
+        the operator had stopped racking and was watching for the preview,
+        and a sixty-slice stack spent fifteen seconds that way.
+
+        A worker really does help, which was worth checking rather than
+        assuming: the work is numpy ufuncs over twenty million samples and
+        they release the GIL, so the worst stall on this thread measured
+        12 ms against 297 ms. Pure-Python parsing would have moved the cost
+        without freeing anything.
+
+        `add_slice` itself stays here. It is 35 ms, it owns the assembly's
+        accumulators, and it runs once per rack-and-pause rather than per
+        frame -- moving it would mean sharing that state across threads for
+        a seventh of the saving.
+        """
+        if self._reading_slice.is_set():
+            # Two slices landing inside one read is possible on a fast
+            # rack. The preview is a running composite, so the newer one
+            # would be folded in over a stale accumulator; skipping it
+            # loses a preview frame, not a slice.
+            _log.debug("slice preview skipped: a read is still running")
+            return
+        self._reading_slice.set()
+
+        def work() -> None:
+            try:
+                from ..process.stitch import read_bayer_dng
+                self.bridge.slice_preview.emit(read_bayer_dng(path)[::2, ::2])
+            except Exception:
+                # The preview must never block capture -- but a slice that
+                # cannot be read is worth knowing about, because the merge
+                # will read the same file later.
+                _log.exception("could not read %s for the assembly preview",
+                               path)
+            finally:
+                self._reading_slice.clear()
+
+        threading.Thread(target=work, daemon=True,
+                         name="slice-preview").start()
+
+    @QtCore.Slot(object)
+    def _on_slice_preview(self, quarter) -> None:
+        try:
+            self.assembly.add_slice(quarter)
+        except Exception:
+            _log.exception("the assembly preview could not fold in a slice")
 
     def _adopt_tile(self, result: CaptureResult) -> None:
         h, w = ((self._last_preview.shape[:2])
@@ -1651,7 +1746,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
         if box.clickedButton() is retry:
             result.path.unlink(missing_ok=True)
-            self.shutter.set_result("discarded -- hold still this time")
+            self.shutter.set_result(_("note.moved.discarded"))
             self._on_capture()
             return True
         return False
@@ -1830,7 +1925,8 @@ class MainWindow(QtWidgets.QMainWindow):
         while it is sitting on the bench.
         """
         current = self.setup.camera.serial if self.setup else None
-        dialog = CameraDialog(self.library, current, self)
+        dialog = CameraDialog(self.library, current, self,
+                              settings=self.settings)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
@@ -1955,8 +2051,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- live ------------------------------------------------------------
 
+    def _publish_signals(self, s: LiveSignals) -> None:
+        """Hand a frame to the interface. Runs on the analysis thread.
+
+        The wake-up carries nothing. Qt's queued connection is a FIFO with
+        no bound, so emitting the frame itself meant a stall on the
+        interface thread delivered every backed-up frame in turn, oldest
+        first -- the operator watching their hand as it was a second ago.
+        The cell holds the newest and the slot reads it there.
+        """
+        if self._newest.put(s):
+            self.bridge.signals.emit(None)
+
     @QtCore.Slot(object)
-    def _on_signals(self, s: LiveSignals) -> None:
+    def _on_signals(self, _wake) -> None:
+        # The payload is deliberately nothing: by the time this runs the
+        # cell may hold a newer frame than the one that asked for it, and
+        # that newer one is what is worth drawing.
+        s = self._newest.take()
+        if s is None:
+            return
         # Not while a guided routine is running: banking a field mid-routine
         # is startling, and during a dark capture the lamp is off, so anything
         # taken then would be a black frame masquerading as a flat.
@@ -2132,7 +2246,65 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session.stop()
         self.pipeline.stop()
 
+    #: Long jobs, by the name their thread is given, and the key that says
+    #: what they are. Each writes one file that takes minutes to produce --
+    #: the stitch dialog warns of up to 1.6 GB -- so abandoning one leaves
+    #: a partial file where a finished one should be.
+    LONG_JOBS = {
+        "stitch": N_("shell.quit.job.stitch"),
+        "stack-merge": N_("shell.quit.job.merge"),
+        "flythrough": N_("shell.quit.job.render"),
+        "plate": N_("shell.quit.job.render"),
+        "wiggle": N_("shell.quit.job.render"),
+        "arrange": N_("shell.quit.job.render"),
+    }
+
+    def _work_in_flight(self) -> list[str]:
+        """What is running that would be lost by closing now.
+
+        Read from the live threads rather than from a register kept
+        alongside them. A register is one more thing to update at every
+        `start()` and every early return, and the failure mode of getting
+        it wrong is silently losing the guard -- which is the state this
+        replaces.
+        """
+        alive = {t.name for t in threading.enumerate() if t.is_alive()}
+        said = []
+        for name, key in self.LONG_JOBS.items():
+            if name in alive and key not in said:
+                said.append(key)
+        if self.timelapse.running:
+            said.append(N_("shell.quit.job.timelapse"))
+        return [_(k) for k in said]
+
     def closeEvent(self, event) -> None:
+        """Ask before abandoning something that is partway through a file.
+
+        Every long job is a daemon thread, so quitting kills it wherever
+        it happens to be -- in the middle of a composite, with its strip
+        offsets not yet patched in. There is no join to wait on and adding
+        one would hang the close instead, so the honest thing is to say
+        what is running and let the operator decide.
+        """
+        busy = self._work_in_flight()
+        if busy:
+            ask = QtWidgets.QMessageBox(self)
+            ask.setWindowTitle(_("shell.quit.busy.title"))
+            ask.setText(_("shell.quit.busy.body",
+                          jobs="\n".join(f"    {b}" for b in busy)))
+            # Named for what they do rather than "OK" and "Cancel". At a
+            # question about losing work, "Cancel" is ambiguous about which
+            # thing is being cancelled.
+            stay = ask.addButton(_("shell.quit.busy.wait"),
+                                 QtWidgets.QMessageBox.ButtonRole.RejectRole)
+            ask.addButton(_("shell.quit.busy.quit"),
+                          QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+            ask.setDefaultButton(stay)
+            ask.exec()
+            if ask.clickedButton() is stay:
+                event.ignore()
+                return
+            _log.warning("closing while still running: %s", ", ".join(busy))
         self.shutdown()
         super().closeEvent(event)
 
@@ -2203,12 +2375,19 @@ def _list_cameras() -> int:
     found = enumerate_cameras()
     print(f"\nV4L2 / UVC: {len(found)} capture device"
           f"{'' if len(found) == 1 else 's'}")
+    # What the operator has passed over. Said out loud here, because this
+    # command exists to explain what the application can see and a camera
+    # it has been told to skip is exactly the sort of thing somebody would
+    # otherwise spend an evening puzzling over.
+    ignored = Settings.load().ignored_cameras or {}
     for cam in found:
         w, h = cam["sizes"][0]
         raw = (", raw: " + ", ".join(cam["raw"])) if cam["raw"] else \
             ", no raw (linear DNG only)"
+        skip = ("  -- passed over on startup"
+                if f"v4l2:{cam.get('key', '')}" in ignored else "")
         print(f"    {cam['node']}  {cam['card']}  [{cam['driver']}]  "
-              f"{w}x{h}  {'/'.join(cam['formats'])}{raw}")
+              f"{w}x{h}  {'/'.join(cam['formats'])}{raw}{skip}")
     if found:
         print("\n    run with --usb to use one")
     return 0
@@ -2228,10 +2407,20 @@ def main() -> int:
                          "are written as linear DNGs")
     ap.add_argument("--list-cameras", action="store_true",
                     help="show every camera darlaston can see, and exit")
+    ap.add_argument("--verbose", action="store_true",
+                    help="log every detail, not just what went wrong")
     args = ap.parse_args()
 
     if args.list_cameras:
         return _list_cameras()
+
+    # Before anything that can fail. The frozen build has no console, so
+    # until this exists every swallowed error goes to a handle that is not
+    # there -- which is why a report could only ever be "it did not work".
+    written = log.setup(logging.DEBUG if args.verbose else logging.INFO)
+    _log.info(
+        "darlaston %s starting on %s; logging to %s",
+        __version__, sys.platform, written or "the console only")
 
     if args.mock:
         from ..camera.mock import MockCamera
@@ -2263,10 +2452,13 @@ def main() -> int:
         # The ToupTek path is no longer the default by assumption; it is
         # one of the things `look()` can find.
         from ..camera.discovery import (backend_for, choose, look,
-                                        presence_for)
+                                        offerable, presence_for)
 
         seen = look()
         _kept = Settings.load()
+        # An explicit choice wins over the ignore list, because it is the
+        # same operator saying the more specific thing. The list only
+        # decides what gets opened when nobody has said.
         picked = choose(seen, _kept.camera_choice, _kept.camera_fingerprint)
         if picked is None and seen:
             # Several attached and nobody has said which. Open the
@@ -2274,7 +2466,13 @@ def main() -> int:
             # menu offer the rest. An empty window and a question, before
             # the application has done anything useful, is a worse
             # greeting than a picture and a way to change it.
-            picked = seen[0]
+            #
+            # "Likeliest" is sensor size, which on a laptop with nothing
+            # else attached is the laptop's own webcam. That is the right
+            # answer to the question the ranking asks and the wrong answer
+            # to the operator's, so anything they have marked as not the
+            # microscope steps aside here.
+            picked = offerable(seen, _kept.ignored_cameras)[0]
 
         if picked is not None:
             make: callable = lambda: backend_for(picked)

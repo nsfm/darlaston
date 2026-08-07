@@ -339,3 +339,18 @@ msgid "setup.cameras.use.tooltip"
 msgstr ""
 "Switch the live view to this camera. Only for one that is plugged in; "
 "the rest are here so they can be described while they sit on the bench."
+
+#. A checkbox under the camera list. Ticking it stops a camera being
+#. opened by default; it is never hidden from the list.
+msgid "setup.cameras.ignore.label"
+msgstr "Not the microscope"
+
+msgid "setup.cameras.ignore.tooltip"
+msgstr ""
+"Stop opening this camera on startup. It stays in the list and can still be "
+"chosen with Use -- a laptop's own webcam is worth passing over, not "
+"forgetting."
+
+#. Shown beside a camera in the list that has been passed over.
+msgid "setup.cameras.ignored.tooltip"
+msgstr "passed over on startup"

@@ -3,6 +3,7 @@
 Worth testing carefully: an error here is silent and corrupts every image that
 passes through, in ways that look like the microscope's fault.
 """
+import cv2
 import numpy as np
 import pytest
 
@@ -134,27 +135,100 @@ def test_calibration_repairs_a_colour_frame_without_raising():
     assert out[4, 4] == pytest.approx(out[0, 0], rel=1e-3)
 
 
-def test_blank_detector_rejects_a_subject():
-    rng = np.random.default_rng(1)
-    blank = (rng.normal(140, 1.5, (512, 512))).clip(0, 255).astype(np.uint8)
-    busy = blank.copy()
-    for cx in range(60, 500, 90):        # some diatoms
-        busy[cx:cx + 40, 100:400] = 40
+#: The shape the live pipeline actually hands the detector: a quarter of
+#: the preview in each axis. The tests used to call it at full preview
+#: size, which is a path production never takes. (Measured: the extra
+#: downsample moves the pooled maximum by under half a percent and has
+#: never changed a verdict -- so this is about testing what runs, not a
+#: defect that was hiding there.)
+_PREVIEW = (1216 // 4, 1824 // 4)
+
+
+def _slide(*, specks=(), dust=0, rng=None) -> np.ndarray:
+    """Empty glass with optical shading, plus whatever is on it.
+
+    `specks` is (radius, level) pairs at preview scale; `dust` is a count
+    of tiny high-contrast specks, which must *not* veto blankness -- a
+    flat is medianed across stage positions precisely so slide debris
+    cancels, and sensor dust is the thing a flat exists to correct.
+    """
+    rng = rng or np.random.default_rng(1)
+    h, w = _PREVIEW
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    shade = 1.0 - 0.18 * (((xx - w / 2) / (w / 2)) ** 2
+                          + ((yy - h / 2) / (h / 2)) ** 2)
+    img = 150.0 * shade + rng.normal(0, 1.4, (h, w))
+    for _ in range(dust):
+        cv2.circle(img, (int(rng.integers(0, w)), int(rng.integers(0, h))),
+                   int(rng.integers(1, 2)), float(rng.integers(30, 90)), -1)
+    for radius, level in specks:
+        cv2.circle(img, (int(rng.integers(radius * 2, w - radius * 2)),
+                         int(rng.integers(radius * 2, h - radius * 2))),
+                   radius, float(level), -1)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def test_blank_detector_accepts_empty_glass_with_dust_on_it():
+    """Dust is what a flat is *for*. Vetoing on it would mean never
+    banking one."""
     d = BlankDetector()
-    assert d.looks_blank(blank), "a genuinely empty field was rejected"
+    assert d.looks_blank(_slide()), "a genuinely empty field was rejected"
+    assert d.looks_blank(_slide(dust=15)), "dust vetoed an empty field"
+
+
+def test_blank_detector_rejects_a_subject():
+    d = BlankDetector()
+    busy = _slide(specks=[(10, 40)] * 4)
     assert not d.looks_blank(busy), "a field full of subject was banked"
 
 
-def test_flat_bank_requires_distinct_positions():
-    """Four frames of the same empty patch do not median away its debris."""
+def test_blank_detector_sees_a_specimen_smaller_than_its_pooling_window():
+    """Pooling dilutes a subject by the ratio of its area to the window's,
+    so a single 16-wide window buried anything much smaller than itself.
+    One specimen a quarter of that window across used to read as empty
+    glass -- and a flat with a specimen in it stamps that specimen's
+    inverse onto every frame it ever corrects."""
+    d = BlankDetector()
+    for seed in range(8):
+        rng = np.random.default_rng(seed)
+        one = _slide(specks=[(3, 40)], rng=rng)
+        assert not d.looks_blank(one), (
+            f"seed {seed}: a lone small specimen was banked as empty slide")
+
+
+def test_the_bank_advises_about_the_same_patch_but_does_not_refuse_it():
+    """Four frames of one patch do not median away its debris -- a true
+    rule that must not be a gate.
+
+    Enforcing it deadlocked the feature. The cursor only advances when
+    `note_motion` is fed a measured offset, that offset comes from
+    correlating consecutive frames, and a blank field is the one subject
+    that cannot be correlated. So the condition the bank demanded was
+    unmeasurable on the only subject the bank accepts: one frame in, then
+    nothing, for ever."""
     bank = FlatBank(wanted=4, min_separation=100.0)
     frame = np.zeros((8, 8), np.float32)
     assert bank.offer(frame)
     bank.note_motion(10, 10)
-    assert not bank.offer(frame), "banked a second frame of the same patch"
+    assert bank.looks_like_the_same_patch(), "should say the view has not moved"
+    assert bank.offer(frame), "refused a frame instead of advising about it"
     bank.note_motion(400, 0)
+    assert not bank.looks_like_the_same_patch()
     assert bank.offer(frame)
-    assert bank.count == 2
+    assert bank.count == 3
+
+
+def test_a_bank_fills_with_no_stage_motion_reported_at_all():
+    """The regression that made this manual. A blank field gives the
+    tracker nothing to correlate, so `note_motion` is never fed anything
+    real -- and the bank still has to fill, because the operator is the
+    one moving the stage and pressing the button."""
+    bank = FlatBank(wanted=4)
+    frame = np.zeros((8, 8), np.float32)
+    for _ in range(4):
+        assert bank.offer(frame), f"stalled at {bank.count} of 4"
+    assert bank.complete
+    assert not bank.offer(frame), "kept banking past what was asked for"
 
 
 def test_preview_lut_recovers_a_known_transform():
@@ -201,7 +275,7 @@ def test_coverage_requires_passing_through_focus():
     assert through.fraction > 0.95, "a full pass did not register"
 
 
-def test_coverage_ignores_empty_field():
+def test_coverage_ignores_empty_slide():
     """On darkfield most of the frame is empty and will never be sharp. If it
     counted, coverage could never reach 100% and the number would be useless."""
     from darlaston.live.coverage import FocusCoverage
@@ -344,59 +418,78 @@ def test_a_rejected_grab_still_costs_its_turn():
         f"over a second")
 
 
-def test_blank_fields_are_only_collected_when_asked_for(qapp):
+def test_nothing_is_banked_without_a_press(qapp):
     """Each frame freezes the preview for about a second, and a flat is only
     valid at the illumination it was shot under -- which nothing here can
-    read. The operator saying "now" is the only reliable signal there is."""
-    import types
-
-    from darlaston.calib.opportunist import Opportunist
+    read. The operator saying "now" is the only signal there is."""
     from darlaston.ui.calib_ui import CalibrationPanel
 
-    opportunist = Opportunist(types.SimpleNamespace(backend=object()))
-    assert not opportunist.enabled, "collecting on by default"
-
-    signals = types.SimpleNamespace(xy_offset=(0.0, 0.0), looks_blank=True,
-                                    settled=True)
-    assert not opportunist._should_grab(signals), \
-        "a blank, settled field grabbed without being asked"
-    opportunist.enabled = True
-    assert opportunist._should_grab(signals)
-
-    # The row is one control with three jobs, and it has to say which.
     panel = CalibrationPanel()
-    asked = []
-    built = []
-    panel.collect_flat.connect(asked.append)
+    asked, built = [], []
+    panel.bank_flat.connect(lambda: asked.append(True))
     panel.build_flat.connect(lambda: built.append(True))
 
-    panel.set_status({"flat": False}, banked=0, collecting=False)
-    assert panel.flat.button.text() == "Collect"
+    # Nothing banked yet: Bank is offered, Build is not.
+    panel.set_status({"flat": False}, banked=0)
+    assert panel.flat.button.text() == "Bank"
+    assert not panel.flat.second.isEnabled(), "offered to build from nothing"
     panel.flat.button.click()
     assert asked == [True]
 
-    panel.set_status({"flat": False}, banked=2, collecting=True)
-    assert panel.flat.button.text() == "Stop"
-    panel.flat.button.click()
-    assert asked == [True, False]
+    # One is not enough to median anything, so still no Build.
+    panel.set_status({"flat": False}, banked=1)
+    assert panel.flat.button.isEnabled()
+    assert not panel.flat.second.isEnabled()
 
-    panel.set_status({"flat": False}, banked=4, collecting=False)
-    assert panel.flat.button.text() == "Build"
-    panel.flat.button.click()
+    # Two is the minimum that means anything, and both are offered --
+    # the operator may bank more or stop here.
+    panel.set_status({"flat": False}, banked=2)
+    assert panel.flat.button.isEnabled(), "could not keep banking"
+    assert panel.flat.second.isEnabled()
+    assert "3+" in panel.flat.detail.text(), "did not warn that two is thin"
+
+    # Full: banking stops being offered, building is.
+    panel.set_status({"flat": False}, banked=4, wanted=4)
+    assert not panel.flat.button.isEnabled(), "kept offering to bank past four"
+    assert panel.flat.second.isEnabled()
+    panel.flat.second.click()
     assert built == [True], "Build did not build"
 
+    # And nothing at all is offered without a camera.
+    panel.set_status({"flat": False}, banked=2, live=False)
+    assert not panel.flat.button.isEnabled()
+    assert not panel.flat.second.isEnabled()
 
-def test_collecting_stops_itself_once_there_are_enough(qapp):
-    """A mode with a cost should not stay on after it is done."""
+
+def test_banking_refuses_once_there_are_enough(qapp):
+    """A press past the last one should do nothing rather than freeze the
+    preview for a second and throw the frame away."""
+    opportunist = _collector(_raw_field(), wanted=2)
+    for _ in range(2):
+        opportunist._grabbing.acquire()
+        opportunist._grab()
+    assert opportunist.bank.complete
+    assert not opportunist.bank_now(), "grabbed a frame it had nowhere to put"
+
+
+def _raw_field(specimen: bool = False) -> np.ndarray:
+    """A 12-bit raw blank field, optionally with a subject on it."""
+    rng = np.random.default_rng(3)
+    img = np.full((512, 512), 2000.0, np.float32) + rng.normal(0, 8, (512, 512))
+    if specimen:
+        cv2.circle(img, (300, 220), 24, 700.0, -1)
+    return np.clip(img, 0, 4095).astype(np.uint16)
+
+
+def _collector(raw, wanted=2):
+    """An Opportunist whose camera hands back exactly `raw`."""
     import types
-
-    import numpy as np
 
     from darlaston.calib.opportunist import Opportunist
 
     class Grab:
         def copy(self):
-            return np.zeros((4, 4), np.uint16)
+            return raw
 
         def __enter__(self):
             return self
@@ -404,15 +497,46 @@ def test_collecting_stops_itself_once_there_are_enough(qapp):
         def __exit__(self, *exc):
             return False
 
-    opportunist = Opportunist(
-        types.SimpleNamespace(backend=types.SimpleNamespace(
-            grab_raw=lambda: Grab())), wanted=2)
-    opportunist.enabled = True
-    for step in range(2):
-        opportunist.bank.note_motion(500.0, 0.0)      # a fresh patch each time
-        # observe() takes this before spawning the grab thread; called
-        # directly, the test stands in for it.
+    backend = types.SimpleNamespace(
+        grab_raw=lambda: Grab(),
+        info=types.SimpleNamespace(max_bit_depth=12))
+    return Opportunist(types.SimpleNamespace(backend=backend), wanted=wanted)
+
+
+def test_a_raw_frame_with_a_subject_on_it_is_banked_but_flagged():
+    """The operator looked through the eyepiece and pressed a button.
+    Refusing them on a threshold measured against synthetic fields would
+    be this module deciding it knows better than the person at the
+    microscope -- but a specimen in a flat ghosts every frame that flat
+    ever corrects, so it says so."""
+    said = []
+    opportunist = _collector(_raw_field(specimen=True))
+    opportunist._on_warn = said.append
+    opportunist._grabbing.acquire()
+    opportunist._grab()
+    assert opportunist.bank.count == 1, "refused the operator"
+    assert said == ["calib.flat.warn.not_blank"], f"said {said}"
+
+
+def test_a_raw_frame_of_empty_glass_is_banked_without_complaint():
+    said = []
+    opportunist = _collector(_raw_field())
+    opportunist._on_warn = said.append
+    opportunist.bank.note_motion(500.0, 0.0)      # the stage did move
+    opportunist._grabbing.acquire()
+    opportunist._grab()
+    assert opportunist.bank.count == 1
+    assert said == [], f"complained about a good field: {said}"
+
+
+def test_banking_twice_without_moving_says_so():
+    """The rule is real -- four frames of one patch do not median away that
+    patch's debris -- it just must not be a refusal."""
+    said = []
+    opportunist = _collector(_raw_field())
+    opportunist._on_warn = said.append
+    for _ in range(2):
         opportunist._grabbing.acquire()
         opportunist._grab()
-    assert opportunist.bank.complete
-    assert not opportunist.enabled, "left collecting after the bank filled"
+    assert opportunist.bank.count == 2, "refused instead of advising"
+    assert said == ["calib.flat.warn.same_patch"]

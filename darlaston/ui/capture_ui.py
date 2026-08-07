@@ -12,7 +12,8 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
-from ..session.settings import TOKENS, Settings, pictures_dir
+from ..session.settings import (TOKENS, Settings, filename_problem,
+                                pictures_dir)
 from . import theme
 from .framed import FramedDialog
 
@@ -303,6 +304,8 @@ class SettingsDialog(FramedDialog):
             | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
+        self._save_button = buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Save)
 
         col = self.content
         col.setSpacing(14)
@@ -330,14 +333,21 @@ class SettingsDialog(FramedDialog):
         probe = Settings(capture_root=self.root.text(),
                          folder_pattern=self.folder.text(),
                          filename_pattern=self.filename.text())
+        problem = filename_problem(self.filename.text())
         try:
             path = probe.resolve(setup=self._setup, seq=7, subject="dopamine")
-            self.preview.setText(str(path))
+            self.preview.setText(_(problem) if problem else str(path))
         except Exception as exc:
             self.preview.setText(
                 _("capture.files.preview.invalid", reason=exc))
+        # Saying "invalid" and then saving it anyway is the worst of both.
+        # A pattern with no {seq} resolves perfectly well and overwrites
+        # every capture, so the preview is the only warning there is.
+        self._save_button.setEnabled(problem is None)
 
     def _save(self) -> None:
+        if filename_problem(self.filename.text()):
+            return
         self._settings.capture_root = self.root.text()
         self._settings.folder_pattern = self.folder.text()
         self._settings.filename_pattern = self.filename.text()
