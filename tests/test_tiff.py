@@ -298,3 +298,40 @@ def test_thumbnail_extracts_preview_without_reading_the_file(tmp_path):
     assert sum(pulled) < size // 4, (
         f"read {sum(pulled)} of {size} bytes; a thumbnailer must not slurp "
         f"the file it is asked about")
+
+
+def test_the_declared_illuminant_matches_the_matrix_we_actually_write():
+    """The tag is the only statement in the file about which white the
+    colour matrix is referred to, so a reader has to believe it. This said
+    17 (Standard light A) beside the D65 sRGB matrix, which asks every
+    developer that honours the tag to chromatically adapt by about 2900 K
+    for no reason."""
+    import numpy as np
+
+    from darlaston.process import dng
+    from darlaston.process.tiff import (CALIBRATION_ILLUMINANT1,
+                                        COLOR_MATRIX1)
+
+    #: EXIF LightSource. 21 is D65; 17 is Standard light A.
+    D65 = 21
+
+    # The matrix is the D65-referred XYZ->sRGB one, by construction.
+    assert dng._XYZ_TO_SRGB[0] == 3.2406, "the matrix changed; recheck the white"
+
+    raw = np.full((32, 32), 2000, np.uint16)
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as td:
+        p = dng.write_bayer_streamed(
+            Path(td) / "m.dng", lambda s, c: raw[s:s + c], 32, 32,
+            preview=dng.make_preview(raw, bayer=True, white=4095),
+            pattern="GBRG", white=4095, bits=12)
+        data = p.read_bytes()
+        (first,) = struct.unpack_from("<I", data, 4)
+        ifd0 = _ifd(data, first)
+
+    assert COLOR_MATRIX1 in ifd0, "no colour matrix at all"
+    assert ifd0[CALIBRATION_ILLUMINANT1][2] == D65, (
+        f"matrix is D65 but the file declares illuminant "
+        f"{ifd0[CALIBRATION_ILLUMINANT1][2]}")
