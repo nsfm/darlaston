@@ -93,6 +93,12 @@ class CaptureMetadata:
     copyright: str = ""
     description: str = ""             # human sentence
     comment: str = ""                 # structured key=value, machine-readable
+    #: How much slide one pixel covers, in micrometres. The one number a
+    #: scale bar can be drawn from, and a field rather than only a key in
+    #: `comment` because parsing a string to draw a measurement is how a
+    #: reader and a writer come to disagree. `derived` keeps the two in
+    #: step; nothing else may set one without the other.
+    um_per_px: float | None = None
     software: str = ""
 
     def __post_init__(self) -> None:
@@ -128,6 +134,7 @@ class CaptureMetadata:
         if scale <= 0:
             raise ValueError(f"a pixel scale must be positive, not {scale}")
         parts = []
+        rescaled = (self.um_per_px / scale) if self.um_per_px else None
         for part in self.comment.split():
             key, sep, value = part.partition("=")
             if key == "um_per_px" and sep:
@@ -140,6 +147,7 @@ class CaptureMetadata:
             parts.append(part)
         return replace(
             self, comment=" ".join(parts), unique_id="",
+            um_per_px=rescaled,
             focal_plane_per_mm=(self.focal_plane_per_mm * scale
                                 if self.focal_plane_per_mm else None))
 
@@ -172,13 +180,38 @@ class CaptureMetadata:
 _LIGHT_SOURCE_TUNGSTEN = 3
 
 
+def sensor_pitch(setup, info=None) -> float | None:
+    """Micrometres per sensor pixel, or None when nobody knows.
+
+    The profile wins over the SDK: `get_PixelSize` returns 0 on some
+    models. But the profile is 0.0 until somebody fills it in, which is
+    the ordinary state of a freshly-seen camera, so the SDK is the
+    fallback rather than the other way round.
+
+    Shared because the capture and the live overlay have to agree. They
+    did not: the live path read only the profile, so a camera with a
+    pitch the SDK knew about got a bar on its photographs and none on
+    the screen.
+    """
+    pitch = getattr(getattr(setup, "camera", None), "pixel_um", 0.0) or None
+    if pitch:
+        return float(pitch)
+    resolutions = getattr(info, "resolutions", None) or ()
+    if resolutions:
+        full = min(resolutions, key=lambda r: r.index)
+        return float(full.pixel_um) or None
+    return None
+
+
 def from_setup(setup, *, exposure_us: int, gain_pct: int,
                subject: str = "", slide: str = "", calibration: str = "",
                app_version: str = "", pixel_um: float | None = None,
                sequence: int | None = None, when=None,
                artist: str = "", copyright: str = "",
-               unique_id: str = "") -> CaptureMetadata:
+               unique_id: str = "",
+               context: dict | None = None) -> CaptureMetadata:
     """Build metadata from the live setup."""
+
     cam, scope = setup.camera, setup.scope
     obj = scope.turret.objective
     total = setup.total_magnification
@@ -195,6 +228,7 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     # actually remembers. A slide may carry several.
     description = " · ".join(([subject] if subject else []) + bits)
 
+    um_per_px = (pixel_um / total) if (pixel_um and total) else None
     fields = {
         "scope": scope.name,
         "objective": obj.label if obj else "",
@@ -212,12 +246,21 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         # FocalPlaneXResolution is a scale at the sensor, and dividing it
         # by a magnification nobody recorded is how wrong scale bars get
         # published.
-        "um_per_px": (f"{pixel_um / total:.4g}"
-                      if pixel_um and total else ""),
+        "um_per_px": (f"{um_per_px:.4g}" if um_per_px else ""),
         "subject": subject,
         "slide": slide,
         "calibration": calibration,
     }
+    # Where this frame sat in a larger piece of work. The manifest already
+    # says all of it, and the manifest is one file in one folder: move the
+    # slices somewhere else and they become twenty photographs of the same
+    # thing in no particular order. A frame that carries its own index,
+    # its session and its place on the slide can be re-assembled from a
+    # pile, which is the difference between an archive and a heap.
+    #
+    # Last, so a key here can never quietly overwrite an optics field.
+    for key, value in (context or {}).items():
+        fields.setdefault(str(key), str(value))
     comment = " ".join(f"{k}={v}" for k, v in fields.items() if v)
 
     # Optics, in the fields a photographer reads. Both are derived rather
@@ -268,5 +311,6 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         f_number=fnum,
         description=description,
         comment=comment,
+        um_per_px=um_per_px,
         software=f"darlaston {app_version}".strip(),
     )

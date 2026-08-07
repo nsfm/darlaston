@@ -61,6 +61,64 @@ def known_fields(cls, raw: dict) -> dict:
 # Illumination
 # --------------------------------------------------------------------------
 
+#: Sensor formats, as (label, width mm, height mm). The names are the
+#: ones printed on a camera's specification sheet, and they are the only
+#: thing about a sensor an ordinary buyer is ever told.
+#:
+#: The inch numbers are not inches. They descend from the outside diameter
+#: of the vidicon tube whose scanned area matched, so a "1 inch" sensor is
+#: 13.2 by 8.8 mm and not 25.4 across. Anybody deriving these from the
+#: name would be wrong by about a third, which is exactly the sort of
+#: silent error a scale bar must never be built on.
+SENSOR_FORMATS = (
+    ("1/4\"", 3.6, 2.7),
+    ("1/3\"", 4.8, 3.6),
+    ("1/2.7\"", 5.4, 4.0),
+    ("1/2.5\"", 5.8, 4.3),
+    ("1/2.3\"", 6.2, 4.6),
+    ("1/2\"", 6.4, 4.8),
+    ("1/1.8\"", 7.2, 5.3),
+    ("1/1.7\"", 7.6, 5.7),
+    ("2/3\"", 8.8, 6.6),
+    ("1/1.2\"", 10.7, 8.0),
+    ("1\"", 13.2, 8.8),
+    ("4/3\" (Four Thirds)", 17.3, 13.0),
+    ("APS-C", 23.5, 15.6),
+    ("35 mm (full frame)", 36.0, 24.0),
+)
+
+
+def pitch_from_format(width_mm: float, pixels_across: int) -> float | None:
+    """Micrometres per sensor pixel, from the format and the resolution.
+
+    The division nobody should be asked to do in their head. A camera's
+    documentation gives a format and a megapixel count; what a scale bar
+    needs is a pitch, and the two are one sum apart.
+    """
+    if not width_mm or not pixels_across:
+        return None
+    return (float(width_mm) * 1000.0) / float(pixels_across)
+
+
+def format_fits(width_mm: float, height_mm: float,
+                pixels_across: int, pixels_down: int,
+                tolerance: float = 0.04) -> bool:
+    """Does this format's shape match the sensor's own?
+
+    The check that catches a wrong pick. A format and a resolution
+    disagreeing about aspect ratio means one of them is not this camera,
+    and the operator would otherwise get a confident bar built on it.
+    Loose on purpose: the nominal figures are rounded and a real sensor's
+    active area is a little smaller than its format, so this is looking
+    for "4:3 against 3:2", not for a rounding difference.
+    """
+    if not all((width_mm, height_mm, pixels_across, pixels_down)):
+        return False
+    want = float(width_mm) / float(height_mm)
+    got = float(pixels_across) / float(pixels_down)
+    return abs(want - got) / want <= tolerance
+
+
 @dataclass(frozen=True)
 class IlluminationMode:
     """A way of lighting the specimen.

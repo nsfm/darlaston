@@ -469,3 +469,144 @@ def test_cancelling_does_not_pass_a_camera_over(qapp, tmp_path, monkeypatch):
     dialog.ignore.setChecked(True)
     dialog.reject()
     assert settings.ignored_cameras == {}
+
+
+# ---- working out the pixel pitch --------------------------------------------
+
+def test_a_sensor_format_and_a_resolution_give_the_pitch():
+    """Nate's question: how does anybody actually determine um per pixel?
+    The manufacturer does not publish it. What they do publish is a format
+    and a megapixel count, and those are one division apart.
+
+    E3ISPM20000KPA: 1 inch, 5440 across. The IMX183 datasheet says 2.40 um
+    and this arithmetic says 2.43, which is the nominal format being a
+    little larger than the real active area.
+    """
+    from darlaston.session.model import pitch_from_format
+
+    pitch = pitch_from_format(13.2, 5440)
+    assert abs(pitch - 2.43) < 0.01
+    assert abs(pitch - 2.40) < 0.05, "datasheet disagreement"
+
+    assert pitch_from_format(0, 5440) is None
+    assert pitch_from_format(13.2, 0) is None
+
+
+def test_the_inch_in_a_sensor_format_is_not_an_inch():
+    """It descends from the outside diameter of the vidicon tube whose
+    scanned area matched. Anybody deriving these from the name is wrong by
+    about a third, which is the sort of silent error a scale bar must
+    never be built on."""
+    from darlaston.session.model import SENSOR_FORMATS
+
+    one_inch = dict((n, (w, h)) for n, w, h in SENSOR_FORMATS)['1"']
+    assert one_inch == (13.2, 8.8)
+    assert one_inch[0] < 25.4 / 1.8, "somebody has been reading it as inches"
+
+
+def test_a_format_that_does_not_fit_the_sensor_is_caught():
+    """The check that catches a wrong pick, before it becomes a confident
+    bar built on the wrong number."""
+    from darlaston.session.model import format_fits
+
+    # 1 inch is 3:2 and so is this sensor.
+    assert format_fits(13.2, 8.8, 5440, 3648)
+    # 2/3 inch is 4:3. Same ballpark of size, wrong shape.
+    assert not format_fits(8.8, 6.6, 5440, 3648)
+    # And a genuine 4:3 sensor matches the 4:3 format.
+    assert format_fits(8.8, 6.6, 3264, 2448)
+    assert not format_fits(0, 8.8, 5440, 3648)
+
+
+def test_every_listed_format_is_a_plausible_shape():
+    """A typo in the table is a wrong scale bar on somebody's photograph."""
+    from darlaston.session.model import SENSOR_FORMATS
+
+    seen = set()
+    for name, w, h in SENSOR_FORMATS:
+        assert name not in seen, f"{name} listed twice"
+        seen.add(name)
+        assert 0 < w < 50 and 0 < h < 40, name
+        assert 1.2 <= w / h <= 1.8, f"{name} is neither 4:3 nor 3:2"
+    widths = [w for _n, w, _h in SENSOR_FORMATS]
+    assert widths == sorted(widths), "the list should run small to large"
+
+
+def test_the_camera_in_front_of_you_gets_a_dot_even_when_discovery_cannot_name_it():
+    """Nate's E3ISPM20000KPA sat there delivering a preview with no dot.
+
+    `look` keys a ToupTek by the SDK's transient device id while the
+    library keys it by serial, so the two never matched. The open camera
+    is attached by definition and its serial is the one thing we are
+    certain of, so being here and being openable became two questions.
+    """
+    from darlaston.ui.setup_ui import CameraDialog
+
+    dialog = CameraDialog.__new__(CameraDialog)
+    dialog._open_serial = "TP211207110153E2F7CE016F254B9C0"
+    dialog._attached = lambda: {"usb-0000:00:14.0-8:1.0": object()}
+
+    here = dialog._here()
+    assert "TP211207110153E2F7CE016F254B9C0" in here, "no dot on the open camera"
+    assert "usb-0000:00:14.0-8:1.0" in here, "lost the ones discovery found"
+
+    dialog._open_serial = None
+    assert dialog._here() == {"usb-0000:00:14.0-8:1.0"}
+
+
+def test_the_pitch_comes_from_the_largest_framing_not_the_first():
+    """`geometry` holds every framing a camera has been seen in. The
+    smaller ones are binned or cropped modes, and a pitch derived from one
+    of those is wrong by exactly the binning factor."""
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    editor = CameraEditor.__new__(CameraEditor)
+    editor._camera = CameraProfile(serial="x", name="c", geometry=[
+        {"width": 1280, "height": 1024},
+        {"width": 5440, "height": 3648},
+        {"width": 2736, "height": 1824},
+    ])
+    assert editor._resolution() == (5440, 3648)
+
+    editor._camera = CameraProfile(serial="x", name="c", geometry=[])
+    assert editor._resolution() == (0, 0)
+    editor._camera = CameraProfile(serial="x", name="c",
+                                   geometry=[{"nonsense": 1}])
+    assert editor._resolution() == (0, 0)
+
+
+def test_a_camera_that_is_plugged_in_is_not_asked_to_be_plugged_in():
+    """Nate set the sensor size and was told to plug the camera in. It was
+    plugged in and delivering a preview.
+
+    `geometry` is filled by the measuring routine, not by a camera being
+    present, so a camera nobody has measured had no resolution to divide
+    the sensor width by. The open camera's own resolution comes from the
+    SDK and has been there since it opened.
+    """
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    editor = CameraEditor.__new__(CameraEditor)
+    editor._camera = CameraProfile(serial="TP2112", name="E3ISPM20000KPA",
+                                   geometry=[])
+    assert editor._resolution() == (0, 0), "the premise"
+
+    editor._live = (5440, 3648)
+    assert editor._resolution() == (5440, 3648)
+
+
+def test_the_live_resolution_wins_over_a_measured_one():
+    """Both are the same camera, and the SDK's is what a capture will
+    actually come out at."""
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    editor = CameraEditor.__new__(CameraEditor)
+    editor._camera = CameraProfile(serial="x", name="c",
+                                   geometry=[{"width": 1280, "height": 1024}])
+    editor._live = (5440, 3648)
+    assert editor._resolution() == (5440, 3648)
+    editor._live = (0, 0)
+    assert editor._resolution() == (1280, 1024), "lost the measured fallback"

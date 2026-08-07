@@ -25,8 +25,9 @@ import copy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
-from ..session.model import (CameraProfile, Objective, ScopeProfile, Setup,
-                             Turret)
+from ..session.model import (SENSOR_FORMATS, CameraProfile, Objective,
+                             ScopeProfile, Setup, Turret, format_fits,
+                             pitch_from_format)
 from . import theme
 
 #: What sits between the front element and the slide: the value that gets
@@ -373,6 +374,28 @@ class CameraEditor(QtWidgets.QWidget):
         self.relay_factor.setPrefix("x ")
         self.relay_factor.setToolTip(_("setup.camera.relay_factor.tooltip"))
 
+        # Asked instead of the pitch. A cheap camera ships with no
+        # specification sheet at all, but the sensor format is on the
+        # listing, on the box, and in the model number, and it is one of a
+        # small handful of standard names. The pitch is a division away
+        # from it and is nobody's job to do in their head.
+        self.sensor = QtWidgets.QComboBox()
+        self.sensor.addItem(_("setup.camera.sensor.state.unknown"), None)
+        for name, w_mm, h_mm in SENSOR_FORMATS:
+            # The millimetres ride along, because "1 inch" means nothing
+            # on its own and the number is what somebody can check against
+            # a listing. It is also not an inch, which is worth showing.
+            self.sensor.addItem(f"{name}   {w_mm:g} \u00d7 {h_mm:g} mm",
+                                (w_mm, h_mm))
+        self.sensor.setToolTip(_("setup.camera.sensor.tooltip"))
+        self.sensor.currentIndexChanged.connect(self._sensor_picked)
+
+        #: What the pick works out to, under the picker. The arithmetic is
+        #: ours to do and the answer is the operator's to sanity check.
+        self.derived = QtWidgets.QLabel()
+        self.derived.setProperty("role", "key")
+        self.derived.setWordWrap(True)
+
         self.pixel_um = QtWidgets.QDoubleSpinBox()
         self.pixel_um.setRange(0.0, 20.0)
         self.pixel_um.setDecimals(2)
@@ -386,6 +409,8 @@ class CameraEditor(QtWidgets.QWidget):
         form.addRow(_("setup.camera.name.label"), self.name)
         form.addRow(_("setup.camera.relay.label"), self.relay)
         form.addRow(_("setup.camera.relay_factor.label"), self.relay_factor)
+        form.addRow(_("setup.camera.sensor.label"), self.sensor)
+        form.addRow("", self.derived)
         form.addRow(_("setup.camera.pixel.label"), self.pixel_um)
         form.addRow(_("setup.camera.serial.label"), self.serial)
 
@@ -393,10 +418,83 @@ class CameraEditor(QtWidgets.QWidget):
             w.textChanged.connect(self.changed)
         for w in (self.relay_factor, self.pixel_um):
             w.valueChanged.connect(self.changed)
+        self.pixel_um.valueChanged.connect(self._describe)
+
+    def set_live_resolution(self, size) -> None:
+        """The full resolution of the camera that is open right now.
+
+        `geometry` is filled by the measuring routine, not by plugging a
+        camera in, so a camera that has never been measured had none and
+        the editor asked Nate to plug in a camera that was sitting there
+        delivering a preview. The open camera's own resolution is the
+        better answer and the SDK has had it since it opened.
+        """
+        self._live = tuple(size) if size else (0, 0)
+        self._describe()
+
+    def _resolution(self) -> tuple[int, int]:
+        """The camera's largest resolution, or zeroes.
+
+        The live camera first, then whatever measuring has recorded.
+
+        `geometry` is a list of measured framings, each a mapping with a
+        width and a height. The largest is the full sensor: the smaller
+        entries are binned or cropped modes, and a pitch derived from one
+        of those would be wrong by exactly the binning factor.
+        """
+        live = getattr(self, "_live", (0, 0))
+        if live and live[0]:
+            return live
+        best = (0, 0)
+        for entry in getattr(self._camera, "geometry", None) or ():
+            try:
+                w = int(entry["width"])
+                h = int(entry["height"])
+            except (TypeError, ValueError, KeyError, IndexError):
+                continue
+            if w * h > best[0] * best[1]:
+                best = (w, h)
+        return best
+
+    def _sensor_picked(self) -> None:
+        """Turn the format into a pitch, and say so.
+
+        Written into `pixel_um` rather than stored beside it: the pitch is
+        what everything downstream reads, and keeping a second source of
+        the same fact is how the two come to disagree. The picker is a way
+        of answering the question, not a second answer.
+        """
+        picked = self.sensor.currentData()
+        w, h = self._resolution()
+        if picked and w:
+            pitch = pitch_from_format(picked[0], w)
+            if pitch:
+                self.pixel_um.setValue(round(pitch, 2))
+        self._describe()
+        self.changed.emit()
+
+    def _describe(self) -> None:
+        picked = self.sensor.currentData()
+        w, h = self._resolution()
+        if not picked:
+            self.derived.setText(_("setup.camera.sensor.none")
+                                 if not self.pixel_um.value()
+                                 else _("setup.camera.sensor.manual"))
+            return
+        if not w:
+            self.derived.setText(_("setup.camera.sensor.unseen"))
+            return
+        pitch = pitch_from_format(picked[0], w)
+        text = _("setup.camera.sensor.derived",
+                 pitch=f"{pitch:.2f}", across=str(w), down=str(h))
+        if not format_fits(picked[0], picked[1], w, h):
+            text += "\n" + _("setup.camera.sensor.mismatch")
+        self.derived.setText(text)
 
     def load(self, camera: CameraProfile) -> None:
         self._camera = camera
-        widgets = (self.name, self.relay, self.relay_factor, self.pixel_um)
+        widgets = (self.name, self.relay, self.relay_factor, self.pixel_um,
+                   self.sensor)
         for w in widgets:
             w.blockSignals(True)
         try:
@@ -406,9 +504,22 @@ class CameraEditor(QtWidgets.QWidget):
             self.pixel_um.setValue(camera.pixel_um or 0.0)
             self.serial.setText(camera.serial
                                 or _("setup.camera.serial.state.unseen"))
+            # Whichever format the stored pitch came from, if any. Matched
+            # rather than stored, so a profile written before this existed
+            # still shows its format.
+            self.sensor.setCurrentIndex(0)
+            w, _h = self._resolution()
+            if camera.pixel_um and w:
+                for i in range(1, self.sensor.count()):
+                    got = self.sensor.itemData(i)
+                    guess = pitch_from_format(got[0], w)
+                    if guess and abs(guess - camera.pixel_um) < 0.05:
+                        self.sensor.setCurrentIndex(i)
+                        break
         finally:
             for w in widgets:
                 w.blockSignals(False)
+        self._describe()
 
     def build(self) -> CameraProfile:
         """The edited camera: what was typed, over everything else.
@@ -672,12 +783,21 @@ class CameraDialog(_LibraryDialog):
     """
 
     def __init__(self, library, current: str | None = None,
-                 parent=None, settings=None) -> None:
+                 parent=None, settings=None, open_size=None) -> None:
         super().__init__(library, parent, width=520)
         self.setWindowTitle(_("setup.cameras.title"))
         #: Which camera the session actually has open, as opposed to
         #: merely attached. Measuring needs to drive it.
         self._open_serial = current
+        #: Its full resolution, from the SDK, handed in because only the
+        #: window has the backend. Without it the editor fell back to
+        #: `geometry`, which the measuring routine fills and plugging a
+        #: camera in does not, so it asked Nate to plug in a camera that
+        #: was sitting there delivering a preview.
+        self._open_size = tuple(open_size) if open_size else (0, 0)
+        #: Full resolution of the open camera, from the SDK. Handed in
+        #: because only the window has the backend.
+        self._open_size = open_size or (0, 0)
         #: Where the passed-over list lives. Optional so a test, or any
         #: caller that only wants to describe cameras, need not carry one.
         self._settings = settings
@@ -786,6 +906,22 @@ class CameraDialog(_LibraryDialog):
         except Exception:
             return {}
 
+    def _here(self) -> set:
+        """Serials that are plugged in. A different question from
+        `_attached`, which answers "how would I open it".
+
+        `look` keys a ToupTek by the SDK's device id while the library
+        keys it by serial, so those two never matched and the microscope
+        camera showed no dot while it sat there delivering a preview.
+        Nate spotted it. The open camera is attached by definition and its
+        serial is the one thing we are certain of, so it goes in
+        regardless of what discovery called it.
+        """
+        here = set(self._attached())
+        if self._open_serial:
+            here.add(self._open_serial)
+        return here
+
     def _use(self) -> None:
         found = self._attached().get(self._selected or "")
         if found is None:
@@ -812,16 +948,22 @@ class CameraDialog(_LibraryDialog):
         self.list.blockSignals(True)
         self.list.clear()
         attached = self._attached()
+        here = self._here()
         for camera in cameras:
             item = QtWidgets.QListWidgetItem(camera.display)
-            found = attached.get(camera.serial)
-            if found is not None:
+            if camera.serial in here:
                 # A brass dot, which is already what this program means
                 # by "state, at a glance". The list is 170 px wide and
                 # the word "attached" does not fit in it; a dot does, and
                 # is read faster anyway.
                 item.setIcon(_present_dot())
-                self._mark(item, found, found.key in self._ignored)
+                # The ignore list is keyed by what discovery calls a
+                # camera, so one discovery cannot name has no ignore state
+                # to show. That is the ToupTek, and it is also the camera
+                # nobody wants to ignore.
+                found = attached.get(camera.serial)
+                if found is not None:
+                    self._mark(item, found, found.key in self._ignored)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, camera.serial)
             self.list.addItem(item)
         if cameras:
@@ -838,10 +980,18 @@ class CameraDialog(_LibraryDialog):
         if known:
             chosen = cameras[max(self.list.currentRow(), 0)]
             self._selected = chosen.serial
-            self.editor.load(chosen)
+            self._hand_over(chosen)
         else:
             self._selected = None
         self._refresh()
+
+    def _hand_over(self, camera) -> None:
+        """Load a camera into the editor, with its live size if it is the
+        one that is open. Order matters: the size before the load, so the
+        first description the editor writes is already the right one."""
+        self.editor.set_live_resolution(
+            self._open_size if camera.serial == self._open_serial else (0, 0))
+        self.editor.load(camera)
 
     def _commit(self) -> None:
         if self._selected and self._selected in self._library.cameras:
@@ -854,7 +1004,7 @@ class CameraDialog(_LibraryDialog):
         serial = self.list.item(row).data(QtCore.Qt.ItemDataRole.UserRole)
         if serial in self._library.cameras:
             self._selected = serial
-            self.editor.load(self._library.cameras[serial])
+            self._hand_over(self._library.cameras[serial])
         self._refresh()
 
     def _set_ignored(self, on: bool) -> None:

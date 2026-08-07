@@ -1142,3 +1142,93 @@ def test_a_pick_with_no_flat_behind_it_still_stands_on_its_own():
     composed = balance.sane((balance.UNITY[0] * picked[0], 1.0,
                              balance.UNITY[2] * picked[2]))
     assert composed == pytest.approx(picked, abs=1e-6)
+
+
+def _optics(pixel_um=2.43, magnification=10.0):
+    """A setup with a known scale, so um_per_px resolves.
+
+    `magnification=0` removes the objective, which is the honest way to
+    make the scale unknown here: zeroing the pitch does not, because the
+    mock's own SDK reports one and the capture correctly falls back to it.
+    """
+    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
+                                         Objective, ScopeProfile, Setup,
+                                         Turret)
+    turret = Turret([Objective(magnification, 0.32)] if magnification
+                    else [None], current=0)
+    scope = ScopeProfile(id="z", name="Zeiss Universal", turret=turret,
+                         optovar=[1.0], optovar_current=0)
+    return Setup(camera=CameraProfile(serial="x", name="cam",
+                                      pixel_um=pixel_um),
+                 scope=scope, illumination=BUILTIN_ILLUMINATION[0])
+
+
+def _shoot_with_bar(tmp_path, subject, *, on, pixel_um=2.43,
+                    magnification=10.0):
+    """One capture, and the JPEG it produced."""
+    cam = MockCamera()
+    cam.open()
+    session = types.SimpleNamespace(backend=cam)
+    settings = Settings(capture_root=str(tmp_path / subject))
+    settings.scale_bar = on
+    settings.scale_bar_style = "plate"    # unmistakable, whatever the field
+
+    results = []
+    done = threading.Event()
+    cap = StillCapture(session, settings,
+                       on_result=lambda r: (results.append(r), done.set()))
+    assert cap.trigger(_optics(pixel_um, magnification), subject=subject)
+    assert done.wait(30)
+    cam.close()
+    assert results[-1].ok, results[-1].message
+    return results[-1], cv2.imread(str(results[-1].path.with_suffix(".jpg")))
+
+
+def test_a_capture_carries_the_bar_on_the_jpeg_and_never_on_the_raw(tmp_path):
+    """Every other scale bar test drives `scalebar.draw` directly, so
+    nothing checked that a capture actually reaches it. Nate turned the
+    bar on, shot, and got nothing; the reason was two layers away from the
+    drawing and no test was looking at the join.
+
+    Compared against the same frame shot with the bar off, rather than
+    against a threshold: the mock's own field has texture in that corner,
+    and a threshold would have been measuring the specimen.
+    """
+    from darlaston.process.stitch import read_metadata
+
+    marked, with_bar = _shoot_with_bar(tmp_path, "withbar", on=True)
+    _plain, without = _shoot_with_bar(tmp_path, "nobar", on=False)
+
+    assert with_bar is not None and without is not None
+    assert with_bar.shape == without.shape
+    changed = int((np.abs(with_bar.astype(int)
+                          - without.astype(int)).max(axis=2) > 24).sum())
+    assert changed > 2000, f"only {changed} pixels differ; no bar drawn"
+
+    # And it landed where a bar goes, not over the subject.
+    h, w = with_bar.shape[:2]
+    diff = np.abs(with_bar.astype(int) - without.astype(int)).max(axis=2) > 24
+    assert not diff[:h // 2, :w // 2].any(), "drew over the specimen"
+
+    assert "um_per_px=" in (read_metadata(marked.path).comment or ""), \
+        "the scale never reached the file, so nothing could be drawn"
+
+
+def test_no_scale_means_no_bar_however_the_setting_is_left(tmp_path):
+    """Nate's camera reported no pixel pitch, so there was no honest bar
+    to draw and the capture drew none. That refusal is the behaviour, not
+    the bug; the bug was that nothing said so."""
+    def moved(a, b):
+        return int((np.abs(a.astype(int) - b.astype(int)).max(axis=2)
+                    > 24).sum())
+
+    _r, unknown = _shoot_with_bar(tmp_path, "unknown", on=True,
+                                  magnification=0.0)
+    _r2, off = _shoot_with_bar(tmp_path, "off", on=False, magnification=0.0)
+    _r3, again = _shoot_with_bar(tmp_path, "off2", on=False,
+                                 magnification=0.0)
+
+    # Two frames of the mock are never bit-identical, so the question is
+    # whether the bar-on frame differs by more than two bar-off frames do.
+    baseline = moved(off, again)
+    assert moved(unknown, off) <= baseline * 2 + 200, "invented a scale"

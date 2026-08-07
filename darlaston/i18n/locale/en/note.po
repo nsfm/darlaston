@@ -113,3 +113,16 @@ msgid "note.stack_settling"
 msgid_plural "note.stack_settling"
 msgstr[0] "saving the last slice…"
 msgstr[1] "saving the last {count} slices…"
+
+#. The scale bar was switched on and there is nothing to draw it from. It
+#. refuses rather than inventing a number, and it says so here rather than
+#. leaving the operator to shoot a frame and find nothing on it.
+msgid "note.scale_bar.no_pitch"
+msgstr ""
+"No scale bar yet: this camera's pixel size is unknown. Set it under "
+"Setup > Cameras."
+
+msgid "note.scale_bar.no_optics"
+msgstr ""
+"No scale bar yet: the objective and magnification are unknown. Set them "
+"under Setup > Microscopes."

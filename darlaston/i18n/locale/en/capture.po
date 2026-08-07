@@ -131,3 +131,144 @@ msgstr ""
 #. Shown under the filename field, and blocks Save.
 msgid "capture.files.filename.empty"
 msgstr "a filename pattern cannot be empty"
+
+#. The scale bar's dressing. The measurement is identical in every one of
+#. them; only the furniture differs. Parenthesised rather than dashed:
+#. these are read at a glance in a dropdown, and a dash there reads as
+#. prose in a place that should read as a label.
+#.
+#. Reads the corner and picks ink that contrasts with it. Dark on
+#. brightfield, light on darkfield, and nothing else added to the picture.
+msgid "capture.files.scale_bar.style.adaptive"
+msgstr "Adaptive (ink only, no panel)"
+
+msgid "capture.files.scale_bar.style.plate"
+msgstr "Plate (white tablet)"
+
+msgid "capture.files.scale_bar.style.scrim"
+msgstr "Scrim (translucent panel)"
+
+msgid "capture.files.scale_bar.style.ruler"
+msgstr "Ruler (alternating segments)"
+
+msgid "capture.files.scale_bar.style.caps"
+msgstr "Calipers (dimension line)"
+
+msgid "capture.files.scale_bar.style.shadow"
+msgstr "Shadow (white, soft drop shadow)"
+
+#. The scale bar window, opened from Capture. Its own window rather than a
+#. row in Files, because every choice in it is a taste judgement and the
+#. preview is the feature.
+msgid "capture.bar.title"
+msgstr "Scale bar"
+
+msgid "capture.bar.style.label"
+msgstr "Style"
+
+msgid "capture.bar.face.label"
+msgstr "Typeface"
+
+#. Bundled with the application, and drawn for technical material.
+msgid "capture.bar.face.plex_mono"
+msgstr "IBM Plex Mono"
+
+msgid "capture.bar.face.plex_sans"
+msgstr "IBM Plex Sans"
+
+msgid "capture.bar.face.sans"
+msgstr "System sans serif"
+
+msgid "capture.bar.face.serif"
+msgstr "System serif"
+
+#. The stroke font OpenCV draws itself. Kept because it works with no
+#. window system, which is how the plate tool can be run from a shell.
+msgid "capture.bar.face.hershey"
+msgstr "Hershey (plotter, no micro sign)"
+
+#. Inverted on purpose: the correct character is the default, and this is
+#. the escape hatch for tooling that cannot take it.
+msgid "capture.bar.plain.label"
+msgstr "Write um instead of µm"
+
+msgid "capture.bar.plain.tooltip"
+msgstr ""
+"For software further down the line that cannot read the micro sign.\n"
+"The Hershey typeface has no glyph for it and always writes um."
+
+msgid "capture.bar.note"
+msgstr "Drawn on the JPEG only; RAW files are unmodified."
+
+#. Which corner the bar sits in, and how large its furniture is. Neither
+#. changes the measurement: the length still comes from the round number.
+msgid "capture.bar.corner.label"
+msgstr "Corner"
+
+msgid "capture.bar.corner.br"
+msgstr "Bottom right"
+
+msgid "capture.bar.corner.bl"
+msgstr "Bottom left"
+
+msgid "capture.bar.corner.tr"
+msgstr "Top right"
+
+msgid "capture.bar.corner.tl"
+msgstr "Top left"
+
+msgid "capture.bar.size.label"
+msgstr "Size"
+
+msgid "capture.bar.size.small"
+msgstr "Small"
+
+msgid "capture.bar.size.medium"
+msgstr "Medium"
+
+msgid "capture.bar.size.large"
+msgstr "Large"
+
+#. Which side of the rule the label sits on. Automatic means the inside:
+#. below the rule in a top corner, above it in a bottom one, so the type
+#. is always the part further from the edge of the frame.
+msgid "capture.bar.label.label"
+msgstr "Label"
+
+msgid "capture.bar.label.auto"
+msgstr "Automatic (inside the frame)"
+
+msgid "capture.bar.label.above"
+msgstr "Above the rule"
+
+msgid "capture.bar.label.below"
+msgstr "Below the rule"
+
+#. Shown in the scale bar window when nothing knows the scale. The preview
+#. above it is drawn at an invented size so a style can still be chosen,
+#. and that must not be mistaken for the photographs carrying one.
+msgid "capture.bar.no_scale"
+msgstr ""
+"The preview below is an example. Nothing knows this camera's scale yet, "
+"so photographs will carry no bar. Set the sensor size under Setup > "
+"Cameras."
+
+#. How solid the mark is. A bar is a reference rather than a caption, so
+#. it can afford to sit under the picture a little, and on the live view
+#. a solid one is in the way of the thing being looked at.
+msgid "capture.bar.opacity.label"
+msgstr "Opacity"
+
+msgid "capture.bar.opacity.tooltip"
+msgstr "How solid the bar is on the photograph."
+
+#. Separate from the one above because it is a different job. On the
+#. photograph the bar is part of the finished thing; on screen it sits
+#. over the subject being examined.
+msgid "capture.bar.live_opacity.label"
+msgstr "On the live view"
+
+msgid "capture.bar.live_opacity.tooltip"
+msgstr ""
+"How solid the bar is over the preview. The photograph is unaffected by "
+"this one."

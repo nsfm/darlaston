@@ -95,6 +95,58 @@ class Settings:
     #: destroying the session's actual work.
     image_format: str = "both"       # both | raw | jpeg
     jpeg_quality: int = 95
+    #: Burn a scale bar into the sidecar JPEG. Off by default: it is a
+    #: mark on the photograph and that is the operator's call, not ours.
+    #: Never touches the raw, whatever this says -- the DNG stays what the
+    #: sensor recorded and a bar can always be drawn later from um_per_px.
+    scale_bar: bool = False
+    #: Which dressing. The measurement is identical in all of them; only
+    #: the furniture differs, and furniture is taste.
+    scale_bar_style: str = "adaptive"
+    #: The face the label is set in. Bundled first: IBM Plex was chosen
+    #: for this application because it was drawn for technical material,
+    #: and a measurement is the most technical thing on the picture.
+    scale_bar_face: str = "IBM Plex Mono"
+    #: Write "um" instead of the micro sign, for downstream tooling that
+    #: cannot take the character. Off, because the sign is correct.
+    scale_bar_plain_units: bool = False
+    #: Which corner, and how large the furniture is. Neither changes the
+    #: measurement: the length still comes from the 1-2-5 ladder.
+    scale_bar_corner: str = "br"
+    scale_bar_size: str = "medium"
+    #: Which side of the rule the label sits on. "auto" is the inside:
+    #: below in a top corner, above in a bottom one.
+    scale_bar_label: str = "auto"
+    #: How solid the mark is, 0.15 to 1. A bar is a reference rather than
+    #: a caption, so it can afford to sit under the picture a little.
+    scale_bar_opacity: float = 1.0
+    #: And separately for the live view, which is a different job. On the
+    #: photograph the bar is part of the finished thing; on screen it is a
+    #: reminder sitting over the subject being examined, so it defaults
+    #: fainter than the one that gets published.
+    scale_bar_live_opacity: float = 0.5
+
+    def bar_style(self, live: bool = False) -> dict:
+        """The scale bar's settings, as `scalebar.draw` takes them.
+
+        One place, because there are four callers now -- the capture, the
+        live view, the plate and the style window -- and the plate had
+        already drifted, drawing the module's defaults while the operator
+        had chosen something else next door.
+        """
+        return {
+            "style": self.scale_bar_style,
+            "face": self.scale_bar_face,
+            "corner": self.scale_bar_corner,
+            "size": self.scale_bar_size,
+            "label_at": self.scale_bar_label,
+            "plain_units": self.scale_bar_plain_units,
+            "opacity": (self.scale_bar_live_opacity if live
+                        else self.scale_bar_opacity),
+        }
+    #: Draw the bar over the live view as well, so what is on screen is
+    #: what the photograph will carry.
+    scale_bar_live: bool = False
     #: Framing guides over the live view, as a camera's viewfinder offers.
     #: Kept between sessions because it is a habit rather than a decision.
     #: Who draws the window's title bar and buttons: auto | ours | system.

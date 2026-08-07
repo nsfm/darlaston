@@ -335,3 +335,42 @@ def test_the_declared_illuminant_matches_the_matrix_we_actually_write():
     assert ifd0[CALIBRATION_ILLUMINANT1][2] == D65, (
         f"matrix is D65 but the file declares illuminant "
         f"{ifd0[CALIBRATION_ILLUMINANT1][2]}")
+
+
+def test_a_frame_carries_where_it_sat_in_the_larger_work():
+    """A manifest is one file in one folder. Move the slices, or hand
+    three stacks to somebody, and they become sixty photographs of similar
+    things in no particular order.
+
+    Nate wants to reprocess frames after a session, which only works if a
+    frame can say what it was part of without the folder around it.
+    """
+    from darlaston.process.metadata import from_setup
+    from darlaston.session.model import (BUILTIN_ILLUMINATION, CameraProfile,
+                                         Objective, ScopeProfile, Setup,
+                                         Turret)
+
+    scope = ScopeProfile(id="z", name="Zeiss Universal",
+                         turret=Turret([Objective(40, 0.75)], current=0),
+                         optovar=[1.0], optovar_current=0)
+    setup = Setup(camera=CameraProfile(serial="x", name="cam"), scope=scope,
+                  illumination=BUILTIN_ILLUMINATION[0])
+
+    plain = from_setup(setup, exposure_us=8330, gain_pct=100)
+    assert "slice=" not in plain.comment, "an ordinary photograph is not a part"
+
+    part = from_setup(setup, exposure_us=8330, gain_pct=100,
+                      context={"stack": "260807-014743_stack_slices",
+                               "slice": 7, "tile": 3, "tile_px": "418,-96"})
+    for expect in ("stack=260807-014743_stack_slices", "slice=7", "tile=3",
+                   "tile_px=418,-96"):
+        assert expect in part.comment, f"{expect} missing from {part.comment}"
+
+    # The optics keep their own fields. Context is merged last and must
+    # never be able to overwrite one -- a caller passing "objective" would
+    # otherwise silently rewrite what the turret said.
+    hostile = from_setup(setup, exposure_us=8330, gain_pct=100,
+                         context={"objective": "not the objective",
+                                  "um_per_px": "9999"})
+    assert "objective=40x/0.75" in hostile.comment
+    assert "not the objective" not in hostile.comment

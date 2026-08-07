@@ -23,9 +23,9 @@ import numpy as np
 from ..calib import frames as F
 from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
-from ..process import develop, dng
+from ..process import develop, dng, scalebar
 from .writer import WriteQueue
-from ..process.metadata import from_setup
+from ..process.metadata import from_setup, sensor_pitch
 from ..session.settings import Settings, next_sequence
 
 _log = logging.getLogger(__name__)
@@ -123,6 +123,11 @@ class StillCapture:
         #: polarised-light interference colours, fluorescence, stained
         #: sections -- where any estimate is a guess dressed as a measurement.
         self.white_balance = True
+        #: Where the next capture sits in a larger piece of work: which
+        #: stack, which slice of it, which tile and where that tile is.
+        #: Set by the window before it pulls the trigger, because only the
+        #: window knows what is going on around a capture.
+        self.context: dict = {}
         #: Set while a mosaic or stack session is open. Those captures are
         #: ingredients rather than photographs -- the stitcher and the merge
         #: read the raws back -- so a "JPEG only" preference must not apply
@@ -261,8 +266,11 @@ class StillCapture:
             # file writing, and none of it needs a hand held still on a
             # focus knob. Measured on an 18-slice stack: 5.4 s per slice,
             # of which this half is most.
+            context = dict(self.context)
+
             def persist() -> None:
                 self._persist(
+                    context=context,
                     raw=raw, setup=setup, subject=subject, slide=slide,
                     exposure_us=exposure_us, gain_pct=gain_pct, depth=depth,
                     sensor_white=sensor_white, info=info, frames=frames,
@@ -291,6 +299,7 @@ class StillCapture:
 
 
     def _persist(self, *, raw, setup, subject: str, slide: str,
+                 context: dict | None = None,
                  exposure_us: int, gain_pct: int, depth: int,
                  sensor_white: int, info, frames: int,
                  moved, moved_px, position, started: float) -> None:
@@ -337,10 +346,7 @@ class StillCapture:
                 # The profile wins over the SDK: get_PixelSize returns 0
                 # on some models, and a zero pitch silently drops the one
                 # tag a scale bar can be computed from.
-                pixel_um = setup.camera.pixel_um or None
-                if not pixel_um and info and info.resolutions:
-                    full = min(info.resolutions, key=lambda r: r.index)
-                    pixel_um = full.pixel_um or None
+                pixel_um = sensor_pitch(setup, info)
                 meta = from_setup(setup, exposure_us=exposure_us,
                                   gain_pct=gain_pct, subject=subject,
                                   slide=slide,
@@ -350,7 +356,8 @@ class StillCapture:
                                   when=when,
                                   artist=self._settings.artist,
                                   copyright=self._settings.copyright,
-                                  unique_id=_fingerprint(corrected))
+                                  unique_id=_fingerprint(corrected),
+                                  context=context)
 
             if frames > 1:
                 # The mean carries real precision below one 12-bit LSB.
@@ -437,6 +444,13 @@ class StillCapture:
                 image = develop.develop(
                     out, pattern=None if (mono or decoded) else pattern,
                     black=black, white=white, neutral=shot)
+                # On the photograph, never on the negative. `meta` carries
+                # the micrometres-per-pixel computed from sensor pitch over
+                # total magnification, and `draw` refuses on anything it
+                # cannot stand behind.
+                if self._settings.scale_bar and meta is not None:
+                    scalebar.draw(image, meta.um_per_px,
+                                  **self._settings.bar_style())
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):
                     jpeg = None

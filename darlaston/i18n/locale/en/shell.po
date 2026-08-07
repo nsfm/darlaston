@@ -207,6 +207,10 @@ msgstr[1] "saving {count} photographs that have been taken but not yet written"
 #. Tooltip on the small gauge under the stack window. The gauge itself is
 #. wordless on purpose; this is for somebody who stops to ask what it is.
 msgid "gauge.saving.tooltip"
-msgstr ""
-"{count} exposure(s) still being written.\n"
-"Nothing to wait for -- keep racking."
+msgid_plural "gauge.saving.tooltip"
+msgstr[0] ""
+"One exposure still being written.\n"
+"Nothing to wait for. Keep racking."
+msgstr[1] ""
+"{count} exposures still being written.\n"
+"Nothing to wait for. Keep racking."

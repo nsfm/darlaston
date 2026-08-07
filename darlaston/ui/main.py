@@ -36,6 +36,8 @@ from .. import __version__, log
 from ..live.focus import Illumination, Region
 from ..live import balance
 from ..live.cell import Newest
+from ..process import scalebar
+from ..process.metadata import sensor_pitch
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
@@ -315,6 +317,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.wb_action.setChecked(True)
         self.wb_action.setToolTip(_("menu.capture.white_balance.tooltip"))
         self.wb_action.toggled.connect(self._set_white_balance)
+
+        # The same shape as white balance above: a thing you turn on for a
+        # while, plus a window for how it looks. Out of Files because Files
+        # is about where photographs go and this is about what is on them.
+        self.bar_action = capture_menu.addAction(_("menu.capture.scale_bar"))
+        self.bar_action.setCheckable(True)
+        self.bar_action.setChecked(self.settings.scale_bar)
+        self.bar_action.setToolTip(_("menu.capture.scale_bar.tooltip"))
+        self.bar_action.toggled.connect(self._set_scale_bar)
+        self.bar_live_action = capture_menu.addAction(
+            _("menu.capture.scale_bar.live"))
+        self.bar_live_action.setCheckable(True)
+        self.bar_live_action.setChecked(self.settings.scale_bar_live)
+        self.bar_live_action.setToolTip(_("menu.capture.scale_bar.live.tooltip"))
+        self.bar_live_action.toggled.connect(self._set_scale_bar_live)
+        self.bar_style_action = capture_menu.addAction(
+            _("menu.capture.scale_bar.style"), self._open_scale_bar)
 
         # One route for every panel that is a *view*. There were four of
         # these summoned four different ways, and the slide map had no
@@ -947,10 +966,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a guess -- mark it, because it keys every calibration lookup and
         goes into every file.
         """
-        if self.proposal.answered_explicitly:
-            self.objective.set_uncertain(False)
-        else:
-            self.objective.set_uncertain(True)
+        self.objective.set_uncertain(not self.proposal.answered_explicitly)
 
     def _accept_turret(self, payload) -> None:
         if self.setup is None:
@@ -1779,6 +1795,7 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..process.plate import plate
             try:
                 path = plate(sources, target, columns=columns,
+                             bar_style=self.settings.bar_style(),
                              title=title, footer=footer)
                 self.bridge.wiggle.emit((f"plate → {path.name}", True))
             except Exception as exc:
@@ -2096,6 +2113,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.capture.raw_required = (self.mosaic is not None
                                      or self.stack_session is not None
                                      or self.focus.stack.isChecked())
+        self.capture.context = self._capture_context()
+
+    def _capture_context(self) -> dict:
+        """Where the frame about to be taken sits in the larger work.
+
+        The manifests already record all of this, and a manifest is one
+        file in one folder. Move the slices somewhere else, or hand three
+        stacks to somebody, and they become sixty photographs of similar
+        things in no particular order. A frame that carries its own
+        session, its index and its place on the slide can be sorted back
+        out of a pile.
+
+        Read at each shutter press rather than tracked, for the same
+        reason `raw_required` is: a session can open or close between any
+        two of them.
+        """
+        context: dict = {}
+        if self.stack_session is not None:
+            context["stack"] = self.stack_session.dir.name
+            # The index this frame is about to take, which is what the
+            # adoption will give it. Counted here because by the time the
+            # file is written several more may be in the air.
+            context["slice"] = len(self.stack_session.slices) + 1
+        if self.mosaic is not None:
+            context["mosaic"] = self.mosaic.dir.name
+            context["tile"] = len(self.mosaic.tiles) + 1
+            anchor = self._tile_anchor
+            if anchor is not None:
+                # Tracker frame, preview pixels: not micrometres, and
+                # labelled so nobody mistakes it for a measurement. It is
+                # dead reckoning off phase correlation and it drifts.
+                context["tile_px"] = f"{anchor[0]:.0f},{anchor[1]:.0f}"
+        return context
 
     def _set_framing(self, grid: str | None = None,
                      cross: bool | None = None) -> None:
@@ -2173,8 +2223,13 @@ class MainWindow(QtWidgets.QMainWindow):
         while it is sitting on the bench.
         """
         current = self.setup.camera.serial if self.setup else None
+        backend = self.session.backend
+        info = getattr(backend, "info", None) if backend else None
+        resolutions = getattr(info, "resolutions", None) or ()
+        full = max(((r.width, r.height) for r in resolutions),
+                   key=lambda wh: wh[0] * wh[1], default=(0, 0))
         dialog = CameraDialog(self.library, current, self,
-                              settings=self.settings)
+                              settings=self.settings, open_size=full)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
@@ -2190,6 +2245,88 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup.camera = updated
             self.strip.update_status(self.session.status, self.setup)
             self._refresh_calibration()
+
+    def _set_scale_bar(self, on: bool) -> None:
+        self.settings.scale_bar = bool(on)
+        self.settings.save()
+        self._say_if_no_scale(on)
+
+    def _say_if_no_scale(self, on: bool) -> None:
+        """Turning the bar on when nothing knows the scale is a no-op.
+
+        It refuses for a good reason and it refused in silence, which is
+        the fault I argued against for the turret and then shipped: Nate
+        switched it on, shot, and found no bar and nothing to explain it.
+        The camera profile carries `pixel_um: 0.0` until somebody fills it
+        in, and without a pitch there is no micrometres per pixel and so
+        no honest bar.
+        """
+        if not on:
+            return
+        backend = self.session.backend
+        info = getattr(backend, "info", None) if backend else None
+        if self.setup is None or not self.setup.total_magnification:
+            self.strip.set_note(_("note.scale_bar.no_optics"))
+        elif not sensor_pitch(self.setup, info):
+            self.strip.set_note(_("note.scale_bar.no_pitch"))
+
+    def _set_scale_bar_live(self, on: bool) -> None:
+        self.settings.scale_bar_live = bool(on)
+        self.settings.save()
+        self._say_if_no_scale(on)
+
+    def _preview_um_per_px(self, preview_width: int) -> float | None:
+        """Micrometres per pixel *of the preview*, not of a capture.
+
+        The capture's number is sensor pitch over total magnification. The
+        preview shows the same field in fewer pixels, so one preview pixel
+        covers proportionally more slide. Getting this wrong would draw a
+        bar that is honest about the file and a lie about the screen,
+        which is the one thing a live overlay must not be.
+        """
+        if self.setup is None or not preview_width:
+            return None
+        backend = self.session.backend
+        info = getattr(backend, "info", None) if backend else None
+        total = self.setup.total_magnification
+        pitch = sensor_pitch(self.setup, info)
+        if not total or not pitch:
+            return None
+        widths = [r.width for r in getattr(info, "resolutions", ()) or ()]
+        if not widths:
+            return None
+        return (pitch / total) * (max(widths) / float(preview_width))
+
+    def _open_scale_bar(self) -> None:
+        """The style window, with the live frame as its sample.
+
+        The frame the operator is already looking at costs nothing and is
+        the most honest preview there is. `ScaleBarDialog` falls back to
+        the newest photograph on disk when there is no camera.
+        """
+        import cv2
+
+        from .capture_ui import ScaleBarDialog
+
+        sample, shrink = None, 1.0
+        if self._last_preview is not None:
+            frame = self._last_preview
+            h, w = frame.shape[:2]
+            side = min(h, w) // 2
+            crop = frame[h - side:h, max(0, w - side * 2):w]
+            if crop.size:
+                shrink = 470.0 / crop.shape[1]
+                sample = cv2.resize(
+                    crop, (470, max(1, int(470 * crop.shape[0]
+                                           / crop.shape[1]))),
+                    interpolation=cv2.INTER_AREA)
+        um = self._preview_um_per_px(
+            self._last_preview.shape[1] if self._last_preview is not None
+            else 0)
+        dialog = ScaleBarDialog(self.settings, self, sample=sample,
+                                um_per_px=um, sample_scale=shrink)
+        dialog.setStyleSheet(theme.stylesheet())
+        dialog.exec()
 
     def _open_photographer(self) -> None:
         PhotographerDialog(self.settings, self).exec()
@@ -2327,7 +2464,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_remaining(s.coverage_remaining, s.focus_rect)
         self.focus.set_coverage(s.coverage, s.coverage_complete)
-        self.view.set_frame(s.preview, s.peaking)
+        # The bar on the live view, when it is asked for. On a copy, so
+        # the frame the rest of the window keeps -- the balance sample,
+        # the tile thumbnail, the style window's own preview -- is the
+        # photograph rather than the photograph with furniture on it. One
+        # extra copy of 6.65 MB per frame, paid only while the toggle is
+        # on, which is the honest place to charge it.
+        shown = s.preview
+        if self.settings.scale_bar_live:
+            um = self._preview_um_per_px(s.preview.shape[1])
+            if um:
+                shown = s.preview.copy()
+                scalebar.draw(shown, um,
+                              **self.settings.bar_style(live=True))
+        self.view.set_frame(shown, s.peaking)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.
