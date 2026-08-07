@@ -448,13 +448,11 @@ class StillCapture:
                     out, pattern=None if (mono or decoded) else pattern,
                     black=black, white=white, neutral=shot)
                 # On the photograph, never on the negative. `meta` carries
-                # the micrometres-per-pixel that was computed from sensor
-                # pitch over total magnification, and `draw` refuses on
-                # anything it cannot stand behind -- including an
-                # objective nobody confirmed.
+                # the micrometres-per-pixel computed from sensor pitch over
+                # total magnification, and `draw` refuses on anything it
+                # cannot stand behind.
                 if self._settings.scale_bar and meta is not None:
-                    scalebar.draw(image, meta.um_per_px,
-                                  confirmed=self.objective_confirmed)
+                    scalebar.draw(image, meta.um_per_px)
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):
                     jpeg = None

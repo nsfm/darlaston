@@ -53,23 +53,6 @@ def test_nothing_is_drawn_from_an_unknown_scale():
     assert np.array_equal(img, before), "drew something from nothing"
 
 
-# ---- the rule that ties it to the turret -----------------------------------
-
-def test_an_unconfirmed_objective_gets_no_bar():
-    """The scale is derived from the objective. Every tile of Nate's
-    260729 mosaic says 16x/0.4 and was shot at 25x/0.65, so a bar drawn
-    on those would have been wrong by half and looked authoritative doing
-    it. A stale belief is exactly when not to make a claim.
-    """
-    img = _frame()
-    before = img.copy()
-    assert not scalebar.draw(img, 0.24, confirmed=False)
-    assert np.array_equal(img, before)
-
-    assert scalebar.draw(img, 0.24, confirmed=True), "refused a good one"
-    assert not np.array_equal(img, before)
-
-
 # ---- drawing ---------------------------------------------------------------
 
 def test_the_bar_lands_in_the_bottom_right_and_nowhere_else():

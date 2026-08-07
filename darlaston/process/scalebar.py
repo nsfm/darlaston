@@ -12,11 +12,6 @@ might be wrong.**
 
 - No micrometres-per-pixel, no bar. It comes from sensor pitch over total
   magnification and both have to be known.
-- No confirmed objective, no bar. The scale is derived from the objective,
-  so if the turret belief was stale the bar is a guess wearing the clothes
-  of a measurement. Every tile of Nate's 260729 mosaic says 16x/0.4 and
-  was shot at 25x/0.65; a bar drawn on those would have been wrong by half
-  and looked authoritative doing it.
 - Nothing that would be under three characters wide, or wider than a third
   of the frame. A bar too small to read is decoration and a bar that
   spans the picture is not a reference.
@@ -76,15 +71,18 @@ def label(micrometres: int) -> str:
 
 
 def draw(image: np.ndarray, um_per_px: float | None, *,
-         confirmed: bool = True, margin: float = 0.03) -> bool:
+         margin: float = 0.03) -> bool:
     """Draw into the bottom-right of `image`, in place. Did it draw?
 
-    `confirmed` is the turret belief. False means a rotation was detected
-    and never answered, so the magnification behind `um_per_px` is the
-    software's last guess rather than something anybody confirmed, and
-    this draws nothing at all.
+    This used to refuse when the turret belief was unconfirmed, on the
+    reasoning that a scale derived from a stale objective is a guess in
+    the clothes of a measurement. The reasoning held and the premise did
+    not: the detector fires on ordinary movements -- a coverslip ink
+    border, a filter change -- so the bar would have vanished for reasons
+    the operator could not see. A control that disappears unaccountably is
+    worse than one that is occasionally wrong about a number they chose.
     """
-    if not confirmed or not um_per_px or um_per_px <= 0:
+    if not um_per_px or um_per_px <= 0:
         return False
     if image is None or image.ndim != 3:
         return False
