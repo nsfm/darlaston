@@ -68,14 +68,34 @@ class FlatBank:
     def complete(self) -> bool:
         return len(self._frames) >= self.wanted
 
+    def looks_like_the_same_patch(self) -> bool:
+        """Is the view where it was for a frame already banked?
+
+        Advice, not a gate -- and it used to be a gate, which is the bug
+        this method is the remains of.
+
+        The rule is sound: four frames of one patch do not median away that
+        patch's debris. What was unsound was enforcing it from the tracker,
+        because the cursor only moves when `note_motion` is fed a measured
+        offset, and that offset comes from phase-correlating consecutive
+        frames. **A blank field is the one subject that cannot be
+        correlated.** So the condition the bank demanded -- measured stage
+        motion -- was unmeasurable on the only subject the bank accepts. It
+        took the first frame, the cursor never advanced, and every offer
+        after that landed inside the separation of it. Stuck at one of
+        four, for ever, on a correctly working microscope.
+
+        The operator pressing a button knows whether they moved. So this
+        now only informs what the panel says.
+        """
+        return any(abs(px - self._cursor[0]) < self._min_sep
+                   and abs(py - self._cursor[1]) < self._min_sep
+                   for px, py in self._positions)
+
     def offer(self, frame: np.ndarray) -> bool:
-        """Bank a frame if it is far enough from the ones already held."""
+        """Bank a frame. Refuses only once there are enough."""
         if self.complete:
             return False
-        for px, py in self._positions:
-            if abs(px - self._cursor[0]) < self._min_sep and \
-               abs(py - self._cursor[1]) < self._min_sep:
-                return False          # same patch; its debris would survive
         self._frames.append(frame)
         self._positions.append(self._cursor)
         return True

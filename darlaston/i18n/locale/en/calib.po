@@ -34,37 +34,60 @@ msgstr ""
 "Averaged over several frames; ages after about eight hours because this "
 "sensor has no cooling."
 
-#. The flat field. One row with three jobs, so three actions.
+#. The flat field. Two jobs, so two buttons: gather blank fields, then
+#. combine them.
 msgid "calib.flat.label"
 msgstr "flat"
 
-msgid "calib.flat.action.collect"
-msgstr "Collect"
-
-msgid "calib.flat.action.stop"
-msgstr "Stop"
+msgid "calib.flat.action.bank"
+msgstr "Bank"
 
 msgid "calib.flat.action.build"
 msgstr "Build"
 
 msgid "calib.flat.tooltip"
 msgstr ""
-"Set the light and the optics the way you will shoot, then collect.\n"
-"Move to blank glass and hold still; four frames at distinct stage\n"
-"positions median away slide debris. Each one freezes the preview for\n"
-"about a second, and a flat is only valid at the illumination it\n"
-"was shot under."
+"Set the light and the optics the way you will shoot, find blank glass\n"
+"and press Bank. Move the stage a little and press it again, four times\n"
+"in all.\n"
+"\n"
+"The glass does not need to be clean. The frames are medianed, so\n"
+"debris on the slide lands somewhere different each time and drops out,\n"
+"while the illumination falloff and any dust on the sensor stay put and\n"
+"are corrected. That only works if the stage actually moves between\n"
+"presses. Defocusing slightly helps too.\n"
+"\n"
+"Each press freezes the preview for about a second, and a flat is only\n"
+"valid at the illumination it was shot under."
+
+msgid "calib.flat.build.tooltip"
+msgstr ""
+"Combine the banked fields into a flat, and measure the white balance\n"
+"from it. Needs at least two, and rejects debris properly from three."
+
+#. Shown before anything has been banked.
+msgid "calib.flat.detail.how"
+msgstr "blank glass, then Bank"
 
 #. {banked} of {wanted} blank fields gathered so far.
 msgid "calib.flat.detail.count"
-msgstr "{banked}/{wanted}"
-
-msgid "calib.flat.detail.collecting"
-msgstr "{banked}/{wanted}  move to blank glass"
+msgstr "{banked}/{wanted}  move a little between each"
 
 #. Fewer than three will not median away debris on the glass.
 msgid "calib.flat.detail.debris"
 msgstr "{banked}/{wanted}  3+ rejects debris"
+
+msgid "calib.flat.detail.ready"
+msgstr "{banked}/{wanted}  ready to build"
+
+#. Said after banking a frame that does not look like empty slide. Never
+#. a refusal: the operator looked and pressed the button.
+msgid "calib.flat.warn.not_blank"
+msgstr "that field did not look blank -- a specimen in a flat ghosts every frame it corrects"
+
+#. Said after banking without having moved the stage.
+msgid "calib.flat.warn.same_patch"
+msgstr "the view has not moved -- debris in this field will survive the median"
 
 #. White balance, which is derived rather than shot.
 msgid "calib.wb.label"

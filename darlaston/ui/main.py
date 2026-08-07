@@ -81,6 +81,7 @@ class Bridge(QtCore.QObject):
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
     banking = QtCore.Signal(bool)
+    bank_warn = QtCore.Signal(str)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -117,6 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.calib_progress.connect(self._on_calib_progress)
         self.bridge.banked.connect(self._on_banked)
         self.bridge.banking.connect(self._on_banking)
+        self.bridge.bank_warn.connect(self._on_bank_warn)
 
         self.pipeline = LivePipeline(self._publish_signals,
                                      illumination=Illumination.BRIGHTFIELD)
@@ -150,7 +152,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
                                        self.bridge.banked.emit,
-                                       self.bridge.banking.emit)
+                                       self.bridge.banking.emit,
+                                       self.bridge.bank_warn.emit)
         self._build()
         # After the widgets exist and before the first frame arrives, so the
         # preview is never briefly drawn at a quality nobody chose.
@@ -314,7 +317,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_panel = CalibrationPanel()
         self.calib_panel.capture_dark.connect(self._do_dark)
         self.calib_panel.build_flat.connect(self._do_flat)
-        self.calib_panel.collect_flat.connect(self._collect_flat)
+        self.calib_panel.bank_flat.connect(self._bank_flat)
         self.calib_panel.build_lut.connect(self._do_lut)
         # Performance, in a floating panel like the others. Off by
         # default: it is a diagnostic, and a permanent cost table is a
@@ -1041,17 +1044,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calibration.capture_dark()
 
     @QtCore.Slot(bool)
-    def _collect_flat(self, on: bool) -> None:
-        """Start or stop gathering blank fields.
+    def _bank_flat(self) -> None:
+        """Take one blank field, because the operator asked for one.
 
-        A mode rather than a background habit: each frame freezes the
-        preview for about a second, and a flat is only valid at the
-        illumination it was shot under -- which nothing here can read, so
-        the operator saying "now" is the only reliable signal there is.
+        A press rather than a mode. The automatic version watched for a
+        blank, still view and grabbed on its own, and it could not work:
+        the bank required the stage to have *moved* between frames, that
+        motion was measured by phase-correlating consecutive frames, and a
+        blank field is the one subject that cannot be correlated. It banked
+        one and refused everything after it. See
+        `FlatBank.looks_like_the_same_patch`.
         """
-        self.opportunist.enabled = on
-        self.strip.set_note(
-            "collecting blank fields -- move to empty glass" if on else "")
+        if not self.opportunist.bank_now():
+            return
         self._refresh_calibration()
 
     def _do_flat(self) -> None:
@@ -1079,6 +1084,11 @@ class MainWindow(QtWidgets.QMainWindow):
         so say so. A tool that stalls unexplained is worse than one that asks."""
         self.strip.set_note(_("note.banking") if busy else "")
 
+    @QtCore.Slot(str)
+    def _on_bank_warn(self, key: str) -> None:
+        """A banked field that is worth a second look. Never a refusal."""
+        self.strip.set_note(_(key))
+
     def _refresh_calibration(self) -> None:
         if self.setup is None:
             return
@@ -1087,8 +1097,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                    self.subject.slide_note)
         live = self.session.status.is_live and not self.calibration.busy
         self.calib_panel.set_status(status, self.opportunist.count,
-                                    self.opportunist.bank.wanted, live=live,
-                                    collecting=self.opportunist.enabled)
+                                    self.opportunist.bank.wanted, live=live)
         self.calib_button.set_status(status, busy=self.calibration.busy)
 
     def _on_capture(self) -> None:
