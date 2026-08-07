@@ -92,6 +92,37 @@ def grey_world_neutral(raw: np.ndarray) -> tuple[float, float, float]:
     return (min(max(r / g, 0.05), 20.0), 1.0, min(max(b / g, 0.05), 20.0))
 
 
+def read_neutral(path) -> tuple[float, float, float] | None:
+    """AsShotNeutral out of a DNG we wrote, or None.
+
+    Enough TIFF to find one tag, deliberately: the alternative is a raw
+    library, and the dependency list here is numpy, OpenCV and Qt. Reads
+    the header only -- the tag lives in the first IFD, so this never
+    touches the thirty megabytes of pixels behind it.
+    """
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(64 * 1024)
+        end = "<" if head[:2] == b"II" else ">"
+        off = struct.unpack(end + "I", head[4:8])[0]
+        for i in range(struct.unpack(end + "H", head[off:off + 2])[0]):
+            e = off + 2 + i * 12
+            tag, _typ, n = struct.unpack(end + "HHI", head[e:e + 8])
+            if tag != T.AS_SHOT_NEUTRAL or n != 3:
+                continue
+            at = struct.unpack(end + "I", head[e + 8:e + 12])[0]
+            vals = []
+            for k in range(3):
+                num, den = struct.unpack(end + "II",
+                                         head[at + k * 8:at + k * 8 + 8])
+                vals.append(num / den if den else 0.0)
+            return tuple(vals) if all(v > 1e-6 for v in vals) else None
+    except Exception:
+        return None
+    return None
+
+
 # --------------------------------------------------------------------------
 # Our own writer
 # --------------------------------------------------------------------------

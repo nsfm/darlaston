@@ -122,8 +122,8 @@ msgstr "point at something grey"
 #. feel like a trigger firing at the wrong moment.
 msgid "note.slice_landed.behind"
 msgid_plural "note.slice_landed.behind"
-msgstr[0] "slice ✓, still saving one. Keep racking, it will catch up"
-msgstr[1] "slice ✓, still saving {count}. Keep racking, it will catch up"
+msgstr[0] "slice {n} ✓, keep racking. 1 still writing"
+msgstr[1] "slice {n} ✓, keep racking. {count} still writing"
 
 #. While a stack finishes and the last exposed slices are still being
 #. written. {count} is how many. Brief, and only ever seen when somebody

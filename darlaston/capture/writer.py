@@ -119,6 +119,12 @@ class WriteQueue:
         #: Highest depth reached, for saying afterwards whether the queue
         #: was ever the thing in the way.
         self.high_water = 0
+        #: What a write has actually taken here, smoothed. Measured rather
+        #: than assumed: it is the sensor's size, the disk, and how busy
+        #: the live preview is, and no constant knows any of those. A
+        #: progress bar without this can only pulse; with it, it can fill.
+        self._typical = 0.0
+        self._started_at: float | None = None
 
     # ---- the producer side -----------------------------------------------
 
@@ -175,6 +181,25 @@ class WriteQueue:
         if self._bytes >= self.budget * self.PRESSURE:
             return True
         return self.depth >= self.MAX_PENDING * self.PRESSURE
+
+    @property
+    def typical_write(self) -> float:
+        """Seconds a write has been taking here lately. 0 until one has."""
+        return self._typical
+
+    def progress(self) -> tuple[int, float]:
+        """(jobs outstanding, how far through the running one, 0 to 1).
+
+        The fraction is an estimate from the measured typical write, so it
+        is honest about being one: it saturates just short of full rather
+        than sitting at 1.0 waiting, because a bar that fills and then
+        stops has told the operator the wrong thing.
+        """
+        depth = self.depth
+        began, typical = self._started_at, self._typical
+        if depth == 0 or began is None or typical <= 0.0:
+            return depth, 0.0
+        return depth, min(0.95, (time.monotonic() - began) / typical)
 
     @property
     def fullness(self) -> float:
@@ -247,6 +272,8 @@ class WriteQueue:
                     self._wake.wait(0.25)
                 nbytes, job, label = self._queue.popleft()
                 self._running += 1
+                self._started_at = time.monotonic()
+            began = time.monotonic()
             try:
                 job()
             except Exception:
@@ -258,6 +285,13 @@ class WriteQueue:
                                f" ({label})" if label else "")
             finally:
                 with self._wake:
+                    took = time.monotonic() - began
+                    # First one sets it outright; after that a gentle
+                    # average, so one slow write does not make the bar
+                    # crawl for the rest of the session.
+                    self._typical = (took if self._typical <= 0.0
+                                     else 0.8 * self._typical + 0.2 * took)
+                    self._started_at = None
                     self._running -= 1
                     self._bytes = max(0, self._bytes - nbytes)
                     self._wake.notify_all()

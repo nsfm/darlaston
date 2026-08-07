@@ -724,3 +724,42 @@ def test_a_slice_is_filed_with_the_focus_of_its_own_plane(tmp_path):
     assert filed == [12.5, 31.0, 44.25, 30.75], \
         "slices filed with something other than their own plane's focus"
     assert not any(m == 0.0 for m in filed), "the defect this replaces"
+
+
+def test_a_merge_carries_the_balance_its_slices_were_shot_with(tmp_path):
+    """Grey-world was the only source of the composite's AsShotNeutral, so
+    merging threw away whatever the operator had picked off the screen and
+    substituted "this field averages to grey". Measured on Nate's stack:
+    the slices said (0.8234, 1.0, 1.1049), which is exactly the reciprocal
+    of the gains he picked, and stacked.dng said (0.6471, 1.0, 0.4321).
+
+    A composite that confidently disagrees with every frame it is made of
+    reads as the slices being wrong. They were not.
+    """
+    from darlaston.process import dng
+
+    picked = (0.8234, 1.0, 1.1049)
+    raw = np.full((64, 64), 800, np.uint16)
+    raw[0::2, 1::2] = 1400                 # a decidedly non-grey field
+    path = tmp_path / "slice_001.dng"
+    dng.write_bayer_streamed(
+        path, lambda a, c: raw[a:a + c], 64, 64,
+        preview=dng.make_preview(raw, bayer=True, white=4095),
+        neutral=picked, white=4095)
+
+    assert dng.read_neutral(path) == pytest.approx(picked, abs=1e-3), \
+        "the tag did not survive the round trip"
+    # Grey-world on this frame says something else entirely, which is the
+    # whole point: the two sources disagree, and the slice is the honest one.
+    assert dng.grey_world_neutral(raw) != pytest.approx(picked, abs=1e-2)
+
+
+def test_reading_a_neutral_never_raises_on_a_file_that_has_none(tmp_path):
+    """Provenance is a bonus, never a gate: a merge must not fail because
+    one slice came from somewhere else."""
+    from darlaston.process import dng
+
+    junk = tmp_path / "not.dng"
+    junk.write_bytes(b"II*\x00" + b"\x00" * 64)
+    assert dng.read_neutral(junk) is None
+    assert dng.read_neutral(tmp_path / "absent.dng") is None

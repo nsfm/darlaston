@@ -1358,11 +1358,17 @@ class MainWindow(QtWidgets.QMainWindow):
                                   if self._last_preview is not None else None)
         self._read_slice_for_preview(self.stack_session.dir / s.filename)
         if self.capture.catching_up:
-            # Past the watermark the next pause may be refused, and being
-            # refused in silence is what made a slow shutter feel like a
-            # trigger firing at the wrong moment. Say it before it bites.
+            # The confirmation leads and the queue trails it. A message
+            # that opens with "saving" lands in the space "hold still"
+            # just vacated and reads as an instruction to wait, however
+            # much the operator knows better -- Nate felt it and stopped
+            # racking. What is wanted here is a quiet depth gauge, which
+            # is a small bar under the stack window rather than a line of
+            # prose in the banner. Until that exists, this at least never
+            # opens with the word that makes a hand stop moving.
             self.strip.set_note(n_("note.slice_landed.behind",
-                                   self.capture.writing))
+                                   self.capture.writing,
+                                   n=s.index))
         elif self.mosaic is not None:
             self.strip.set_note(_("note.slice_landed.first", n=s.index))
         else:

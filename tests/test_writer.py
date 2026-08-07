@@ -251,3 +251,37 @@ def test_a_dozen_is_the_depth_because_it_drains_while_it_fills():
     # 20 MP camera the bytes run out first, on a webcam the slots do.
     q = WriteQueue(budget=10_000 * MB)
     assert q.room_for(40 * MB * 3), "a single 20 MP frame does not fit"
+
+
+def test_the_queue_measures_its_own_writes_so_a_bar_can_fill():
+    """A progress bar without a measured duration can only pulse. What a
+    write costs here is the sensor's size, the disk, and how busy the live
+    preview is, and no constant knows any of those."""
+    q = WriteQueue(budget=100 * MB)
+    assert q.typical_write == 0.0, "claimed to know before measuring"
+    assert q.progress() == (0, 0.0)
+
+    for _ in range(3):
+        assert q.submit(MB, lambda: time.sleep(0.08))
+    _drained(q)
+
+    assert 0.04 < q.typical_write < 0.4, f"measured {q.typical_write:.3f}s"
+    assert q.progress() == (0, 0.0), "still claims work when idle"
+
+
+def test_the_fill_never_sits_at_full_waiting():
+    """A bar that fills and then stops has told the operator the write
+    finished. It saturates short of the end instead."""
+    q = WriteQueue(budget=100 * MB)
+    assert q.submit(MB, lambda: time.sleep(0.05))
+    _drained(q)
+    assert q.typical_write > 0
+
+    gate = threading.Event()
+    assert q.submit(MB, lambda: gate.wait(5.0))
+    time.sleep(0.4)                       # far past the typical write
+    depth, fraction = q.progress()
+    assert depth == 1
+    assert fraction <= 0.95, f"filled to {fraction}"
+    gate.set()
+    _drained(q)
