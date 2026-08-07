@@ -360,16 +360,25 @@ def is_ignored(camera: Camera, ignored: dict[str, str] | None) -> bool:
 
 def offerable(cameras: list[Camera],
               ignored: dict[str, str] | None) -> list[Camera]:
-    """The cameras worth opening without being asked.
+    """The cameras worth opening without being asked. Possibly none.
 
-    Never empty when `cameras` is not. Ignoring every camera on the
-    machine is a thing somebody can do -- by ignoring the only one, or by
-    unplugging the microscope camera and leaving the laptop's -- and the
-    right answer to it is a picture and a way to change it, not a blank
+    This used to fall back to the whole list rather than return nothing,
+    on the reasoning that a picture and a way to change it beats a blank
     window explaining that everything has been hidden.
+
+    That is wrong, and Nate found it: with the microscope camera
+    unplugged, his laptop's webcam and the infrared sensor beside it were
+    the only two devices left, both marked "not the microscope" -- and the
+    fallback opened one of them anyway. The argument fails the moment the
+    picture is of the operator's face. "Everything here has been passed
+    over" is a *true* answer and the waiting screen already knows how to
+    say nothing is connected; opening a camera somebody explicitly
+    rejected is not an answer at all, it is the preference being ignored.
+
+    The picker still lists every device, marked, so taking it back is one
+    dialog away.
     """
-    kept = [c for c in cameras if not is_ignored(c, ignored)]
-    return kept or cameras
+    return [c for c in cameras if not is_ignored(c, ignored)]
 
 
 def choose(cameras: list[Camera], remembered: str = "",

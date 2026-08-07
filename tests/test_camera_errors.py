@@ -692,3 +692,43 @@ def test_setting_a_control_does_not_wait_for_frames():
 
     backend.set_gain(150)
     assert not reads, f"set_gain read {len(reads)} frames on the caller"
+
+
+def test_every_camera_ignored_says_so_and_offers_the_way_back(qapp):
+    """Nate ticked "Ignore this camera" on the laptop webcam and darlaston
+    opened it anyway. Honouring that is half the fix; the other half is
+    the screen they land on, because the no-camera screen says "check the
+    cable" about a camera that is plugged in and working perfectly.
+    """
+    from darlaston.camera.base import CameraState
+    from darlaston.camera.errors import EveryCameraPassedOver
+    from darlaston.camera.session import SessionStatus
+    from darlaston.i18n import _
+    from darlaston.ui.shell import WaitingPage
+
+    problem = EveryCameraPassedOver(2)
+    page = WaitingPage()
+    page.update_status(SessionStatus(
+        CameraState.ERROR, message=problem.heading, detail=problem.detail,
+        steps=problem.steps, kind=problem.kind))
+
+    assert page.steps.isVisibleTo(page)
+    assert not page.install_sdk.isVisibleTo(page), \
+        "offered to install a driver for a camera that is already working"
+
+    said = " ".join(problem.steps)
+    assert "Setup > Cameras" in said, "no route back to the list"
+    # Quoted exactly as printed beside the checkbox. An instruction that
+    # names a control by a label it does not have is not an instruction.
+    assert f'"{_("setup.cameras.ignore.label")}"' in said
+
+
+def test_the_ignored_screen_is_not_the_no_camera_screen():
+    """Two different situations, and the advice for one is wrong for the
+    other. Sharing a message class would have made them one."""
+    from darlaston.camera.errors import EveryCameraPassedOver, NoCameraFound
+
+    nothing, ignored = NoCameraFound("camera"), EveryCameraPassedOver(1)
+    assert nothing.kind != ignored.kind
+    assert nothing.heading != ignored.heading
+    assert "cable" not in " ".join(ignored.steps).lower()

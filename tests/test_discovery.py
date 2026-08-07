@@ -386,15 +386,34 @@ def test_passing_a_camera_over_never_hides_it():
     assert choose(seen, remembered="v4l2:built-in", fingerprint="w") is webcam
 
 
-def test_passing_over_the_only_camera_still_leaves_one():
-    """Somebody can pass over every camera on the machine -- by ignoring
-    the only one, or by unplugging the microscope camera and leaving the
-    laptop's. A picture and a way to change it beats a blank window
-    explaining that everything has been hidden."""
+def test_passing_over_every_camera_offers_none():
+    """This used to fall back to the whole list, so that there was always
+    a picture to look at. Nate hit the case it was wrong for: microscope
+    camera unplugged, laptop webcam and its infrared sensor both marked
+    ignored, and the fallback opened the webcam. The argument for a
+    picture fails when the picture is of the operator's face."""
     from darlaston.camera.discovery import offerable
 
     only = _cam("v4l2:built-in", fingerprint="w")
-    assert offerable([only], {"v4l2:built-in": "w"}) == [only]
+    assert offerable([only], {"v4l2:built-in": "w"}) == []
+
+
+def test_the_settings_that_opened_a_laptop_webcam():
+    """The real file, verbatim: two devices on one physical camera, both
+    ignored, and a remembered choice for a camera that is not attached."""
+    from darlaston.camera.discovery import choose, offerable
+
+    ignored = {"v4l2:usb-0000:00:14.0-8:1.0": "661c014110df",
+               "v4l2:usb-0000:00:14.0-8:1.2": "5e72eaf49712"}
+    seen = [_cam("v4l2:usb-0000:00:14.0-8:1.0", name="Integrated Camera",
+                 width=1920, height=1080, fingerprint="661c014110df"),
+            _cam("v4l2:usb-0000:00:14.0-8:1.2", name="Integrated IR",
+                 width=640, height=480, fingerprint="5e72eaf49712")]
+    # The remembered camera is the one on the microscope, and it is on the
+    # bench. Nothing to choose, so the ignore list decides -- and decides
+    # that none of what is left should open.
+    assert choose(seen, "v4l2:usb-0000:00:14.0-1:1.0", "") is None
+    assert offerable(seen, ignored) == []
 
 
 def test_a_different_camera_in_a_passed_over_port_is_offered():
@@ -407,3 +426,27 @@ def test_a_different_camera_in_a_passed_over_port_is_offered():
     # An entry written before fingerprints existed carries an empty one
     # and is still honoured, rather than being forgotten on upgrade.
     assert is_ignored(stranger, {"v4l2:built-in": ""})
+
+
+def test_enumeration_is_throttled_not_repeated(monkeypatch):
+    """`make` for the everything-ignored case re-runs discovery on every
+    connect retry, a few seconds apart and for as long as the window is
+    open. Enumerating opens each device to ask what it can do, so doing it
+    on that cadence would keep the webcam light blinking for ever."""
+    from darlaston.ui import main as ui
+
+    calls = []
+    monkeypatch.setattr("darlaston.camera.discovery.look",
+                        lambda: calls.append(1) or ["one"])
+    monkeypatch.setattr(ui, "_looked", None)
+
+    clock = [1000.0]
+    monkeypatch.setattr(ui.time, "monotonic", lambda: clock[0])
+    assert ui._look_now() == ["one"]
+    clock[0] += ui._LOOK_TTL - 0.1
+    ui._look_now()
+    assert len(calls) == 1, "still good: no second enumeration"
+
+    clock[0] += 0.2                       # now past the window
+    ui._look_now()
+    assert len(calls) == 2, "stale: asked again"

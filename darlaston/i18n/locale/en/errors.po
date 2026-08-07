@@ -183,3 +183,28 @@ msgstr "Run: sudo udevadm control --reload-rules"
 
 msgid "error.permission.step.replug"
 msgstr "Unplug the camera and plug it back in."
+
+#. Cameras are attached and every one of them has been ignored. Reachable
+#. only on purpose, so the advice is about the preference, never about the
+#. cable. Quotes the checkbox by the words actually printed beside it.
+msgid "error.passed_over.heading"
+msgstr "No camera available"
+
+msgid "error.passed_over.detail"
+msgid_plural "error.passed_over.detail"
+msgstr[0] ""
+"One camera was detected, but was set it to be ignored."
+msgstr[1] ""
+"{count} cameras were detected, but they were set to be ignored."
+
+msgid "error.passed_over.step.open"
+msgstr "Open Setup > Cameras."
+
+#. {label} is the checkbox itself, read from setup.cameras.ignore.label so
+#. that renaming it renames it here too. An instruction that names a
+#. control by a label it does not have is not an instruction.
+msgid "error.passed_over.step.untick"
+msgstr "Untick \"{label}\" on the one you want, then choose Use."
+
+msgid "error.passed_over.step.plug"
+msgstr "Or plug in the camera you meant to use, and it will open automatically."

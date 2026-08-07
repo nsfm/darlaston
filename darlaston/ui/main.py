@@ -16,6 +16,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -2537,6 +2538,25 @@ def _list_cameras() -> int:
     return 0
 
 
+#: How long a camera enumeration stays good for. `make` below is called
+#: on every connect retry, a few seconds apart and for as long as the
+#: window is open, and enumerating means opening each device to ask what
+#: it can do -- far too much to repeat on that cadence. Short enough that
+#: plugging a camera in is still noticed while the hand is still on it.
+_LOOK_TTL = 4.0
+_looked: tuple[float, list] | None = None
+
+
+def _look_now() -> list:
+    """`look()`, throttled. Same answer, asked at a sane rate."""
+    global _looked
+    now = time.monotonic()
+    if _looked is None or now - _looked[0] > _LOOK_TTL:
+        from ..camera.discovery import look
+        _looked = (now, look())
+    return _looked[1]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     # Kept, and kept out of --help. The synthetic camera is how this gets
@@ -2597,6 +2617,7 @@ def main() -> int:
         # one of the things `look()` can find.
         from ..camera.discovery import (backend_for, choose, look,
                                         offerable, presence_for)
+        from ..camera.errors import EveryCameraPassedOver
 
         seen = look()
         _kept = Settings.load()
@@ -2614,13 +2635,42 @@ def main() -> int:
             # "Likeliest" is sensor size, which on a laptop with nothing
             # else attached is the laptop's own webcam. That is the right
             # answer to the question the ranking asks and the wrong answer
-            # to the operator's, so anything they have marked as not the
-            # microscope steps aside here.
-            picked = offerable(seen, _kept.ignored_cameras)[0]
+            # to the operator's, so anything they have marked ignored
+            # steps aside here.
+            #
+            # And if that leaves nothing, nothing is the answer. Falling
+            # back to the full list opened the very camera somebody had
+            # just ticked "Ignore this camera" on.
+            offered = offerable(seen, _kept.ignored_cameras)
+            picked = offered[0] if offered else None
 
         if picked is not None:
             make: callable = lambda: backend_for(picked)
             presence = presence_for(picked)
+        elif seen:
+            # Attached, and every one of them ignored. Neither of the other
+            # two branches tells the truth here: opening one overrides the
+            # preference, and the no-camera screen says "check the cable"
+            # about a camera that is plugged in and working perfectly.
+            _log.info("all %d attached cameras are ignored; opening none",
+                      len(seen))
+
+            def make() -> CameraBackend:
+                # Re-run discovery rather than close over `seen`, so that
+                # plugging in the camera somebody actually meant opens it
+                # without a restart, and so that un-ticking the box in the
+                # camera list takes effect on the next retry.
+                found = _look_now()
+                now = offerable(found, Settings.load().ignored_cameras)
+                if not now:
+                    raise EveryCameraPassedOver(len(found) or 1)
+                return backend_for(now[0])
+
+            # Always: the session shows its generic "waiting for a camera"
+            # screen whenever presence is false, which is the one screen
+            # this state must not show. `make` is the thing that knows,
+            # and `_look_now` keeps asking it cheap.
+            presence = lambda: True
         else:
             # Nothing found at all. The ToupTek path is still the right
             # thing to try: its own errors explain a missing SDK or an
