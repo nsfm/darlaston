@@ -176,10 +176,8 @@ msgstr "white balance"
 
 msgid "shell.wb.pick.tooltip"
 msgstr ""
-"Press, then point at something that ought to be grey -- empty mountant\n"
-"is ideal. Click for a patch, or drag a box for a particular area.\n"
-"\n"
-"One press is the whole correction; there is no need to repeat it."
+"Press, then click on an empty spot in the preview to adjust\n"
+"white balance. You can also drag over a particular area."
 
 msgid "shell.wb.reset.label"
 msgstr "reset"

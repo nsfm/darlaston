@@ -1,13 +1,3 @@
-# The commands worth typing often, and the ones easy to get wrong by hand.
-#
-# Every target here is something you could run yourself; none of it is
-# required to work on darlaston. Two of them earn their place properly:
-# the test split, which is quietly wrong if you type only half of it, and
-# the packaging chain, which until now lived only in the CI workflow --
-# so the first anyone knew of a broken build was a failed release. These
-# call the same scripts CI calls, deliberately: one description of the
-# job with two ways in, rather than two descriptions that drift.
-#
 #   make            what you can do
 #   make install    a virtualenv you can work in
 #   make test       the suite
@@ -51,9 +41,7 @@ test:
 	$(PY) -m pytest -q
 
 ## test-fast: forked across cores, then the timing tests alone afterwards.
-##            About half the wall clock, and it fails perhaps one run in
-##            three -- see spike/docs/test-speed.md. Good while working;
-##            do not believe it over `make test`.
+##            About half the wall clock but it fails perhaps one run in three
 test-fast:
 	$(PY) -m pytest -q -n auto -m "not serial"
 	$(PY) -m pytest -q -m serial
