@@ -186,14 +186,13 @@ msgstr "reset"
 
 msgid "shell.wb.reset.tooltip"
 msgstr ""
-"Back to the sensor's own colour. Worth seeing while setting the lamp --\n"
-"an uncorrected preview says something a corrected one hides."
+"Disable white balance correction"
 
 #. The colour patch beside the buttons. It shows the *light*, not the
 #. correction: a lamp turned down reads orange, and turning it up walks
 #. the patch toward white while you watch.
 msgid "shell.wb.swatch.tooltip"
-msgstr "your light, as the balance sees it.  gains R {r}  B {b}"
+msgstr "White balance applied: gains R {r}  B {b}"
 
 msgid "shell.wb.swatch.tooltip.off"
-msgstr "no correction -- the sensor's own colour"
+msgstr "No white balance applied"
