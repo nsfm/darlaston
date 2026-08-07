@@ -638,3 +638,61 @@ def test_arrangement_finds_isolated_specimens_and_refuses_a_smear(tmp_path):
     assert find_specimens(tmp_path) == []
     with pytest.raises(ValueError):
         arrange([], tmp_path / "none.png")
+
+
+def test_a_slow_shutter_silently_swallows_deliberate_pauses():
+    """Nate's report was that the trigger fires during gentle movement.
+    Traced on the synthetic stage, it does no such thing -- what it does is
+    ignore pauses while the previous slice is still being written, and say
+    nothing about it. Six deliberate rack-and-pause gestures against a
+    5.4 s shutter (which is what an unqueued 20 MP capture measured) yield
+    two slices. From the bench that is indistinguishable from firing at the
+    wrong moment: you stop, nothing happens, you move on, and a slice
+    lands at some later pause instead.
+
+    This is the test that says the write queue is a correctness fix and
+    not only a speed one.
+    """
+    def gestures(busy_fields):
+        cam, push = _rig()
+        state = {"busy": 0}
+
+        def fire():
+            if state["busy"] > 0:
+                return False           # exactly what StillCapture.trigger does
+            state["busy"] = busy_fields
+            return True
+
+        def tick():
+            signals = push()
+            if state["busy"] > 0:
+                state["busy"] -= 1
+            return signals
+
+        trig = StackTrigger(fire)
+        trig.MIN_INTERVAL = 0.0
+        trig.arm()
+        for _ in range(20):
+            trig.observe(tick())
+        trig.slice_landed()
+        state["busy"] = 0
+
+        landed = 0
+        for _ in range(6):
+            for _ in range(6):                 # rack a step, deliberately
+                cam.focus_z += 0.15
+                if trig.observe(tick()):
+                    landed += 1
+                    trig.slice_landed()
+            for _ in range(20):                # stop, and wait properly
+                if trig.observe(tick()):
+                    landed += 1
+                    trig.slice_landed()
+        return landed
+
+    # ~12 sharpness fields a second: the field arrives at half of a 24 fps
+    # preview. 65 fields is the 5.4 s per slice measured on a real stack.
+    assert gestures(0) == 6, "the premise: every deliberate pause is a slice"
+    assert gestures(65) < 4, \
+        "a 5.4 s shutter used to swallow most of them; if this now passes, " \
+        "the trigger changed and this test is measuring nothing"

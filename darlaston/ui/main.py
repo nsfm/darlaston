@@ -174,6 +174,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merges: list[tuple[int, Path]] = []
         self._tile_merging: int | None = None
         self._last_preview = None
+        #: The live focus metric as of the frame the trigger last looked
+        #: at. A stack has no absolute Z, so this number is the only thing
+        #: that sequences its slices.
+        self._focus_at_capture = 0.0
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
@@ -1310,7 +1314,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.stack_trigger.capture_failed()
             self.strip.set_note(_("note.slice_discarded"))
             return
-        s = self.stack_session.adopt(result.path, metric=0.0)
+        # The live focus metric as of the frame that fired this slice. It
+        # was hardcoded to 0.0, so every slice of every stack ever taken
+        # filed the field that is meant to sequence them as zero -- all
+        # eighteen of Nate's, checked in the manifest.
+        s = self.stack_session.adopt(result.path,
+                                     metric=self._focus_at_capture)
         self.stack_trigger.slice_landed()
         if self.mosaic is not None and self._tile_anchor is None:
             # First slice anchors the tile: its position is the tile's
@@ -1323,7 +1332,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_preview = (self._last_preview.copy()
                                   if self._last_preview is not None else None)
         self._read_slice_for_preview(self.stack_session.dir / s.filename)
-        if self.mosaic is not None:
+        if self.capture.catching_up:
+            # Past the watermark the next pause may be refused, and being
+            # refused in silence is what made a slow shutter feel like a
+            # trigger firing at the wrong moment. Say it before it bites.
+            self.strip.set_note(n_("note.slice_landed.behind",
+                                   self.capture.writing))
+        elif self.mosaic is not None:
             self.strip.set_note(_("note.slice_landed.first", n=s.index))
         else:
             self.strip.set_note(_("note.slice_landed", n=s.index))
@@ -2212,6 +2227,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.focus.set_coverage(s.coverage, s.coverage_complete)
         self.view.set_frame(s.preview, s.peaking)
         self.slidemap.update_live(s)
+        # Kept before `observe`, because observe is what fires the capture
+        # and this is the number that describes the plane it fires at.
+        self._focus_at_capture = s.focus_metric
         self.stack_trigger.observe(s)
         self._maybe_seal_tile(s)
         self._last_preview = s.preview
@@ -2406,7 +2424,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 said.append(key)
         if self.timelapse.running:
             said.append(N_("shell.quit.job.timelapse"))
-        return [_(k) for k in said]
+        # Not by thread name: the writer is a worker that lives as long as
+        # the window, so being alive says nothing. Its depth does. And
+        # unlike every other job here, these are photographs that have
+        # been taken and exist nowhere but in this process's memory.
+        done = [_(k) for k in said]
+        pending = self.capture.writing
+        if pending:
+            done.append(n_("shell.quit.job.writing", pending))
+        return done
 
     def closeEvent(self, event) -> None:
         """Ask before abandoning something that is partway through a file.
@@ -2436,6 +2462,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 event.ignore()
                 return
             _log.warning("closing while still running: %s", ", ".join(busy))
+        # After the question, not before it: whatever the operator decided
+        # about the long jobs, frames already off the sensor still get
+        # their chance to land. This is a bounded wait on work that is
+        # nearly done, not a job that could run for minutes.
+        if self.capture.writing and not self.capture.drain(timeout=20.0):
+            _log.error("closed with %d capture(s) still unwritten",
+                       self.capture.writing)
         self.shutdown()
         super().closeEvent(event)
 

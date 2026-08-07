@@ -16,14 +16,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+import logging
+
 import numpy as np
 
 from ..calib import frames as F
 from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
 from ..process import develop, dng
+from .writer import WriteQueue
 from ..process.metadata import from_setup
 from ..session.settings import Settings, next_sequence
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,7 +87,7 @@ class StillCapture:
                  on_state: Callable[[str], None] | None = None,
                  on_result: Callable[[CaptureResult], None] | None = None,
                  store: CalibrationStore | None = None,
-                 pipeline=None) -> None:
+                 pipeline=None, writer: WriteQueue | None = None) -> None:
         self._session = session
         self._settings = settings
         self._store = store or CalibrationStore()
@@ -90,6 +95,22 @@ class StillCapture:
         self._on_result = on_result or (lambda _r: None)
         self._pipeline = pipeline
         self._busy = threading.Lock()
+        #: Post-shutter work, off this thread. Shared rather than made
+        #: here when the window passes one in, so a mosaic tile and a
+        #: stack slice queue behind each other rather than racing.
+        self._writer = writer if writer is not None else WriteQueue()
+        #: Highest sequence handed out per folder, whether or not the file
+        #: exists yet. `next_sequence` reads the directory, which was
+        #: sound while the write finished before the next capture began
+        #: and became a filename collision the moment it did not: two
+        #: slices in flight both saw a folder without either of them in
+        #: it. Disk still wins on restart -- this is only a floor for
+        #: what is in the air right now.
+        self._reserved: dict[Path, int] = {}
+        self._reserve_lock = threading.Lock()
+        #: What the last frame cost, for asking the queue about the next
+        #: one before the exposure rather than after.
+        self._last_frame_bytes = 0
         #: Write a measured AsShotNeutral into the file. On brightfield and
         #: phase this is what makes a capture open looking like what was on
         #: the screen. Turn it off when the field is not neutral by nature --
@@ -109,7 +130,24 @@ class StillCapture:
 
     @property
     def busy(self) -> bool:
+        """The camera. One full-resolution pull at a time, as ever."""
         return self._busy.locked()
+
+    @property
+    def writing(self) -> int:
+        """Captures exposed but not yet on disk."""
+        return self._writer.depth
+
+    @property
+    def catching_up(self) -> bool:
+        """Past the queue's watermark: the next shutter press may be
+        refused, and the operator should hear that from the status strip
+        rather than from a button that does nothing."""
+        return self._writer.under_pressure
+
+    def drain(self, timeout: float = 30.0) -> bool:
+        """Wait for every exposed frame to reach disk. Before closing."""
+        return self._writer.drain(timeout)
 
     def trigger(self, setup=None, subject: str = "",
                 slide: str = "", frames: int = 1) -> bool:
@@ -120,6 +158,12 @@ class StillCapture:
         SNR, which is how this sensor's small pixels beat a camera whose
         single frame is cleaner.
         """
+        # Backpressure reaches the shutter, not the disk. Refusing to
+        # start is a pause; starting and dropping the result is a lost
+        # photograph, and those are not comparable.
+        if self._last_frame_bytes and not self._writer.room_for(
+                self._last_frame_bytes * 3):
+            return False
         if not self._busy.acquire(blocking=False):
             return False
         threading.Thread(target=self._run, args=(setup, subject, slide, frames),
@@ -194,6 +238,54 @@ class StillCapture:
                      else 12)
             sensor_white = (1 << depth) - 1
 
+            # ---- the operator is free from here ------------------------
+            # The pixels are off the sensor and the guard has had its
+            # measurement. Everything below this line is arithmetic and
+            # file writing, and none of it needs a hand held still on a
+            # focus knob. Measured on an 18-slice stack: 5.4 s per slice,
+            # of which this half is most.
+            def persist() -> None:
+                self._persist(
+                    raw=raw, setup=setup, subject=subject, slide=slide,
+                    exposure_us=exposure_us, gain_pct=gain_pct, depth=depth,
+                    sensor_white=sensor_white, info=info, frames=frames,
+                    moved=moved, moved_px=moved_px, position=position,
+                    started=started)
+
+            # What the job keeps alive, not what it writes: the raw, the
+            # corrected copy, and the developed image the JPEG comes from.
+            held = int(raw.nbytes) * 3
+            self._last_frame_bytes = int(raw.nbytes)
+            if not self._writer.submit(held, persist,
+                                       label=subject or "capture"):
+                # No room after all -- `room_for` was asked before the
+                # exposure and the answer can go stale. Doing it here costs
+                # the operator the wait they used to pay every single time;
+                # dropping it would cost a photograph. Never the second.
+                _log.info("write queue full; writing this one in line")
+                persist()
+        except Exception as exc:
+            self._on_state("idle")
+            self._on_result(CaptureResult(
+                ok=False, message=_explain(exc),
+                elapsed=time.perf_counter() - started))
+        finally:
+            self._busy.release()
+
+
+    def _persist(self, *, raw, setup, subject: str, slide: str,
+                 exposure_us: int, gain_pct: int, depth: int,
+                 sensor_white: int, info, frames: int,
+                 moved, moved_px, position, started: float) -> None:
+        """Everything after the shutter. Runs on the write queue.
+
+        Split out of `_run` so that the camera, and the operator, are free
+        while it happens. It reports through the same callbacks, so from
+        the window's side a capture still simply completes -- later than it
+        used to relative to the exposure, and far sooner relative to the
+        next one.
+        """
+        try:
             self._on_state("calibrating")
             corrected, applied, neutral, black = self._apply_calibration(
                 raw, setup, exposure_us, gain_pct, slide,
@@ -348,8 +440,6 @@ class StillCapture:
             self._on_result(CaptureResult(
                 ok=False, message=_explain(exc),
                 elapsed=time.perf_counter() - started))
-        finally:
-            self._busy.release()
 
     def _apply_calibration(self, raw, setup, exposure_us: int, gain_pct: int,
                            slide: str, white_level: int = dng.WHITE_LEVEL):
@@ -432,7 +522,10 @@ class StillCapture:
         # file move, and two copies of the app running at once.
         folder = self._settings.resolve(setup=setup, seq=1, subject=subject,
                                         when=when).parent
-        seq = next_sequence(folder, self._settings.filename_pattern)
+        with self._reserve_lock:
+            seq = max(next_sequence(folder, self._settings.filename_pattern),
+                      self._reserved.get(folder, 0) + 1)
+            self._reserved[folder] = seq
         return (self._settings.resolve(setup=setup, seq=seq, subject=subject,
                                        when=when), seq, when)
 
