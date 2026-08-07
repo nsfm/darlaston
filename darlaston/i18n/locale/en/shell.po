@@ -153,16 +153,10 @@ msgstr "rendering a mosaic"
 msgid "shell.quit.job.timelapse"
 msgstr "running a timelapse"
 
-#. The white balance controls, in the rail beside exposure and gain --
-#. not under calibration, because this is something adjusted while looking
-#. down the eyepiece rather than a product measured once per configuration.
 #. The headings above each group of controls in the rail. Shown upper
 #. case by the widget, so they are written here as they read.
 msgid "shell.group.exposure"
 msgstr "exposure"
-
-msgid "shell.group.white_balance"
-msgstr "white balance"
 
 msgid "shell.group.measure_from"
 msgstr "measure from"
@@ -173,29 +167,33 @@ msgstr "subject"
 msgid "shell.group.optics"
 msgstr "optics"
 
-msgid "shell.wb.toggle.label"
-msgstr "on"
-
-msgid "shell.wb.toggle.tooltip"
-msgstr ""
-"Correct the preview, and every capture, from a patch you choose.\n"
-"Turning it off clears the balance and puts the sensor's own colour\n"
-"back -- which is worth seeing while setting the lamp."
-
+#. The white balance controls: one row inside the exposure group, since
+#. it is a single control and a heading over one control repeats the
+#. button. Half width, a quarter, a quarter -- fixed, so nothing twitches
+#. when a label changes.
 msgid "shell.wb.pick.label"
-msgstr "pick"
+msgstr "white balance"
 
 msgid "shell.wb.pick.tooltip"
 msgstr ""
-"Make the green box neutral. Drag the box over something that ought to\n"
-"be grey -- empty mountant is ideal -- then press.\n"
+"Press, then point at something that ought to be grey -- empty mountant\n"
+"is ideal. Click for a patch, or drag a box for a particular area.\n"
 "\n"
-"Each press works from what is on screen now, so pressing again on a\n"
-"patch that already looks right does nothing, and you can nudge it."
+"One press is the whole correction; there is no need to repeat it."
 
-#. Shown beside the controls once a balance is in force.
-msgid "shell.wb.state"
-msgstr "R {r}  B {b}"
+msgid "shell.wb.reset.label"
+msgstr "reset"
 
-msgid "shell.wb.state.off"
-msgstr "sensor as it is"
+msgid "shell.wb.reset.tooltip"
+msgstr ""
+"Back to the sensor's own colour. Worth seeing while setting the lamp --\n"
+"an uncorrected preview says something a corrected one hides."
+
+#. The colour patch beside the buttons. It shows the *light*, not the
+#. correction: a lamp turned down reads orange, and turning it up walks
+#. the patch toward white while you watch.
+msgid "shell.wb.swatch.tooltip"
+msgstr "your light, as the balance sees it.  gains R {r}  B {b}"
+
+msgid "shell.wb.swatch.tooltip.off"
+msgstr "no correction -- the sensor's own colour"

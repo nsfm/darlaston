@@ -61,7 +61,8 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .widgets import FocusGroup, Histogram, LiveView, ValueBar
+from .widgets import (BalanceSwatch, FocusGroup, Histogram, LiveView,
+                      ValueBar)
 
 _log = logging.getLogger(__name__)
 
@@ -190,7 +191,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # same lamp starts nearer where they want to be, and undoing it is
         # one click. Applied before the first frame, so the preview is
         # never briefly the wrong colour.
-        self._on_wb_toggled(bool(self.settings.white_balance_on))
+        self.pipeline.set_white_balance(self.settings.white_balance_gains)
+        self.pipeline.set_balance_rect(self._wb_rect)
+        self._refresh_wb()
         self._refresh_disk()
         self._disk_timer = QtCore.QTimer(self)
         self._disk_timer.timeout.connect(self._refresh_disk)
@@ -473,31 +476,31 @@ class MainWindow(QtWidgets.QMainWindow):
         exposure = _group(_("shell.group.exposure"), self.histogram)
         exposure.addWidget(self.exposure)
         exposure.addWidget(self.gain)
-        col.addLayout(exposure)
 
-        # Beside exposure and gain, not under calibration. The flat's
-        # balance is a measurement keyed to the optical configuration and
-        # belongs on that panel; this one moves whenever the lamp is
-        # turned, which is company these two keep and that panel does not.
-        self.wb_on = QtWidgets.QPushButton(_("shell.wb.toggle.label"))
-        self.wb_on.setCheckable(True)
-        self.wb_on.setProperty("role", "seg")
-        self.wb_on.setToolTip(_("shell.wb.toggle.tooltip"))
-        self.wb_on.toggled.connect(self._on_wb_toggled)
+        # A row inside exposure rather than a group of its own. It is one
+        # control, and a heading over one control spends a line of rail to
+        # repeat what the button already says.
         self.wb_pick = QtWidgets.QPushButton(_("shell.wb.pick.label"))
         self.wb_pick.setProperty("role", "seg")
         self.wb_pick.setToolTip(_("shell.wb.pick.tooltip"))
-        self.wb_pick.clicked.connect(self._pick_white_balance)
-        self.wb_state = QtWidgets.QLabel()
-        self.wb_state.setProperty("role", "key")
+        self.wb_pick.clicked.connect(self._arm_white_balance)
+        self.wb_reset = QtWidgets.QPushButton(_("shell.wb.reset.label"))
+        self.wb_reset.setProperty("role", "seg")
+        self.wb_reset.setToolTip(_("shell.wb.reset.tooltip"))
+        self.wb_reset.clicked.connect(self._reset_white_balance)
+        self.wb_swatch = BalanceSwatch()
 
         wb_row = QtWidgets.QHBoxLayout()
         wb_row.setSpacing(4)
-        wb_row.addWidget(self.wb_on)
-        wb_row.addWidget(self.wb_pick)
-        wb_row.addWidget(self.wb_state, 1)
-        col.addLayout(_group(_("shell.group.white_balance"), wb_row))
+        # Half, a quarter, a quarter. Fixed proportions rather than sized
+        # to their contents: a button that changes width when its label
+        # changes makes the whole rail twitch.
+        wb_row.addWidget(self.wb_pick, 2)
+        wb_row.addWidget(self.wb_reset, 1)
+        wb_row.addWidget(self.wb_swatch, 1)
+        exposure.addLayout(wb_row)
 
+        col.addLayout(exposure)
         col.addWidget(self.focus)
 
         # Where the metric looks. Field curvature puts the frame edges on a
@@ -1094,60 +1097,69 @@ class MainWindow(QtWidgets.QMainWindow):
     #: to sit on a patch of mountant between subjects.
     DEFAULT_WB_RECT = (0.40, 0.40, 0.20, 0.20)
 
-    def _on_wb_toggled(self, on: bool) -> None:
-        """Enable the working balance, or clear it.
-
-        Off is the reset, deliberately: two buttons rather than three, and
-        the way back to the sensor's own colour is the same control that
-        left it. Worth having -- an uncorrected preview says something
-        about the lamp that a corrected one hides.
-        """
-        self.settings.white_balance_on = on
-        if not on:
-            self.settings.white_balance_gains = list(balance.UNITY)
-        self.settings.save()
-        self.pipeline.set_white_balance(
-            self.settings.white_balance_gains if on else balance.UNITY)
-        self.view.arm_balance(on)
-        self.view.set_balance_rect(self._wb_rect if on else None)
-        self._refresh_wb()
+    def _arm_white_balance(self) -> None:
+        """Point at something that should be grey. One click or one drag."""
+        self.view.arm_balance(True)
+        self.strip.set_note(_("note.wb.point"))
 
     def _on_balance_region(self, rect: tuple) -> None:
-        """A box dragged while the balance is armed."""
+        """Where they pointed. Sample there, and take the balance."""
         self._wb_rect = rect
-        self.view.set_balance_rect(rect)
+        self.pipeline.set_balance_rect(rect)
+        self.strip.set_note("")
+        # Show where it was taken, briefly. A rectangle that stays is
+        # clutter over the specimen the moment it has nothing left to say.
+        self.view.show_balance_rect(rect)
+        # The pipeline samples on the way past, so the rect has to be in
+        # force for a frame before there is anything to read. One frame at
+        # the slowest rate anybody runs at.
+        QtCore.QTimer.singleShot(80, self._take_white_balance)
 
-    def _pick_white_balance(self) -> None:
-        """Make what is in the box neutral, from where the preview is now.
+    def _take_white_balance(self) -> None:
+        """Make the sampled patch neutral, in one step.
 
-        Relative, not absolute: the frame this reads has already been
-        through whatever balance is in force, so the gains it produces
-        compose with the ones already applied. That is what makes a second
-        press on a patch that already looks right do nothing.
+        Read from the *uncorrected* frame, which is why this waits for the
+        pipeline to sample rather than reading the displayed preview. Doing
+        the latter measured an image that already carried the last
+        correction, so a press could only remove part of what was left and
+        the balance crept toward neutral over several clicks instead of
+        arriving in one.
         """
-        frame = self._last_preview
-        if frame is None:
+        sample = self.pipeline.balance_sample
+        if sample is None:
             return
-        if not self.wb_on.isChecked():
-            self.wb_on.setChecked(True)          # picking implies wanting it
-        h, w = frame.shape[:2]
-        x, y, rw, rh = self._wb_rect
-        patch = frame[int(y * h):int((y + rh) * h),
-                      int(x * w):int((x + rw) * w)]
-        gains = balance.combine(self.settings.white_balance_gains,
-                                balance.from_region(patch))
+        b, g, r = sample
+        gains = balance.sane((g / r, 1.0, g / b) if min(r, g, b) > 0
+                             else balance.UNITY)
         self.settings.white_balance_gains = list(gains)
         self.settings.save()
         self.pipeline.set_white_balance(gains)
         self._refresh_wb()
 
+    def _reset_white_balance(self) -> None:
+        """Back to the sensor's own colour, which is worth being able to
+        see: an uncorrected preview says something about the lamp that a
+        corrected one hides."""
+        self.view.arm_balance(False)
+        self.strip.set_note("")
+        self.settings.white_balance_gains = list(balance.UNITY)
+        self.settings.save()
+        self.pipeline.set_white_balance(balance.UNITY)
+        self._refresh_wb()
+
     def _refresh_wb(self) -> None:
-        on = bool(self.settings.white_balance_on)
-        self.wb_on.setChecked(on)
-        self.wb_pick.setEnabled(self.session.status.is_live)
-        r, _g, b = balance.sane(self.settings.white_balance_gains)
-        self.wb_state.setText(_("shell.wb.state", r=f"{r:.2f}", b=f"{b:.2f}")
-                              if on else _("shell.wb.state.off"))
+        gains = balance.sane(self.settings.white_balance_gains)
+        live = self.session.status.is_live
+        self.wb_pick.setEnabled(live)
+        self.wb_reset.setEnabled(gains != balance.UNITY)
+        self.wb_swatch.set_gains(gains)
+        # The numbers are still here, for whoever wants them, where they
+        # cost no space: nobody reads "R 1.33 B 0.60" and pictures a warm
+        # lamp, but the swatch beside it is the lamp.
+        self.wb_swatch.setToolTip(
+            _("shell.wb.swatch.tooltip", r=f"{gains[0]:.2f}",
+              b=f"{gains[2]:.2f}") if gains != balance.UNITY
+            else _("shell.wb.swatch.tooltip.off"))
 
     def _on_custom_region(self, rect: tuple) -> None:
         """A box dragged on the image wins over any preset."""

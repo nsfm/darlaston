@@ -410,8 +410,10 @@ class StillCapture:
         #
         # Recorded distinctly, because a file should say which of the two
         # it carries. "wb" and "wb(picked)" are not the same provenance.
-        if getattr(self._settings, "white_balance_on", False):
-            gr, _gg, gb = balance.sane(self._settings.white_balance_gains)
+        picked = balance.sane(getattr(self._settings,
+                                      "white_balance_gains", balance.UNITY))
+        if picked != balance.UNITY:
+            gr, _gg, gb = picked
             neutral = (1.0 / max(gr, 1e-6), 1.0, 1.0 / max(gb, 1e-6))
             applied = [a for a in applied if a != "wb"] + ["wb(picked)"]
 

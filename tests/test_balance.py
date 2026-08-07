@@ -38,9 +38,11 @@ def test_picking_again_on_a_corrected_image_changes_nothing():
     assert B.combine(first, B.from_region(fixed)) == pytest.approx(first, rel=0.02)
 
 
-def test_two_picks_compound_the_way_a_hand_expects():
-    """Each press moves further from where it started, rather than
-    replacing the last one."""
+def test_combining_two_relative_picks_multiplies_them():
+    """`combine` is no longer on the picking path -- a press reads the
+    uncorrected frame and computes the answer outright -- but it is the
+    right operation whenever two corrections genuinely stack, so it stays
+    and stays tested."""
     a = B.combine(B.UNITY, (2.0, 1.0, 0.5))
     b = B.combine(a, (1.5, 1.0, 0.5))
     assert b[0] == pytest.approx(3.0)
@@ -148,8 +150,7 @@ def test_a_picked_balance_reaches_the_capture(tmp_path):
     assert plain.ok, plain.message
     assert "wb(picked)" not in plain.applied
 
-    picked = _shoot(tmp_path / "on", white_balance_on=True,
-                    white_balance_gains=[1.4, 1.0, 0.7])
+    picked = _shoot(tmp_path / "on", white_balance_gains=[1.4, 1.0, 0.7])
     assert picked.ok, picked.message
     assert "wb(picked)" in picked.applied, (
         f"the picked balance never reached the file: {picked.applied}")
@@ -158,8 +159,7 @@ def test_a_picked_balance_reaches_the_capture(tmp_path):
 def test_a_picked_balance_works_with_no_calibration_at_all(tmp_path):
     """The common case for somebody who has just changed the lamp: no dark,
     no flat, nothing in the store. It must not need one."""
-    got = _shoot(tmp_path, white_balance_on=True,
-                 white_balance_gains=[1.4, 1.0, 0.7])
+    got = _shoot(tmp_path, white_balance_gains=[1.4, 1.0, 0.7])
     assert got.ok, got.message
     assert got.applied == ("wb(picked)",), got.applied
 
@@ -167,8 +167,7 @@ def test_a_picked_balance_works_with_no_calibration_at_all(tmp_path):
 def test_the_file_says_which_balance_it_carries(tmp_path):
     """"wb" and "wb(picked)" are different provenance, and a file that
     cannot tell them apart cannot be trusted about either."""
-    got = _shoot(tmp_path, white_balance_on=True,
-                 white_balance_gains=[1.4, 1.0, 0.7])
+    got = _shoot(tmp_path, white_balance_gains=[1.4, 1.0, 0.7])
     assert "wb" not in got.applied, (
         f"claimed a measured balance it does not have: {got.applied}")
 
@@ -209,7 +208,51 @@ def test_the_two_boxes_mean_different_things(qapp):
     assert len(focus) == 1 and len(wb) == 1, "armed, a drag must set balance"
 
 
-def test_the_toggle_is_the_reset(qapp, tmp_path, monkeypatch):
+def _push_cast(win, b=200, g=120, r=90, shape=(240, 320)):
+    """One frame of a flat colour cast, through the real pipeline.
+
+    Through it rather than around it, because picking now reads the
+    *uncorrected* sample the pipeline takes on the way past -- which is
+    the whole fix, and a test that set `_last_preview` by hand would go
+    around the thing it is checking.
+    """
+    from darlaston.camera.buffers import BufferPool, Frame
+
+    pool = BufferPool((*shape, 3), np.uint8, count=1)
+    buf = pool.acquire()
+    buf[..., 0], buf[..., 1], buf[..., 2] = b, g, r
+    frame = Frame(data=buf, seq=0, timestamp=0.0, exposure_us=8000,
+                  gain_pct=100, binned=True, _pool=pool)
+    win.pipeline._analyse(frame)
+    frame.release()
+
+
+def test_one_press_arrives_rather_than_creeping(qapp, tmp_path, monkeypatch):
+    """Nate caught this at the bench: the balance crept toward neutral over
+    several clicks. Picking read the *displayed* frame, which already
+    carried the last press's correction, so a press could only remove part
+    of what was left. One press has to mean "make this grey"."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        seen = []
+        for _ in range(4):
+            _push_cast(win)
+            win._take_white_balance()
+            seen.append(win.pipeline.white_balance)
+        assert seen[0][0] == pytest.approx(120 / 90, rel=0.02), \
+            f"one press did not arrive: {seen[0]}"
+        for later in seen[1:]:
+            assert later == pytest.approx(seen[0], rel=1e-6), \
+                f"the balance drifted on a repeated press: {seen}"
+    finally:
+        win.shutdown()
+
+
+def test_reset_returns_the_sensors_own_colour(qapp, tmp_path, monkeypatch):
     """Two buttons rather than three: the way back to the sensor's own
     colour is the same control that left it."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
@@ -218,19 +261,15 @@ def test_the_toggle_is_the_reset(qapp, tmp_path, monkeypatch):
 
     win = MainWindow(lambda: MockCamera(fps=30.0))
     try:
-        win._last_preview = np.dstack([
-            np.full((240, 320), 200, np.uint8),
-            np.full((240, 320), 120, np.uint8),
-            np.full((240, 320), 90, np.uint8)])
-        win._pick_white_balance()
-        assert win.wb_on.isChecked(), "picking must imply wanting it"
+        _push_cast(win)
+        win._take_white_balance()
         assert win.pipeline.white_balance != B.UNITY
-        assert win.settings.white_balance_on
+        assert win.wb_reset.isEnabled(), "reset should be live once balanced"
 
-        win._on_wb_toggled(False)
-        assert win.pipeline.white_balance == B.UNITY, "off did not reset"
+        win._reset_white_balance()
+        assert win.pipeline.white_balance == B.UNITY, "reset did not reset"
         assert tuple(win.settings.white_balance_gains) == B.UNITY
-        assert not win.settings.white_balance_on
+        assert not win.wb_reset.isEnabled(), "reset offered with nothing to undo"
     finally:
         win.shutdown()
 
@@ -244,18 +283,15 @@ def test_a_picked_balance_survives_a_restart(qapp, tmp_path, monkeypatch):
 
     first = MainWindow(lambda: MockCamera(fps=30.0))
     try:
-        first._last_preview = np.dstack([
-            np.full((240, 320), 200, np.uint8),
-            np.full((240, 320), 120, np.uint8),
-            np.full((240, 320), 90, np.uint8)])
-        first._pick_white_balance()
+        _push_cast(first)
+        first._take_white_balance()
         kept = first.pipeline.white_balance
     finally:
         first.shutdown()
 
     again = MainWindow(lambda: MockCamera(fps=30.0))
     try:
-        assert again.wb_on.isChecked(), "came back with the balance off"
+        assert again.wb_reset.isEnabled(), "came back with no balance"
         assert again.pipeline.white_balance == pytest.approx(kept), \
             "the preview came back a different colour than it was left"
     finally:
