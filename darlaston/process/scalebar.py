@@ -24,6 +24,109 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+#: Faces offered, bundled ones first. The values are family names as Qt
+#: knows them once `theme.load_fonts` has registered the bundled files.
+#: "hershey" is the stroke font OpenCV draws itself, kept as the fallback
+#: for headless use rather than as a choice anybody should want: it is a
+#: 1960s pen-plotter face, it has a slashed zero, and it has no micro sign.
+FACES = ("IBM Plex Mono", "IBM Plex Sans", "sans-serif", "serif", "hershey")
+DEFAULT_FACE = "IBM Plex Mono"
+
+
+def _qt_available() -> bool:
+    """Is there a Qt application to rasterise with?
+
+    Capture runs inside the app, so ordinarily yes. `plate` can be run
+    from a shell over a folder of DNGs, and there it is no, which is the
+    whole reason the Hershey path stays.
+    """
+    try:
+        from PySide6 import QtWidgets
+    except Exception:
+        return False
+    return QtWidgets.QApplication.instance() is not None
+
+
+def _hershey_metrics(text, px, weight):
+    scale = px / 30.0
+    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, scale,
+                                     weight)
+    return tw, th + base
+
+
+def measure(text: str, face: str, px: int, weight: int = 1):
+    """(width, height) of `text` at `px`, in the given face."""
+    if face == "hershey" or not _qt_available():
+        return _hershey_metrics(text, px, weight)
+    from PySide6 import QtGui
+    font = QtGui.QFont(face)
+    font.setPixelSize(max(1, int(px)))
+    font.setWeight(QtGui.QFont.Weight.DemiBold)
+    m = QtGui.QFontMetrics(font)
+    rect = m.tightBoundingRect(text)
+    return rect.width(), rect.height()
+
+
+def stamp(image, text: str, face: str, px: int, origin, colour,
+          weight: int = 1) -> None:
+    """Draw `text` with its bottom-left at `origin`, in place.
+
+    Rendered into a small transparent tile and composited, rather than by
+    converting the whole frame to a QImage and back. A 20 MP capture is 60
+    MB a copy and this is a line of type; paying for the frame twice to
+    place it would show up in the write queue.
+    """
+    if face == "hershey" or not _qt_available():
+        cv2.putText(image, text, (int(origin[0]), int(origin[1])),
+                    cv2.FONT_HERSHEY_DUPLEX, px / 30.0, colour, weight,
+                    cv2.LINE_AA)
+        return
+    if image.ndim == 2 and isinstance(colour, (tuple, list)):
+        colour = (colour[0], colour[0], colour[0])
+    from PySide6 import QtCore, QtGui
+
+    tw, th = measure(text, face, px, weight)
+    pad = max(2, px // 4)
+    w, h = tw + pad * 2, th + pad * 2
+    tile = QtGui.QImage(w, h, QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    tile.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(tile)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
+    font = QtGui.QFont(face)
+    font.setPixelSize(max(1, int(px)))
+    font.setWeight(QtGui.QFont.Weight.DemiBold)
+    painter.setFont(font)
+    # `colour` is BGR, as everything in this file is; QColor takes RGB.
+    painter.setPen(QtGui.QColor(int(colour[2]), int(colour[1]),
+                                int(colour[0])))
+    painter.drawText(QtCore.QRect(0, 0, w, h),
+                     int(QtCore.Qt.AlignmentFlag.AlignCenter), text)
+    painter.end()
+
+    # ARGB32 is one uint32 per pixel, so on a little-endian machine the
+    # bytes run B, G, R, A. Measured rather than reasoned about: that is
+    # already BGR, and swapping it here would have turned the type blue.
+    buf = np.frombuffer(tile.constBits(), np.uint8).reshape(h, w, 4)
+    alpha = buf[..., 3:4].astype(np.float32) / 255.0
+    rgb = buf[..., :3].astype(np.float32)
+    # Premultiplied, so the colour is already scaled by alpha.
+    x0, y0 = int(origin[0]) - pad, int(origin[1]) - th - pad
+    x1, y1 = x0 + w, y0 + h
+    ih, iw = image.shape[:2]
+    if x0 < 0 or y0 < 0 or x1 > iw or y1 > ih:
+        return
+    if image.ndim == 2:
+        # The shadow pass draws into a single-channel mask to be blurred,
+        # so the ink value is a scalar and there are no channels to
+        # composite. Coverage is the whole story there.
+        patch = image[y0:y1, x0:x1].astype(np.float32)
+        ink = float(colour[0] if isinstance(colour, (tuple, list)) else colour)
+        image[y0:y1, x0:x1] = np.maximum(
+            patch, alpha[..., 0] * ink).astype(np.uint8)
+        return
+    patch = image[y0:y1, x0:x1].astype(np.float32)
+    image[y0:y1, x0:x1] = (patch * (1.0 - alpha) + rgb).astype(np.uint8)
+
 #: The 1-2-5 ladder. A scale bar says a round number or it says nothing:
 #: "137 um" is arithmetic showing through, and nobody reads it as a
 #: reference length.
@@ -63,16 +166,19 @@ def choose(um_per_px: float, width_px: int) -> tuple[int, int] | None:
     return choice, int(round(choice / um_per_px))
 
 
-def label(micrometres: int) -> str:
+def label(micrometres: int, plain: bool = False) -> str:
     """Micrometres, or millimetres once that stops being sensible.
 
-    ASCII rather than the micro sign: this goes through OpenCV's Hershey
-    fonts, which have no glyph for it and would draw a hollow box on the
-    one element of the picture that is making a claim.
+    `plain` writes "um" instead of the micro sign. It used to be the only
+    option, because the Hershey stroke font has no glyph for the sign and
+    would have drawn a hollow box on the one element of the picture that
+    makes a claim. With a real rasteriser the sign is available, so the
+    correct character is the default and the ASCII spelling is the escape
+    hatch for anyone whose downstream tooling cannot take it.
     """
     if micrometres >= 1000 and micrometres % 1000 == 0:
         return f"{micrometres // 1000} mm"
-    return f"{micrometres} um"
+    return f"{micrometres} um" if plain else f"{micrometres} \u00b5m"
 
 
 #: How the bar is dressed. The measurement is identical in all of them;
@@ -129,7 +235,8 @@ def _shadow(image, mark, spread, strength=0.6):
 
 
 def draw(image: np.ndarray, um_per_px: float | None, *,
-         style: str = DEFAULT_STYLE, margin: float = 0.035) -> bool:
+         style: str = DEFAULT_STYLE, face: str = DEFAULT_FACE,
+         plain_units: bool = False, margin: float = 0.035) -> bool:
     """Draw into the bottom-right of `image`, in place. Did it draw?
 
     This used to refuse when the turret belief was unconfirmed, on the
@@ -148,13 +255,13 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
     if geom is None:
         return False
     fn = _STYLES.get(style) or _STYLES[DEFAULT_STYLE]
-    fn(image, *geom)
+    fn(image, *geom, face if face in FACES else DEFAULT_FACE, plain_units)
     return True
 
 
 # ---- the styles ------------------------------------------------------------
 
-def _adaptive(img, m, length, unit, x0, x1, y1):
+def _adaptive(img, m, length, unit, x0, x1, y1, face, plain):
     """No furniture at all: read the corner and pick ink that contrasts.
 
     The default, because it is the only one that adds nothing to the
@@ -164,22 +271,24 @@ def _adaptive(img, m, length, unit, x0, x1, y1):
     setting -- which is right about the lamp and silent about the subject.
     """
     thick = max(2, int(round(4 * unit)))
-    text = label(m)
-    fs, wt = 0.85 * unit, max(1, int(round(1.6 * unit)))
-    (tw, th), _ = cv2.getTextSize(text, _FONT, fs, wt)
+    text = label(m, plain)
+    px, wt = int(round(0.85 * 30 * unit)), max(1, int(round(1.6 * unit)))
+    tw, th = measure(text, face, px, wt)
+    base = 0
     org = (x0 + (length - tw) // 2, y1 - thick - int(10 * unit))
     region = img[max(0, org[1] - th):y1 + 2, x0:x1]
     ink = _INK_DARK if float(region.mean()) > 120 else _INK_LIGHT
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), ink, -1)
-    cv2.putText(img, text, org, _FONT, fs, ink, wt, cv2.LINE_AA)
+    stamp(img, text, face, px, org, ink, wt)
 
 
-def _plate(img, m, length, unit, x0, x1, y1):
+def _plate(img, m, length, unit, x0, x1, y1, face, plain):
     """The journal figure: white tablet, black rule. What we shipped."""
     thick = max(2, int(round(3 * unit)))
-    text = label(m)
-    fs, wt = 0.72 * unit, max(1, int(round(1.2 * unit)))
-    (tw, th), base = cv2.getTextSize(text, _FONT, fs, wt)
+    text = label(m, plain)
+    px, wt = int(round(0.72 * 30 * unit)), max(1, int(round(1.2 * unit)))
+    tw, th = measure(text, face, px, wt)
+    base = 0
     pad = int(round(11 * unit))
     px0, py0 = x0 - pad, y1 - th - base - pad * 2
     px1, py1 = x1 + pad, y1 + pad
@@ -188,17 +297,18 @@ def _plate(img, m, length, unit, x0, x1, y1):
         return
     cv2.rectangle(img, (px0, py0), (px1, py1), (255, 255, 255), -1)
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), _INK_DARK, -1)
-    cv2.putText(img, text, (x0 + (length - tw) // 2, y1 - thick - pad),
-                _FONT, fs, _INK_DARK, wt, cv2.LINE_AA)
+    stamp(img, text, face, px, (x0 + (length - tw) // 2, y1 - thick - pad),
+          _INK_DARK, wt)
 
 
-def _scrim(img, m, length, unit, x0, x1, y1):
+def _scrim(img, m, length, unit, x0, x1, y1, face, plain):
     """A translucent dark tablet. Legible over anything, at the cost of
     covering a little of the picture."""
     thick = max(2, int(round(3.5 * unit)))
-    text = label(m)
-    fs, wt = 0.78 * unit, max(1, int(round(1.4 * unit)))
-    (tw, th), base = cv2.getTextSize(text, _FONT, fs, wt)
+    text = label(m, plain)
+    px, wt = int(round(0.78 * 30 * unit)), max(1, int(round(1.4 * unit)))
+    tw, th = measure(text, face, px, wt)
+    base = 0
     pad = int(round(13 * unit))
     h, w = img.shape[:2]
     bx0, by0 = max(0, x0 - pad), max(0, y1 - thick - th - base - pad)
@@ -206,22 +316,24 @@ def _scrim(img, m, length, unit, x0, x1, y1):
     patch = img[by0:by1, bx0:bx1].astype(np.float32)
     img[by0:by1, bx0:bx1] = (patch * 0.38 + 18 * 0.62).astype(np.uint8)
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), _INK_LIGHT, -1)
-    cv2.putText(img, text, (x0 + (length - tw) // 2, y1 - thick - int(9 * unit)),
-                _FONT, fs, _INK_LIGHT, wt, cv2.LINE_AA)
+    stamp(img, text, face, px,
+          (x0 + (length - tw) // 2, y1 - thick - int(9 * unit)),
+          _INK_LIGHT, wt)
 
 
-def _ruler(img, m, length, unit, x0, x1, y1):
+def _ruler(img, m, length, unit, x0, x1, y1, face, plain):
     """The cartographer's bar: alternating segments, so the eye can halve
     and quarter the length without a ruler."""
     thick = max(3, int(round(5.5 * unit)))
-    text = label(m)
-    fs, wt = 0.72 * unit, max(1, int(round(1.3 * unit)))
-    (tw, th), _ = cv2.getTextSize(text, _FONT, fs, wt)
+    text = label(m, plain)
+    px, wt = int(round(0.72 * 30 * unit)), max(1, int(round(1.3 * unit)))
+    tw, th = measure(text, face, px, wt)
+    base = 0
     org = (x1 - tw, y1 - thick - int(9 * unit))
 
     def mark(canvas, col):
         cv2.rectangle(canvas, (x0, y1 - thick), (x1, y1), col, -1)
-        cv2.putText(canvas, text, org, _FONT, fs, col, wt, cv2.LINE_AA)
+        stamp(canvas, text, face, px, org, (col, col, col) if isinstance(col, int) else col, wt)
 
     _shadow(img, mark, int(8 * unit), 0.55)
     for i in range(4):
@@ -231,42 +343,44 @@ def _ruler(img, m, length, unit, x0, x1, y1):
                       _INK_LIGHT if i % 2 == 0 else _INK_DARK, -1)
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), _INK_LIGHT,
                   max(1, int(round(0.8 * unit))))
-    cv2.putText(img, text, org, _FONT, fs, _INK_LIGHT, wt, cv2.LINE_AA)
+    stamp(img, text, face, px, org, _INK_LIGHT, wt)
 
 
-def _caps(img, m, length, unit, x0, x1, y1):
+def _caps(img, m, length, unit, x0, x1, y1, face, plain):
     """A draughtsman's dimension line: hairline rule with end serifs. The
     lightest touch here, and the one that reads as a measurement rather
     than a label."""
     line = max(1, int(round(2.2 * unit)))
     cap = int(round(9 * unit))
-    text = label(m)
-    fs, wt = 0.78 * unit, max(1, int(round(1.4 * unit)))
-    (tw, th), _ = cv2.getTextSize(text, _FONT, fs, wt)
+    text = label(m, plain)
+    px, wt = int(round(0.78 * 30 * unit)), max(1, int(round(1.4 * unit)))
+    tw, th = measure(text, face, px, wt)
+    base = 0
     org = (x0 + (length - tw) // 2, y1 - cap - int(8 * unit))
 
     def mark(canvas, col):
         cv2.line(canvas, (x0, y1), (x1, y1), col, line, cv2.LINE_AA)
         cv2.line(canvas, (x0, y1 - cap), (x0, y1 + cap), col, line, cv2.LINE_AA)
         cv2.line(canvas, (x1, y1 - cap), (x1, y1 + cap), col, line, cv2.LINE_AA)
-        cv2.putText(canvas, text, org, _FONT, fs, col, wt, cv2.LINE_AA)
+        stamp(canvas, text, face, px, org, (col, col, col) if isinstance(col, int) else col, wt)
 
     _shadow(img, mark, int(8 * unit))
     mark(img, _INK_LIGHT)
 
 
-def _shadow_style(img, m, length, unit, x0, x1, y1):
+def _shadow_style(img, m, length, unit, x0, x1, y1, face, plain):
     """White rule and white type over a soft shadow, no box. Best on a
     dark or busy field, where white with a shadow beats any tablet."""
     thick = max(2, int(round(4 * unit)))
-    text = label(m)
-    fs, wt = 0.85 * unit, max(1, int(round(1.6 * unit)))
-    (tw, th), _ = cv2.getTextSize(text, _FONT, fs, wt)
+    text = label(m, plain)
+    px, wt = int(round(0.85 * 30 * unit)), max(1, int(round(1.6 * unit)))
+    tw, th = measure(text, face, px, wt)
+    base = 0
     org = (x0 + (length - tw) // 2, y1 - thick - int(10 * unit))
 
     def mark(canvas, col):
         cv2.rectangle(canvas, (x0, y1 - thick), (x1, y1), col, -1)
-        cv2.putText(canvas, text, org, _FONT, fs, col, wt, cv2.LINE_AA)
+        stamp(canvas, text, face, px, org, (col, col, col) if isinstance(col, int) else col, wt)
 
     _shadow(img, mark, int(9 * unit))
     mark(img, _INK_LIGHT)

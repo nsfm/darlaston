@@ -117,13 +117,21 @@ def test_an_unknown_style_falls_back_rather_than_failing():
 
 
 def test_the_label_reads_in_whichever_unit_is_sensible():
-    assert scalebar.label(1) == "1 um"
-    assert scalebar.label(500) == "500 um"
+    assert scalebar.label(1) == "1 \u00b5m"
+    assert scalebar.label(500) == "500 \u00b5m"
     assert scalebar.label(1000) == "1 mm"
     assert scalebar.label(5000) == "5 mm"
-    # ASCII: this goes through a Hershey font with no micro sign, and a
-    # hollow box on the one element making a claim is worse than "um".
-    assert all(ord(c) < 128 for c in scalebar.label(200))
+
+
+def test_the_ascii_spelling_is_available_but_is_not_the_default():
+    """It used to be the only option, because the Hershey stroke font has
+    no glyph for the sign and would have drawn a hollow box on the one
+    element of the picture that makes a claim. With a real rasteriser the
+    correct character is the default, and "um" is the escape hatch for
+    tooling further down the line that cannot take it."""
+    assert scalebar.label(200, plain=True) == "200 um"
+    assert all(ord(c) < 128 for c in scalebar.label(200, plain=True))
+    assert "\u00b5" in scalebar.label(200)
 
 
 def test_a_mono_frame_is_left_alone_rather_than_crashing():

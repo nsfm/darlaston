@@ -316,6 +316,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.wb_action.setToolTip(_("menu.capture.white_balance.tooltip"))
         self.wb_action.toggled.connect(self._set_white_balance)
 
+        # The same shape as white balance above: a thing you turn on for a
+        # while, plus a window for how it looks. Out of Files because Files
+        # is about where photographs go and this is about what is on them.
+        self.bar_action = capture_menu.addAction(_("menu.capture.scale_bar"))
+        self.bar_action.setCheckable(True)
+        self.bar_action.setChecked(self.settings.scale_bar)
+        self.bar_action.setToolTip(_("menu.capture.scale_bar.tooltip"))
+        self.bar_action.toggled.connect(self._set_scale_bar)
+        self.bar_style_action = capture_menu.addAction(
+            _("menu.capture.scale_bar.style"), self._open_scale_bar)
+
         # One route for every panel that is a *view*. There were four of
         # these summoned four different ways, and the slide map had no
         # route at all -- closing it lost it until the next launch.
@@ -2220,6 +2231,36 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup.camera = updated
             self.strip.update_status(self.session.status, self.setup)
             self._refresh_calibration()
+
+    def _set_scale_bar(self, on: bool) -> None:
+        self.settings.scale_bar = bool(on)
+        self.settings.save()
+
+    def _open_scale_bar(self) -> None:
+        """The style window, with the live frame as its sample.
+
+        The frame the operator is already looking at costs nothing and is
+        the most honest preview there is. `ScaleBarDialog` falls back to
+        the newest photograph on disk when there is no camera.
+        """
+        import cv2
+
+        from .capture_ui import ScaleBarDialog
+
+        sample = None
+        if self._last_preview is not None:
+            frame = self._last_preview
+            h, w = frame.shape[:2]
+            side = min(h, w) // 2
+            crop = frame[h - side:h, max(0, w - side * 2):w]
+            if crop.size:
+                sample = cv2.resize(
+                    crop, (470, max(1, int(470 * crop.shape[0]
+                                           / crop.shape[1]))),
+                    interpolation=cv2.INTER_AREA)
+        dialog = ScaleBarDialog(self.settings, self, sample=sample)
+        dialog.setStyleSheet(theme.stylesheet())
+        dialog.exec()
 
     def _open_photographer(self) -> None:
         PhotographerDialog(self.settings, self).exec()

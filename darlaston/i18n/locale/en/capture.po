@@ -132,24 +132,11 @@ msgstr ""
 msgid "capture.files.filename.empty"
 msgstr "a filename pattern cannot be empty"
 
-#. A checkbox under the image format. The bar goes on the JPEG only: the
-#. raw is what the sensor recorded and nothing is drawn on it, ever.
-msgid "capture.files.scale_bar.label"
-msgstr "Draw a scale bar on the JPEG"
-
-msgid "capture.files.scale_bar.tooltip"
-msgstr ""
-"Adds a labelled bar to the bottom right of the photograph.\n"
-"Never drawn on the raw, and never drawn unless the scale is known. "
-"A wrong scale bar is worse than none."
-
 #. The scale bar's dressing. The measurement is identical in every one of
 #. them; only the furniture differs. Parenthesised rather than dashed:
 #. these are read at a glance in a dropdown, and a dash there reads as
 #. prose in a place that should read as a label.
-msgid "capture.files.scale_bar.style.label"
-msgstr "Style"
-
+#.
 #. Reads the corner and picks ink that contrasts with it. Dark on
 #. brightfield, light on darkfield, and nothing else added to the picture.
 msgid "capture.files.scale_bar.style.adaptive"
@@ -169,3 +156,46 @@ msgstr "Calipers (dimension line)"
 
 msgid "capture.files.scale_bar.style.shadow"
 msgstr "Shadow (white, soft drop shadow)"
+
+#. The scale bar window, opened from Capture. Its own window rather than a
+#. row in Files, because every choice in it is a taste judgement and the
+#. preview is the feature.
+msgid "capture.bar.title"
+msgstr "Scale bar"
+
+msgid "capture.bar.style.label"
+msgstr "Style"
+
+msgid "capture.bar.face.label"
+msgstr "Typeface"
+
+#. Bundled with the application, and drawn for technical material.
+msgid "capture.bar.face.plex_mono"
+msgstr "IBM Plex Mono"
+
+msgid "capture.bar.face.plex_sans"
+msgstr "IBM Plex Sans"
+
+msgid "capture.bar.face.sans"
+msgstr "System sans serif"
+
+msgid "capture.bar.face.serif"
+msgstr "System serif"
+
+#. The stroke font OpenCV draws itself. Kept because it works with no
+#. window system, which is how the plate tool can be run from a shell.
+msgid "capture.bar.face.hershey"
+msgstr "Hershey (plotter, no micro sign)"
+
+#. Inverted on purpose: the correct character is the default, and this is
+#. the escape hatch for tooling that cannot take it.
+msgid "capture.bar.plain.label"
+msgstr "Write um instead of µm"
+
+msgid "capture.bar.plain.tooltip"
+msgstr ""
+"For software further down the line that cannot read the micro sign.\n"
+"The Hershey typeface has no glyph for it and always writes um."
+
+msgid "capture.bar.note"
+msgstr "Drawn on the JPEG only; RAW files are unmodified."

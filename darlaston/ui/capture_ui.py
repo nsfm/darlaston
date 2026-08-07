@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import cv2
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
@@ -22,6 +23,16 @@ from .framed import FramedDialog
 #: with an f-string. The catalogue check finds message ids by reading the
 #: source for literals, so a key assembled at runtime is a key it cannot
 #: see -- it reported all six of these as carried by nobody.
+#: Faces, bundled ones first. Spelled out for the same reason the styles
+#: are: the catalogue check reads source for literals.
+SCALE_BAR_FACES = (
+    ("IBM Plex Mono", N_("capture.bar.face.plex_mono")),
+    ("IBM Plex Sans", N_("capture.bar.face.plex_sans")),
+    ("sans-serif", N_("capture.bar.face.sans")),
+    ("serif", N_("capture.bar.face.serif")),
+    ("hershey", N_("capture.bar.face.hershey")),
+)
+
 SCALE_BAR_STYLES = (
     ("adaptive", N_("capture.files.scale_bar.style.adaptive")),
     ("plate", N_("capture.files.scale_bar.style.plate")),
@@ -302,24 +313,7 @@ class SettingsDialog(FramedDialog):
         form.addRow(_("capture.files.root.label"), root_row)
         form.addRow(_("capture.files.folder.label"), self.folder)
         form.addRow(_("capture.files.filename.label"), self.filename)
-        # Under the format row, because it only affects the JPEG. The raw
-        # never gets one whatever this says.
-        self.scale_bar = QtWidgets.QCheckBox(_("capture.files.scale_bar.label"))
-        self.scale_bar.setChecked(settings.scale_bar)
-        self.scale_bar.setToolTip(_("capture.files.scale_bar.tooltip"))
-
-        self.scale_bar_style = QtWidgets.QComboBox()
-        for value, key in SCALE_BAR_STYLES:
-            self.scale_bar_style.addItem(_(key), value)
-        at = self.scale_bar_style.findData(settings.scale_bar_style)
-        self.scale_bar_style.setCurrentIndex(at if at >= 0 else 0)
-        self.scale_bar_style.setEnabled(settings.scale_bar)
-        self.scale_bar.toggled.connect(self.scale_bar_style.setEnabled)
-
         form.addRow(_("capture.files.format.label"), self.image_format)
-        form.addRow("", self.scale_bar)
-        form.addRow(_("capture.files.scale_bar.style.label"),
-                    self.scale_bar_style)
         form.addRow("", self.keep_slices)
 
         self.preview = QtWidgets.QLabel()
@@ -384,9 +378,6 @@ class SettingsDialog(FramedDialog):
         self._settings.filename_pattern = self.filename.text()
         self._settings.keep_slices = self.keep_slices.isChecked()
         self._settings.image_format = str(self.image_format.currentData())
-        self._settings.scale_bar = self.scale_bar.isChecked()
-        self._settings.scale_bar_style = str(
-            self.scale_bar_style.currentData())
         self._settings.save()
         self.accept()
 
@@ -395,3 +386,137 @@ def _label(text: str) -> QtWidgets.QLabel:
     w = QtWidgets.QLabel(text)
     w.setProperty("role", "label")
     return w
+
+
+class ScaleBarDialog(QtWidgets.QDialog):
+    """How the scale bar is dressed, with the picture in front of you.
+
+    Its own window rather than a row in Files, because every choice here
+    is a taste judgement and a dropdown of names makes you guess and then
+    go and shoot something to find out. The preview is the feature.
+
+    Its source is the live frame the window is already holding, which
+    costs nothing and is what the operator is looking at. With no camera
+    it falls back to the newest photograph under the capture root, and
+    with neither it shows a plain grey card: the bar still has to be
+    judged, and a missing preview would leave the dialog useless in
+    exactly the situation somebody is most likely to be fiddling with
+    settings.
+    """
+
+    def __init__(self, settings, parent=None, sample=None) -> None:
+        super().__init__(parent)
+        self._settings = settings
+        self._sample = sample if sample is not None else _newest_capture(
+            settings.capture_root)
+        self.setWindowTitle(_("capture.bar.title"))
+
+        self.shot = QtWidgets.QLabel()
+        self.shot.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.shot.setMinimumHeight(210)
+
+        self.style = QtWidgets.QComboBox()
+        for value, key in SCALE_BAR_STYLES:
+            self.style.addItem(_(key), value)
+        at = self.style.findData(settings.scale_bar_style)
+        self.style.setCurrentIndex(at if at >= 0 else 0)
+
+        self.face = QtWidgets.QComboBox()
+        for value, key in SCALE_BAR_FACES:
+            self.face.addItem(_(key), value)
+        at = self.face.findData(settings.scale_bar_face)
+        self.face.setCurrentIndex(at if at >= 0 else 0)
+
+        self.plain = QtWidgets.QCheckBox(_("capture.bar.plain.label"))
+        self.plain.setChecked(settings.scale_bar_plain_units)
+        self.plain.setToolTip(_("capture.bar.plain.tooltip"))
+
+        for w in (self.style, self.face):
+            w.currentIndexChanged.connect(self._repaint)
+        self.plain.toggled.connect(self._repaint)
+
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(9)
+        form.addRow(_("capture.bar.style.label"), self.style)
+        form.addRow(_("capture.bar.face.label"), self.face)
+        form.addRow("", self.plain)
+
+        note = QtWidgets.QLabel(_("capture.bar.note"))
+        note.setProperty("role", "key")
+        note.setWordWrap(True)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Save
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 14)
+        lay.setSpacing(12)
+        lay.addWidget(self.shot)
+        lay.addLayout(form)
+        lay.addWidget(note)
+        lay.addWidget(buttons)
+        self._repaint()
+
+    def _repaint(self) -> None:
+        from ..process import scalebar
+
+        img = self._sample.copy()
+        # The preview is a crop of a capture, so a bar drawn at the
+        # capture's own scale would be the wrong size for it. Ask for the
+        # scale that makes the bar look here as it will look there.
+        scalebar.draw(img, self._sample_um(),
+                      style=str(self.style.currentData()),
+                      face=str(self.face.currentData()),
+                      plain_units=self.plain.isChecked())
+        h, w = img.shape[:2]
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).copy()
+        qi = QtGui.QImage(rgb.data, w, h, 3 * w,
+                          QtGui.QImage.Format.Format_RGB888).copy()
+        self.shot.setPixmap(QtGui.QPixmap.fromImage(qi))
+
+    def _sample_um(self) -> float:
+        """Micrometres per pixel for the preview, not for the capture.
+
+        Chosen so the bar lands at a believable fraction of the frame
+        whatever the sample is: this window is about how the bar looks,
+        and a real scale on an arbitrary crop would sometimes produce no
+        bar at all and teach the operator nothing.
+        """
+        return 200.0 / max(1, self._sample.shape[1]) * 3.0
+
+    def _save(self) -> None:
+        self._settings.scale_bar_style = str(self.style.currentData())
+        self._settings.scale_bar_face = str(self.face.currentData())
+        self._settings.scale_bar_plain_units = self.plain.isChecked()
+        self._settings.save()
+        self.accept()
+
+
+def _newest_capture(root) -> "np.ndarray":
+    """The most recent JPEG under `root`, or a grey card.
+
+    Newest by modification time over the JPEGs only: the raws cannot be
+    shown without developing them, which is a second of work for a
+    thumbnail. Bounded so a capture root with ten thousand files in it
+    does not stall the menu.
+    """
+    import numpy as np
+
+    try:
+        shots = sorted(Path(root).rglob("*.jpg"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)[:1]
+        if shots:
+            img = cv2.imread(str(shots[0]))
+            if img is not None:
+                h, w = img.shape[:2]
+                side = min(h, w) // 2
+                crop = img[h - side:h, w - side * 2:w] if w > side * 2 else img
+                return cv2.resize(crop, (470, int(470 * crop.shape[0]
+                                                  / crop.shape[1])),
+                                  interpolation=cv2.INTER_AREA)
+    except (OSError, ValueError):
+        pass
+    return np.full((210, 470, 3), 178, np.uint8)

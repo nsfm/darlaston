@@ -452,8 +452,11 @@ class StillCapture:
                 # total magnification, and `draw` refuses on anything it
                 # cannot stand behind.
                 if self._settings.scale_bar and meta is not None:
-                    scalebar.draw(image, meta.um_per_px,
-                                  style=self._settings.scale_bar_style)
+                    scalebar.draw(
+                        image, meta.um_per_px,
+                        style=self._settings.scale_bar_style,
+                        face=self._settings.scale_bar_face,
+                        plain_units=self._settings.scale_bar_plain_units)
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):
                     jpeg = None

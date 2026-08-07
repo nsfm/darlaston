@@ -103,6 +103,13 @@ class Settings:
     #: Which dressing. The measurement is identical in all of them; only
     #: the furniture differs, and furniture is taste.
     scale_bar_style: str = "adaptive"
+    #: The face the label is set in. Bundled first: IBM Plex was chosen
+    #: for this application because it was drawn for technical material,
+    #: and a measurement is the most technical thing on the picture.
+    scale_bar_face: str = "IBM Plex Mono"
+    #: Write "um" instead of the micro sign, for downstream tooling that
+    #: cannot take the character. Off, because the sign is correct.
+    scale_bar_plain_units: bool = False
     #: Framing guides over the live view, as a camera's viewfinder offers.
     #: Kept between sessions because it is a habit rather than a decision.
     #: Who draws the window's title bar and buttons: auto | ours | system.

@@ -104,3 +104,17 @@ msgstr "Make a plate…"
 
 msgid "menu.darkroom.arrange"
 msgstr "Arrange specimens…"
+
+#. A toggle and a window, the same shape as white balance above it. In
+#. Capture rather than in Files, because Files is about where photographs
+#. go and this is about what is on them.
+msgid "menu.capture.scale_bar"
+msgstr "Scale bar"
+
+msgid "menu.capture.scale_bar.tooltip"
+msgstr ""
+"Draw a labelled bar on the photograph.\n"
+"Never on the raw, and never unless the scale is known."
+
+msgid "menu.capture.scale_bar.style"
+msgstr "Scale bar…"
