@@ -208,7 +208,13 @@ class Settings:
     white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
-    keep_slices: bool = False        # Z-stack slices after the EDF is built
+    #: Keep the individual slices after a stack is merged. Default changed
+    #: from False to True when the setting was first made to do anything:
+    #: it had never been read, so every stack ever shot kept its slices,
+    #: and shipping the feature with the old default would have started
+    #: deleting photographs on upgrade for people who had never touched it.
+    #: A switch that destroys data defaults to not destroying data.
+    keep_slices: bool = True         # Z-stack slices after the EDF is built
     sequence_resets_daily: bool = True
     #: Written into every file as EXIF Artist and Copyright. Empty writes
     #: neither -- an empty copyright notice is worse than none, because it

@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 from ..capture.mosaic import MosaicSession, Tile
-from . import develop, dng
+from . import depthmap, develop, dng
 
 _log = logging.getLogger(__name__)
 
@@ -784,8 +784,10 @@ def composite_depth(session: MosaicSession,
         if path is None or not path.exists():
             maps.append(None)
         else:
-            d = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            maps.append(None if d is None else d.astype(np.float32) / 255.0)
+            # Already normalised to 0..1 by whatever width it was
+            # written at, so an 8-bit map from an older merge and a
+            # 16-bit one from a new merge can sit in the same mosaic.
+            maps.append(depthmap.read(path))
         boxes.append((pos[0] - tw / 2, pos[1] - th / 2, tw, th))
     have = [i for i, m in enumerate(maps) if m is not None]
     if len(have) < 2:

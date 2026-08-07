@@ -763,3 +763,120 @@ def test_reading_a_neutral_never_raises_on_a_file_that_has_none(tmp_path):
     junk.write_bytes(b"II*\x00" + b"\x00" * 64)
     assert dng.read_neutral(junk) is None
     assert dng.read_neutral(tmp_path / "absent.dng") is None
+
+
+def test_the_depth_map_is_no_longer_quantised_into_terraces(tmp_path):
+    """8 bits was right when depth was an integer slice index. The merge
+    interpolates now, so a 30-slice stack got 8.5 output levels per slice
+    -- visible banding in a smooth gradient, which is the terracing the
+    merge went to trouble to remove."""
+    from darlaston.process import depthmap
+
+    n = 30
+    h, w = 8, 2048
+    # A smooth ramp across the slice range, which is what a tilted subject
+    # produces and what 8 bits cannot carry. Wide enough that the input
+    # itself is not the thing limiting the count.
+    depth = np.linspace(0, n - 1, w, dtype=np.float32)[None, :].repeat(h, 0)
+
+    path = tmp_path / "depth.png"
+    assert depthmap.write(path, depth, n)
+    back = depthmap.read(path)
+    assert back is not None
+
+    # What the old code did, for comparison: the same ramp at 8 bits.
+    narrow = tmp_path / "old.png"
+    cv2.imwrite(str(narrow),
+                np.clip(depth / (n - 1) * 255, 0, 255).astype(np.uint8))
+    was = len(np.unique(depthmap.read(narrow)))
+    now = len(np.unique(back))
+    assert was <= 256, f"the premise: 8 bits gave {was} levels"
+    assert now > 4 * was, f"{now} levels against {was}"
+    # And it still means what it says: ends at the ends, middle in the
+    # middle, within a fraction of one slice.
+    assert back[0, 0] == pytest.approx(0.0, abs=1e-3)
+    assert back[0, -1] == pytest.approx(1.0, abs=1e-3)
+    assert back[0, w // 2] == pytest.approx(0.5, abs=1.0 / n)
+
+
+def test_an_8_bit_depth_map_from_an_older_merge_still_reads(tmp_path):
+    """Nate has several of these on disk. Normalising by 65535 would put
+    the whole stack in the first four hundredths of the range and read as
+    flat ground."""
+    from darlaston.process import depthmap
+
+    old = tmp_path / "depth.png"
+    cv2.imwrite(str(old), np.array([[0, 128, 255]], np.uint8))
+    back = depthmap.read(old)
+    assert back is not None
+    assert back.max() == pytest.approx(1.0), "read an old map as nearly black"
+    assert back[0, 1] == pytest.approx(128 / 255, abs=1e-3)
+
+
+def test_a_missing_depth_map_is_absence_rather_than_an_error(tmp_path):
+    """Every caller treats it as "this tile has no depth", and a mosaic
+    of forty tiles must not fail because one was never merged."""
+    from darlaston.process import depthmap
+
+    assert depthmap.read(tmp_path / "nothing.png") is None
+
+
+def test_slices_are_released_only_against_a_merge_that_really_landed(tmp_path):
+    """The setting has existed unread since it was added, so every stack
+    ever shot kept its slices. Making it work is also making it dangerous,
+    and the guard is that "verified" has to mean something.
+    """
+    session = StackSession(tmp_path, subject="s")
+    for i in range(4):
+        src = tmp_path / f"cap_{i}.dng"
+        src.write_bytes(b"x" * 30_000_000)
+        (tmp_path / f"cap_{i}.jpg").write_bytes(b"j" * 3_000_000)
+        session.adopt(src, metric=float(i))
+
+    merged = session.dir / "stacked.dng"
+
+    # Nothing to replace them with.
+    assert session.release_slices(merged) == (0, 0)
+
+    # A stub: a merge that wrote a header and then failed must never be
+    # grounds for deleting its inputs.
+    merged.write_bytes(b"II*\x00" + b"\x00" * 4000)
+    assert session.release_slices(merged) == (0, 0)
+    assert all((session.dir / s.filename).exists() for s in session.slices)
+
+    # A real one.
+    merged.write_bytes(b"x" * 40_000_000)
+    gone, freed = session.release_slices(merged)
+    assert gone == 8, "the sidecar JPEGs go with their raws"
+    assert freed > 100_000_000
+    assert not any((session.dir / s.filename).exists() for s in session.slices)
+
+    # The record of the session stays. What was shot, in what order, at
+    # what focus, costs nothing to keep and is the point of a manifest.
+    assert session.manifest_path.exists()
+    assert len(StackSession.load(session.dir).slices) == 4
+
+
+def test_an_incomplete_set_of_slices_is_left_alone(tmp_path):
+    """Somebody has been in the folder. Deleting the rest of a set that is
+    already broken is the wrong response to a surprise."""
+    session = StackSession(tmp_path, subject="s")
+    for i in range(3):
+        src = tmp_path / f"cap_{i}.dng"
+        src.write_bytes(b"x" * 1_000_000)
+        session.adopt(src, metric=float(i))
+    merged = session.dir / "stacked.dng"
+    merged.write_bytes(b"x" * 2_000_000)
+
+    (session.dir / session.slices[1].filename).unlink()
+    assert session.release_slices(merged) == (0, 0)
+    assert (session.dir / session.slices[0].filename).exists()
+
+
+def test_the_default_is_to_keep_photographs():
+    """It had never been read, so shipping it with the old default would
+    have started deleting slices on upgrade for people who had never
+    touched the setting."""
+    from darlaston.session.settings import Settings
+
+    assert Settings().keep_slices is True

@@ -1885,18 +1885,31 @@ class MainWindow(QtWidgets.QMainWindow):
         opts = dict(output=self.settings.stack_output,
                     smoothing=self.settings.stack_smoothing,
                     feather=self.settings.stack_feather)
+        keep = self.settings.keep_slices
 
         def work():
+            from ..capture.stack import StackSession
             from ..process.stack import merge
             try:
                 path, report = merge(
                     directory, **opts,
                     progress=lambda stage, i, n: self.bridge.stack_merge.emit(
                         ("progress", stage, i, n)))
-                self.bridge.stack_merge.emit(("done", (
-                    f"stacked {report['slices']} slices · "
-                    f"{report['depth_levels']} depth levels → {path.name}"),
-                    True))
+                note = (f"stacked {report['slices']} slices · "
+                        f"{report['depth_levels']} depth levels → {path.name}")
+                if not keep:
+                    # Only now, and only from here. `merge` is a function
+                    # over a folder and must not delete what it was given
+                    # -- a process that eats its own inputs cannot be run
+                    # twice, and re-merging with different smoothing is a
+                    # thing people do.
+                    session = StackSession.load(directory)
+                    gone, freed = session.release_slices(path)
+                    if gone:
+                        _log.info("released %d slice file(s), %.1f GB",
+                                  gone, freed / 1e9)
+                        note += f" · {freed / 1e9:.1f} GB released"
+                self.bridge.stack_merge.emit(("done", note, True))
             except Exception as exc:
                 self.bridge.stack_merge.emit(("done",
                                               f"merge failed -- {exc}", False))

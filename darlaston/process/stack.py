@@ -47,7 +47,7 @@ import cv2
 import numpy as np
 
 from ..capture.stack import StackSession
-from . import develop, dng
+from . import depthmap, develop, dng
 from .stitch import read_bayer_dng, read_metadata, read_white_level
 
 _log = logging.getLogger(__name__)
@@ -546,10 +546,8 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     # depth-consuming tool expects -- this is what a stereo pair or a
     # wigglegram will be synthesised from. depth_view.png is the same map
     # dressed for looking at, and stays because it earned it.
-    dmap = np.clip(depth / max(n - 1, 1) * 255, 0, 255).astype(np.uint8)
-    cv2.imwrite(str(session.dir / "depth.png"), dmap)
-    cv2.imwrite(str(session.dir / "depth_view.png"),
-                cv2.applyColorMap(dmap, cv2.COLORMAP_VIRIDIS))
+    depthmap.write(session.dir / "depth.png", depth, n)
+    cv2.imwrite(str(session.dir / "depth_view.png"), depthmap.view(depth, n))
 
     report = {
         "output": output,
