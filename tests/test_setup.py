@@ -530,3 +530,83 @@ def test_every_listed_format_is_a_plausible_shape():
         assert 1.2 <= w / h <= 1.8, f"{name} is neither 4:3 nor 3:2"
     widths = [w for _n, w, _h in SENSOR_FORMATS]
     assert widths == sorted(widths), "the list should run small to large"
+
+
+def test_the_camera_in_front_of_you_gets_a_dot_even_when_discovery_cannot_name_it():
+    """Nate's E3ISPM20000KPA sat there delivering a preview with no dot.
+
+    `look` keys a ToupTek by the SDK's transient device id while the
+    library keys it by serial, so the two never matched. The open camera
+    is attached by definition and its serial is the one thing we are
+    certain of, so being here and being openable became two questions.
+    """
+    from darlaston.ui.setup_ui import CameraDialog
+
+    dialog = CameraDialog.__new__(CameraDialog)
+    dialog._open_serial = "TP211207110153E2F7CE016F254B9C0"
+    dialog._attached = lambda: {"usb-0000:00:14.0-8:1.0": object()}
+
+    here = dialog._here()
+    assert "TP211207110153E2F7CE016F254B9C0" in here, "no dot on the open camera"
+    assert "usb-0000:00:14.0-8:1.0" in here, "lost the ones discovery found"
+
+    dialog._open_serial = None
+    assert dialog._here() == {"usb-0000:00:14.0-8:1.0"}
+
+
+def test_the_pitch_comes_from_the_largest_framing_not_the_first():
+    """`geometry` holds every framing a camera has been seen in. The
+    smaller ones are binned or cropped modes, and a pitch derived from one
+    of those is wrong by exactly the binning factor."""
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    editor = CameraEditor.__new__(CameraEditor)
+    editor._camera = CameraProfile(serial="x", name="c", geometry=[
+        {"width": 1280, "height": 1024},
+        {"width": 5440, "height": 3648},
+        {"width": 2736, "height": 1824},
+    ])
+    assert editor._resolution() == (5440, 3648)
+
+    editor._camera = CameraProfile(serial="x", name="c", geometry=[])
+    assert editor._resolution() == (0, 0)
+    editor._camera = CameraProfile(serial="x", name="c",
+                                   geometry=[{"nonsense": 1}])
+    assert editor._resolution() == (0, 0)
+
+
+def test_a_camera_that_is_plugged_in_is_not_asked_to_be_plugged_in():
+    """Nate set the sensor size and was told to plug the camera in. It was
+    plugged in and delivering a preview.
+
+    `geometry` is filled by the measuring routine, not by a camera being
+    present, so a camera nobody has measured had no resolution to divide
+    the sensor width by. The open camera's own resolution comes from the
+    SDK and has been there since it opened.
+    """
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    editor = CameraEditor.__new__(CameraEditor)
+    editor._camera = CameraProfile(serial="TP2112", name="E3ISPM20000KPA",
+                                   geometry=[])
+    assert editor._resolution() == (0, 0), "the premise"
+
+    editor._live = (5440, 3648)
+    assert editor._resolution() == (5440, 3648)
+
+
+def test_the_live_resolution_wins_over_a_measured_one():
+    """Both are the same camera, and the SDK's is what a capture will
+    actually come out at."""
+    from darlaston.session.model import CameraProfile
+    from darlaston.ui.setup_ui import CameraEditor
+
+    editor = CameraEditor.__new__(CameraEditor)
+    editor._camera = CameraProfile(serial="x", name="c",
+                                   geometry=[{"width": 1280, "height": 1024}])
+    editor._live = (5440, 3648)
+    assert editor._resolution() == (5440, 3648)
+    editor._live = (0, 0)
+    assert editor._resolution() == (1280, 1024), "lost the measured fallback"

@@ -2222,8 +2222,13 @@ class MainWindow(QtWidgets.QMainWindow):
         while it is sitting on the bench.
         """
         current = self.setup.camera.serial if self.setup else None
+        backend = self.session.backend
+        info = getattr(backend, "info", None) if backend else None
+        resolutions = getattr(info, "resolutions", None) or ()
+        full = max(((r.width, r.height) for r in resolutions),
+                   key=lambda wh: wh[0] * wh[1], default=(0, 0))
         dialog = CameraDialog(self.library, current, self,
-                              settings=self.settings)
+                              settings=self.settings, open_size=full)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,

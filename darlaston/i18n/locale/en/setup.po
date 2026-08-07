@@ -346,3 +346,44 @@ msgstr ""
 #. Shown beside a camera in the list that has been passed over.
 msgid "setup.cameras.ignored.tooltip"
 msgstr "passed over on startup"
+
+#. The sensor format picker, which replaces asking for a pixel pitch. A
+#. cheap camera ships with no specification sheet, but its sensor format
+#. is on the listing and is one of a small handful of standard names.
+msgid "setup.camera.sensor.label"
+msgstr "Sensor size"
+
+msgid "setup.camera.sensor.state.unknown"
+msgstr "Not known"
+
+msgid "setup.camera.sensor.tooltip"
+msgstr ""
+"Pick the format printed on the camera's listing or box.\n"
+"The pixel size below is worked out from it, so you do not have to.\n"
+"These names are older than digital sensors and are not measurements: a "
+"1 inch sensor is 13.2 mm across, not 25.4."
+
+#. {pitch} micrometres, {across} by {down} pixels.
+msgid "setup.camera.sensor.derived"
+msgstr "{across} × {down} sensor, so {pitch} µm per pixel."
+
+#. Shown under the derived pitch when the format's shape and the sensor's
+#. own do not agree. Not an error: it is a strong hint that the wrong one
+#. was picked, and a scale bar built on it would be confidently wrong.
+msgid "setup.camera.sensor.mismatch"
+msgstr ""
+"This format is a different shape from the sensor. Check the listing; one "
+"of the two is not this camera."
+
+msgid "setup.camera.sensor.unseen"
+msgstr ""
+"Plug this camera in once so its resolution is known, then the pixel size "
+"can be worked out."
+
+msgid "setup.camera.sensor.none"
+msgstr ""
+"Without this there is no scale bar and no real world measurements, only "
+"pixels."
+
+msgid "setup.camera.sensor.manual"
+msgstr "Pixel size set by hand."
