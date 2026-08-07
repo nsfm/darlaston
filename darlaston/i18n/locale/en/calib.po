@@ -82,7 +82,7 @@ msgstr "{banked}/{wanted}  ready to build"
 
 #. Said after banking without having moved the stage.
 msgid "calib.flat.warn.same_patch"
-msgstr "the view has not moved -- debris in this field will survive the median"
+msgstr "the view has not moved. Debris in this field will survive the median"
 
 #. White balance, which is derived rather than shot.
 msgid "calib.wb.label"

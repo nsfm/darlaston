@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..i18n import _
+from ..i18n import _, n_
 from ..live.profile import Meter
 
 INK = QtGui.QColor("#e8e6e3")
@@ -1238,7 +1238,7 @@ class SaveGauge(QtWidgets.QWidget):
         self._depth, self._fraction, self._pressed = depth, fraction, pressed
         self.setVisible(depth > 0)
         if depth:
-            self.setToolTip(_("gauge.saving.tooltip", count=depth))
+            self.setToolTip(n_("gauge.saving.tooltip", depth))
         self.update()
 
     def paintEvent(self, _event) -> None:
