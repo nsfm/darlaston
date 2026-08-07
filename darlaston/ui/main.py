@@ -947,19 +947,12 @@ class MainWindow(QtWidgets.QMainWindow):
         a guess -- mark it, because it keys every calibration lookup and
         goes into every file.
         """
-        confirmed = self.proposal.answered_explicitly
-        self.objective.set_uncertain(not confirmed)
-        # And into the files, not only the rail. The little "?" beside the
-        # objective was the only trace an unanswered proposal ever left,
-        # so a capture taken in that state recorded the stale belief as
-        # plain fact -- which is how a whole mosaic came to say 16x/0.4.
-        self.capture.objective_confirmed = confirmed
+        self.objective.set_uncertain(not self.proposal.answered_explicitly)
 
     def _accept_turret(self, payload) -> None:
         if self.setup is None:
             return
         self.objective.set_uncertain(False)
-        self.capture.objective_confirmed = True
         index, level = payload
         self._learn_rotation_sign(int(index))
         # A confirmation is the only trustworthy label we ever get, so it is

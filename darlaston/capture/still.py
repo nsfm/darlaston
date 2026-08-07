@@ -123,10 +123,6 @@ class StillCapture:
         #: polarised-light interference colours, fluorescence, stained
         #: sections -- where any estimate is a guess dressed as a measurement.
         self.white_balance = True
-        #: False while a detected turret rotation sits unanswered. The
-        #: belief is stale rather than wrong, and the file should say so
-        #: instead of stating it as a fact.
-        self.objective_confirmed = True
         #: Where the next capture sits in a larger piece of work: which
         #: stack, which slice of it, which tile and where that tile is.
         #: Set by the window before it pulls the trigger, because only the
@@ -364,7 +360,6 @@ class StillCapture:
                                   artist=self._settings.artist,
                                   copyright=self._settings.copyright,
                                   unique_id=_fingerprint(corrected),
-                                  objective_confirmed=self.objective_confirmed,
                                   context=context)
 
             if frames > 1:
