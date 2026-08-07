@@ -18,6 +18,20 @@ from . import theme
 from .framed import FramedDialog
 
 
+#: The style list, spelled out rather than built from `scalebar.STYLES`
+#: with an f-string. The catalogue check finds message ids by reading the
+#: source for literals, so a key assembled at runtime is a key it cannot
+#: see -- it reported all six of these as carried by nobody.
+SCALE_BAR_STYLES = (
+    ("adaptive", N_("capture.files.scale_bar.style.adaptive")),
+    ("plate", N_("capture.files.scale_bar.style.plate")),
+    ("scrim", N_("capture.files.scale_bar.style.scrim")),
+    ("ruler", N_("capture.files.scale_bar.style.ruler")),
+    ("caps", N_("capture.files.scale_bar.style.caps")),
+    ("shadow", N_("capture.files.scale_bar.style.shadow")),
+)
+
+
 class ShutterButton(QtWidgets.QPushButton):
     """Big, bottom right, and honest about what it is doing.
 
@@ -294,8 +308,18 @@ class SettingsDialog(FramedDialog):
         self.scale_bar.setChecked(settings.scale_bar)
         self.scale_bar.setToolTip(_("capture.files.scale_bar.tooltip"))
 
+        self.scale_bar_style = QtWidgets.QComboBox()
+        for value, key in SCALE_BAR_STYLES:
+            self.scale_bar_style.addItem(_(key), value)
+        at = self.scale_bar_style.findData(settings.scale_bar_style)
+        self.scale_bar_style.setCurrentIndex(at if at >= 0 else 0)
+        self.scale_bar_style.setEnabled(settings.scale_bar)
+        self.scale_bar.toggled.connect(self.scale_bar_style.setEnabled)
+
         form.addRow(_("capture.files.format.label"), self.image_format)
         form.addRow("", self.scale_bar)
+        form.addRow(_("capture.files.scale_bar.style.label"),
+                    self.scale_bar_style)
         form.addRow("", self.keep_slices)
 
         self.preview = QtWidgets.QLabel()
@@ -361,6 +385,8 @@ class SettingsDialog(FramedDialog):
         self._settings.keep_slices = self.keep_slices.isChecked()
         self._settings.image_format = str(self.image_format.currentData())
         self._settings.scale_bar = self.scale_bar.isChecked()
+        self._settings.scale_bar_style = str(
+            self.scale_bar_style.currentData())
         self._settings.save()
         self.accept()
 

@@ -100,6 +100,9 @@ class Settings:
     #: Never touches the raw, whatever this says -- the DNG stays what the
     #: sensor recorded and a bar can always be drawn later from um_per_px.
     scale_bar: bool = False
+    #: Which dressing. The measurement is identical in all of them; only
+    #: the furniture differs, and furniture is taste.
+    scale_bar_style: str = "adaptive"
     #: Framing guides over the live view, as a camera's viewfinder offers.
     #: Kept between sessions because it is a habit rather than a decision.
     #: Who draws the window's title bar and buttons: auto | ours | system.
