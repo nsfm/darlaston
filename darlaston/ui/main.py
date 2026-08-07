@@ -32,6 +32,7 @@ from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
 from .. import __version__, log
 from ..live.focus import Illumination, Region
+from ..live import balance
 from ..live.cell import Newest
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
@@ -171,6 +172,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merges: list[tuple[int, Path]] = []
         self._tile_merging: int | None = None
         self._last_preview = None
+        #: Where the balance is taken from. Not persisted: the box is
+        #: about this slide, while the gains are about this bench.
+        self._wb_rect = self.DEFAULT_WB_RECT
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
@@ -181,6 +185,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # After the widgets exist and before the first frame arrives, so the
         # preview is never briefly drawn at a quality nobody chose.
         self._apply_performance()
+        # The balance the operator left in force last time. Persisted on
+        # purpose: somebody looking at the same kind of specimen under the
+        # same lamp starts nearer where they want to be, and undoing it is
+        # one click. Applied before the first frame, so the preview is
+        # never briefly the wrong colour.
+        self._on_wb_toggled(bool(self.settings.white_balance_on))
         self._refresh_disk()
         self._disk_timer = QtCore.QTimer(self)
         self._disk_timer.timeout.connect(self._refresh_disk)
@@ -319,6 +329,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.view = LiveView()
         self.view.region_drawn.connect(self._on_custom_region)
+        self.view.balance_region_drawn.connect(self._on_balance_region)
         self.histogram = Histogram()
         self.focus = FocusGroup()
         self.focus.peaking_toggled.connect(self._on_peaking)
@@ -459,10 +470,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text("1.0×")
         self.gain.valueChanged.connect(self._on_gain)
 
-        exposure = _group("exposure", self.histogram)
+        exposure = _group(_("shell.group.exposure"), self.histogram)
         exposure.addWidget(self.exposure)
         exposure.addWidget(self.gain)
         col.addLayout(exposure)
+
+        # Beside exposure and gain, not under calibration. The flat's
+        # balance is a measurement keyed to the optical configuration and
+        # belongs on that panel; this one moves whenever the lamp is
+        # turned, which is company these two keep and that panel does not.
+        self.wb_on = QtWidgets.QPushButton(_("shell.wb.toggle.label"))
+        self.wb_on.setCheckable(True)
+        self.wb_on.setProperty("role", "seg")
+        self.wb_on.setToolTip(_("shell.wb.toggle.tooltip"))
+        self.wb_on.toggled.connect(self._on_wb_toggled)
+        self.wb_pick = QtWidgets.QPushButton(_("shell.wb.pick.label"))
+        self.wb_pick.setProperty("role", "seg")
+        self.wb_pick.setToolTip(_("shell.wb.pick.tooltip"))
+        self.wb_pick.clicked.connect(self._pick_white_balance)
+        self.wb_state = QtWidgets.QLabel()
+        self.wb_state.setProperty("role", "key")
+
+        wb_row = QtWidgets.QHBoxLayout()
+        wb_row.setSpacing(4)
+        wb_row.addWidget(self.wb_on)
+        wb_row.addWidget(self.wb_pick)
+        wb_row.addWidget(self.wb_state, 1)
+        col.addLayout(_group(_("shell.group.white_balance"), wb_row))
+
         col.addWidget(self.focus)
 
         # Where the metric looks. Field curvature puts the frame edges on a
@@ -493,7 +528,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # and the box it draws is labelled on the image itself, so the
         # line telling people a box could be dragged is one they will find
         # by dragging.
-        measure = _group("measure from", row)
+        measure = _group(_("shell.group.measure_from"), row)
         col.addLayout(measure)
 
         col.addStretch(1)
@@ -502,7 +537,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # particular shot is *of*, and they change more often than anything
         # above them. Everything higher up is instrument state.
         self.subject = SubjectField()
-        col.addLayout(_group("subject", self.subject, self.subject.toolTip()))
+        col.addLayout(_group(_("shell.group.subject"), self.subject, self.subject.toolTip()))
 
         self.objective = ObjectiveStepper()
         self.objective.changed.connect(self._on_objective_stepped)
@@ -523,7 +558,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for mode in BUILTIN_ILLUMINATION:
             self.illumination.addItem(mode.display, mode)
         self.illumination.currentIndexChanged.connect(self._on_illumination)
-        optics = _group("optics", self.objective)
+        optics = _group(_("shell.group.optics"), self.objective)
         optics.addWidget(self.optovar)
         optics.addWidget(self.illumination)
         col.addLayout(optics)
@@ -1053,6 +1088,66 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.set_focus_region(region)
         for r, b in self._region_buttons.items():
             b.setChecked(r is region)
+
+    #: Where a balance is taken from until somebody drags the box. The
+    #: middle fifth: big enough to average sensor noise away, small enough
+    #: to sit on a patch of mountant between subjects.
+    DEFAULT_WB_RECT = (0.40, 0.40, 0.20, 0.20)
+
+    def _on_wb_toggled(self, on: bool) -> None:
+        """Enable the working balance, or clear it.
+
+        Off is the reset, deliberately: two buttons rather than three, and
+        the way back to the sensor's own colour is the same control that
+        left it. Worth having -- an uncorrected preview says something
+        about the lamp that a corrected one hides.
+        """
+        self.settings.white_balance_on = on
+        if not on:
+            self.settings.white_balance_gains = list(balance.UNITY)
+        self.settings.save()
+        self.pipeline.set_white_balance(
+            self.settings.white_balance_gains if on else balance.UNITY)
+        self.view.arm_balance(on)
+        self.view.set_balance_rect(self._wb_rect if on else None)
+        self._refresh_wb()
+
+    def _on_balance_region(self, rect: tuple) -> None:
+        """A box dragged while the balance is armed."""
+        self._wb_rect = rect
+        self.view.set_balance_rect(rect)
+
+    def _pick_white_balance(self) -> None:
+        """Make what is in the box neutral, from where the preview is now.
+
+        Relative, not absolute: the frame this reads has already been
+        through whatever balance is in force, so the gains it produces
+        compose with the ones already applied. That is what makes a second
+        press on a patch that already looks right do nothing.
+        """
+        frame = self._last_preview
+        if frame is None:
+            return
+        if not self.wb_on.isChecked():
+            self.wb_on.setChecked(True)          # picking implies wanting it
+        h, w = frame.shape[:2]
+        x, y, rw, rh = self._wb_rect
+        patch = frame[int(y * h):int((y + rh) * h),
+                      int(x * w):int((x + rw) * w)]
+        gains = balance.combine(self.settings.white_balance_gains,
+                                balance.from_region(patch))
+        self.settings.white_balance_gains = list(gains)
+        self.settings.save()
+        self.pipeline.set_white_balance(gains)
+        self._refresh_wb()
+
+    def _refresh_wb(self) -> None:
+        on = bool(self.settings.white_balance_on)
+        self.wb_on.setChecked(on)
+        self.wb_pick.setEnabled(self.session.status.is_live)
+        r, _g, b = balance.sane(self.settings.white_balance_gains)
+        self.wb_state.setText(_("shell.wb.state", r=f"{r:.2f}", b=f"{b:.2f}")
+                              if on else _("shell.wb.state.off"))
 
     def _on_custom_region(self, rect: tuple) -> None:
         """A box dragged on the image wins over any preset."""

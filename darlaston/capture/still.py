@@ -19,6 +19,7 @@ from typing import Callable
 import numpy as np
 
 from ..calib import frames as F
+from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
 from ..process import develop, dng
 from ..process.metadata import from_setup
@@ -398,6 +399,21 @@ class StillCapture:
                 # DNG wants the reciprocal of the neutralising gains.
                 neutral = (1.0 / max(gr, 1e-6), 1.0, 1.0 / max(gb, 1e-6))
                 applied.append("wb")
+
+        # A balance picked off the screen beats one measured from a flat,
+        # and has to. Colour temperature moves every time the lamp is
+        # turned, and nobody is going to reshoot four blank fields because
+        # they dimmed a halogen -- so the measured one is often the older
+        # statement about a light that has since changed. The picked one is
+        # also the more specific thing the operator said, which is the same
+        # precedence a remembered camera choice has over the ignore list.
+        #
+        # Recorded distinctly, because a file should say which of the two
+        # it carries. "wb" and "wb(picked)" are not the same provenance.
+        if getattr(self._settings, "white_balance_on", False):
+            gr, _gg, gb = balance.sane(self._settings.white_balance_gains)
+            neutral = (1.0 / max(gr, 1e-6), 1.0, 1.0 / max(gb, 1e-6))
+            applied = [a for a in applied if a != "wb"] + ["wb(picked)"]
 
         if dark is None and flat is None and defects is None:
             return raw, applied, neutral, black

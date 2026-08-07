@@ -152,3 +152,50 @@ msgstr "rendering a mosaic"
 
 msgid "shell.quit.job.timelapse"
 msgstr "running a timelapse"
+
+#. The white balance controls, in the rail beside exposure and gain --
+#. not under calibration, because this is something adjusted while looking
+#. down the eyepiece rather than a product measured once per configuration.
+#. The headings above each group of controls in the rail. Shown upper
+#. case by the widget, so they are written here as they read.
+msgid "shell.group.exposure"
+msgstr "exposure"
+
+msgid "shell.group.white_balance"
+msgstr "white balance"
+
+msgid "shell.group.measure_from"
+msgstr "measure from"
+
+msgid "shell.group.subject"
+msgstr "subject"
+
+msgid "shell.group.optics"
+msgstr "optics"
+
+msgid "shell.wb.toggle.label"
+msgstr "on"
+
+msgid "shell.wb.toggle.tooltip"
+msgstr ""
+"Correct the preview, and every capture, from a patch you choose.\n"
+"Turning it off clears the balance and puts the sensor's own colour\n"
+"back -- which is worth seeing while setting the lamp."
+
+msgid "shell.wb.pick.label"
+msgstr "pick"
+
+msgid "shell.wb.pick.tooltip"
+msgstr ""
+"Make the green box neutral. Drag the box over something that ought to\n"
+"be grey -- empty mountant is ideal -- then press.\n"
+"\n"
+"Each press works from what is on screen now, so pressing again on a\n"
+"patch that already looks right does nothing, and you can nudge it."
+
+#. Shown beside the controls once a balance is in force.
+msgid "shell.wb.state"
+msgstr "R {r}  B {b}"
+
+msgid "shell.wb.state.off"
+msgstr "sensor as it is"

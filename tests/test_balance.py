@@ -115,3 +115,148 @@ def test_the_pipeline_balances_the_preview_and_not_the_histogram():
     assert max(channels) - min(channels) <= 2.0, f"preview not balanced: {channels}"
     assert np.array_equal(done.histogram, before), \
         "the balance reached the instruments"
+
+
+# ---- and it has to reach the files, not just the screen ------------------
+
+def _shoot(tmp_path, **settings):
+    """One real capture through the real path, returning what it applied."""
+    import threading
+    import types
+
+    from darlaston.camera.mock import MockCamera
+    from darlaston.capture.still import StillCapture
+    from darlaston.session.settings import Settings
+
+    cam = MockCamera(fps=30.0)
+    cam.open()
+    done, out = threading.Event(), []
+    cap = StillCapture(types.SimpleNamespace(backend=cam),
+                       Settings(capture_root=str(tmp_path), **settings),
+                       on_result=lambda r: (out.append(r), done.set()))
+    assert cap.trigger(None, subject="t")
+    assert done.wait(30)
+    cam.close()
+    return out[-1]
+
+
+def test_a_picked_balance_reaches_the_capture(tmp_path):
+    """Colour temperature moves every time the lamp is turned, and nobody
+    is going to reshoot four blank fields because they dimmed a halogen.
+    A balance picked off the screen has to reach the files."""
+    plain = _shoot(tmp_path / "off")
+    assert plain.ok, plain.message
+    assert "wb(picked)" not in plain.applied
+
+    picked = _shoot(tmp_path / "on", white_balance_on=True,
+                    white_balance_gains=[1.4, 1.0, 0.7])
+    assert picked.ok, picked.message
+    assert "wb(picked)" in picked.applied, (
+        f"the picked balance never reached the file: {picked.applied}")
+
+
+def test_a_picked_balance_works_with_no_calibration_at_all(tmp_path):
+    """The common case for somebody who has just changed the lamp: no dark,
+    no flat, nothing in the store. It must not need one."""
+    got = _shoot(tmp_path, white_balance_on=True,
+                 white_balance_gains=[1.4, 1.0, 0.7])
+    assert got.ok, got.message
+    assert got.applied == ("wb(picked)",), got.applied
+
+
+def test_the_file_says_which_balance_it_carries(tmp_path):
+    """"wb" and "wb(picked)" are different provenance, and a file that
+    cannot tell them apart cannot be trusted about either."""
+    got = _shoot(tmp_path, white_balance_on=True,
+                 white_balance_gains=[1.4, 1.0, 0.7])
+    assert "wb" not in got.applied, (
+        f"claimed a measured balance it does not have: {got.applied}")
+
+
+# ---- the controls --------------------------------------------------------
+
+def test_the_two_boxes_mean_different_things(qapp):
+    """Focus assist is aimed at the subject; a balance has to come off
+    something that ought to be neutral, which is by definition not the
+    subject. One box could not serve both."""
+    from darlaston.ui.widgets import LiveView
+
+    view = LiveView()
+    focus, wb = [], []
+    view.region_drawn.connect(focus.append)
+    view.balance_region_drawn.connect(wb.append)
+
+    view.set_frame(np.zeros((240, 320, 3), np.uint8), None)
+    view.resize(320, 240)
+
+    def drag():
+        from PySide6 import QtCore, QtGui
+        press = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonPress, QtCore.QPointF(40, 40),
+            QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier)
+        release = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonRelease, QtCore.QPointF(160, 140),
+            QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier)
+        view.mousePressEvent(press)
+        view.mouseReleaseEvent(release)
+
+    drag()
+    assert len(focus) == 1 and not wb, "unarmed, a drag must set focus"
+    view.arm_balance(True)
+    drag()
+    assert len(focus) == 1 and len(wb) == 1, "armed, a drag must set balance"
+
+
+def test_the_toggle_is_the_reset(qapp, tmp_path, monkeypatch):
+    """Two buttons rather than three: the way back to the sensor's own
+    colour is the same control that left it."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        win._last_preview = np.dstack([
+            np.full((240, 320), 200, np.uint8),
+            np.full((240, 320), 120, np.uint8),
+            np.full((240, 320), 90, np.uint8)])
+        win._pick_white_balance()
+        assert win.wb_on.isChecked(), "picking must imply wanting it"
+        assert win.pipeline.white_balance != B.UNITY
+        assert win.settings.white_balance_on
+
+        win._on_wb_toggled(False)
+        assert win.pipeline.white_balance == B.UNITY, "off did not reset"
+        assert tuple(win.settings.white_balance_gains) == B.UNITY
+        assert not win.settings.white_balance_on
+    finally:
+        win.shutdown()
+
+
+def test_a_picked_balance_survives_a_restart(qapp, tmp_path, monkeypatch):
+    """Somebody looking at the same kind of specimen under the same lamp
+    should start nearer where they want to be."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    first = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        first._last_preview = np.dstack([
+            np.full((240, 320), 200, np.uint8),
+            np.full((240, 320), 120, np.uint8),
+            np.full((240, 320), 90, np.uint8)])
+        first._pick_white_balance()
+        kept = first.pipeline.white_balance
+    finally:
+        first.shutdown()
+
+    again = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        assert again.wb_on.isChecked(), "came back with the balance off"
+        assert again.pipeline.white_balance == pytest.approx(kept), \
+            "the preview came back a different colour than it was left"
+    finally:
+        again.shutdown()

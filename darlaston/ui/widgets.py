@@ -31,12 +31,19 @@ class LiveView(QtWidgets.QWidget):
 
     #: Normalised (x, y, w, h) the operator dragged out on the image.
     region_drawn = QtCore.Signal(tuple)
+    #: A box dragged while the white balance is armed. Separate from
+    #: `region_drawn` because they mean opposite things: focus assist is
+    #: aimed at the subject, and a balance has to be taken off something
+    #: that ought to be neutral -- which is by definition not the subject.
+    balance_region_drawn = QtCore.Signal(tuple)
 
     def __init__(self) -> None:
         super().__init__()
         self._image: QtGui.QImage | None = None
         self._peaking: QtGui.QImage | None = None
         self._focus_rect: tuple[float, float, float, float] | None = None
+        self._balance_rect: tuple[float, float, float, float] | None = None
+        self._balancing = False
         self._remaining: QtGui.QImage | None = None
         self._drag_from: QtCore.QPointF | None = None
         self._drag_to: QtCore.QPointF | None = None
@@ -254,6 +261,16 @@ class LiveView(QtWidgets.QWidget):
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect
 
+    def set_balance_rect(self, rect) -> None:
+        """Where the white balance is taken from, or None to hide it."""
+        self._balance_rect = rect
+        self.update()
+
+    def arm_balance(self, on: bool) -> None:
+        """Send the next dragged box to the balance rather than to focus."""
+        self._balancing = bool(on)
+        self.update()
+
     def set_remaining(self, mask, rect) -> None:
         """Regions that still need to go through focus.
 
@@ -322,6 +339,19 @@ class LiveView(QtWidgets.QWidget):
                 p.drawRect(box)
                 self._label_box(p, box, "focus assist")
 
+            # Drawn second, so it sits above the focus box where the two
+            # overlap. A different colour and a solid line: they are not the
+            # same kind of thing and must not read as one.
+            if self._balance_rect is not None:
+                x, y, w, h = self._balance_rect
+                box = QtCore.QRectF(target.x() + x * target.width(),
+                                    target.y() + y * target.height(),
+                                    w * target.width(), h * target.height())
+                p.setPen(QtGui.QPen(GOOD, 1))
+                p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                p.drawRect(box)
+                self._label_box(p, box, "white balance")
+
             if self._drag_from is not None and self._drag_to is not None:
                 p.setPen(QtGui.QPen(BRASS, 1))
                 p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
@@ -368,7 +398,10 @@ class LiveView(QtWidgets.QWidget):
         nx, ny = max(0.0, min(1.0, nx)), max(0.0, min(1.0, ny))
         nw, nh = min(nw, 1.0 - nx), min(nh, 1.0 - ny)
         if nw > 0.02 and nh > 0.02:
-            self.region_drawn.emit((nx, ny, nw, nh))
+            if self._balancing:
+                self.balance_region_drawn.emit((nx, ny, nw, nh))
+            else:
+                self.region_drawn.emit((nx, ny, nw, nh))
         self.update()
 
     def _fit(self, size: QtCore.QSize) -> QtCore.QRect:
