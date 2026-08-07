@@ -78,6 +78,16 @@ class LatestFrame(Generic[T]):
             stale.release()
 
     @property
+    def closed(self) -> bool:
+        """Whether `close` has been called.
+
+        Worth asking, because a closed cell answers `take` immediately
+        rather than waiting out the timeout -- so a consumer looping on
+        one spins at full speed instead of idling.
+        """
+        return self._closed
+
+    @property
     def stats(self) -> tuple[int, int]:
         """(delivered, dropped). Dropped frames are health, not failure --
         a live path that never drops is a live path that is about to lag."""

@@ -334,6 +334,15 @@ class LivePipeline:
     def start(self) -> None:
         if self._thread is not None:
             return
+        # A fresh cell if the last one was closed. `stop` closes it, and a
+        # closed cell hands back None *immediately* rather than waiting out
+        # the timeout -- so restarting on the old one left the loop
+        # spinning at full speed, pegging a core and delivering nothing,
+        # with no error anywhere to say so. Nothing restarts a pipeline
+        # today; this is the kind of thing that becomes reachable later and
+        # is then very hard to see.
+        if self._cell.closed:
+            self._cell = LatestFrame()
         self._running.set()
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="live-analysis")

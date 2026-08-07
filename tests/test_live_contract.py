@@ -929,3 +929,29 @@ def test_every_painted_widget_survives_its_first_paint(qapp):
                              QtGui.QImage.Format.Format_RGB888)
         # render() propagates what paintEvent raises; grab() does not.
         widget.render(image)
+
+
+def test_a_restarted_pipeline_delivers_frames_instead_of_spinning():
+    """`stop` closes the frame cell permanently, and a closed cell answers
+    `take` immediately rather than waiting out the timeout -- so restarting
+    on the old one left the loop at full speed, pegging a core and
+    delivering nothing, with nothing anywhere to say so."""
+    from darlaston.camera.mock import MockCamera
+    from darlaston.live.pipeline import LivePipeline
+
+    received = []
+    pipeline = LivePipeline(received.append)
+    pipeline.start()
+    pipeline.stop()
+    assert pipeline._cell.closed, "the premise: stop closes the cell"
+
+    pipeline.start()
+    assert not pipeline._cell.closed, "restarted onto a closed cell"
+    cam = MockCamera(fps=30.0)
+    cam.open()
+    cam.start_stream(pipeline.submit)
+    time.sleep(0.5)
+    cam.stop_stream()
+    pipeline.stop()
+    assert received, "a restarted pipeline delivered nothing"
+    assert cam._pool.available == cam._pool.count, "buffers leaked"
