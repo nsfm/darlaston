@@ -142,3 +142,28 @@ msgstr ""
 "Adds a labelled bar to the bottom-right of the photograph.\n"
 "Never drawn on the raw, and never drawn at all unless the objective is "
 "known and confirmed -- a wrong scale bar is worse than none."
+
+#. The scale bar's dressing. The measurement is identical in every one of
+#. them; only the furniture differs.
+msgid "capture.files.scale_bar.style.label"
+msgstr "Style"
+
+#. Reads the corner and picks ink that contrasts with it. Dark on
+#. brightfield, light on darkfield, and nothing else added to the picture.
+msgid "capture.files.scale_bar.style.adaptive"
+msgstr "Adaptive -- ink only, no background"
+
+msgid "capture.files.scale_bar.style.plate"
+msgstr "Plate -- white tablet, journal figure"
+
+msgid "capture.files.scale_bar.style.scrim"
+msgstr "Scrim -- translucent dark panel"
+
+msgid "capture.files.scale_bar.style.ruler"
+msgstr "Ruler -- alternating segments"
+
+msgid "capture.files.scale_bar.style.caps"
+msgstr "Calipers -- dimension line with end ticks"
+
+msgid "capture.files.scale_bar.style.shadow"
+msgstr "Shadow -- white with a soft drop shadow"

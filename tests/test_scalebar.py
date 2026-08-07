@@ -72,15 +72,32 @@ def test_an_unconfirmed_objective_gets_no_bar():
 
 # ---- drawing ---------------------------------------------------------------
 
-def test_the_bar_lands_in_the_bottom_right_and_nowhere_else():
-    img = _frame(1200, 800)
-    assert scalebar.draw(img, 1.0)
+@pytest.mark.parametrize("style", scalebar.STYLES)
+def test_every_style_lands_in_the_bottom_right_and_nowhere_else(style):
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, style=style), style
     h, w = img.shape[:2]
-    # The top-left three quarters of the picture are untouched.
+    # The top-left three quarters of the picture are untouched, whatever
+    # furniture the style brings with it.
     assert (img[:h // 2, :w // 2] == 128).all(), "drew over the subject"
     corner = img[h // 2:, w // 2:]
-    assert (corner == 255).any(), "no plate"
-    assert (corner < 60).any(), "no ink"
+    assert not (corner == 128).all(), "drew nothing"
+
+
+def test_the_adaptive_style_flips_its_ink_to_suit_the_field():
+    """Dark ink on brightfield, light on darkfield, and the decision is
+    measured off the pixels the bar is about to cover rather than assumed
+    from the illumination setting -- which is right about the lamp and
+    silent about the subject."""
+    def ink_of(background):
+        img = np.full((900, 1400, 3), background, np.uint8)
+        assert scalebar.draw(img, 1.0, style="adaptive")
+        corner = img[450:, 700:]
+        moved = corner[corner[..., 0] != background]
+        return float(moved.mean())
+
+    assert ink_of(230) < 80, "drew light ink on a bright field"
+    assert ink_of(20) > 180, "drew dark ink on a dark field"
 
 
 def test_it_scales_with_the_frame_rather_than_the_pixel():
@@ -100,11 +117,20 @@ def test_it_scales_with_the_frame_rather_than_the_pixel():
     assert 3 < ratio < 30, f"thickness ratio {ratio:.1f} for a 9.7x frame"
 
 
-def test_a_bar_that_would_not_fit_is_not_drawn_clipped():
+@pytest.mark.parametrize("style", scalebar.STYLES)
+def test_a_bar_that_would_not_fit_is_not_drawn_clipped(style):
     tiny = _frame(60, 40)
     before = tiny.copy()
-    scalebar.draw(tiny, 1.0)
-    assert np.array_equal(tiny, before), "drew a clipped bar"
+    scalebar.draw(tiny, 1.0, style=style)
+    assert np.array_equal(tiny, before), f"{style} drew a clipped bar"
+
+
+def test_an_unknown_style_falls_back_rather_than_failing():
+    """A settings file from a newer version, or a hand-edited one. The
+    measurement is the point and the dressing is not worth a crash."""
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, style="art-deco")
+    assert not (img[550:, 800:] == 128).all()
 
 
 def test_the_label_reads_in_whichever_unit_is_sensible():

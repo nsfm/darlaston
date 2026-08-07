@@ -459,6 +459,7 @@ class StillCapture:
                 # objective nobody confirmed.
                 if self._settings.scale_bar and meta is not None:
                     scalebar.draw(image, meta.um_per_px,
+                                  style=self._settings.scale_bar_style,
                                   confirmed=self.objective_confirmed)
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):
