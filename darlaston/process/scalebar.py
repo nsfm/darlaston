@@ -143,6 +143,31 @@ MIN_FRACTION = 1 / 12.0
 MIN_WIDTH = 240
 MIN_HEIGHT = 160
 
+#: Which corner. Bottom right by default, which is where a photographer
+#: expects a caption and where the subject is least often placed.
+CORNERS = ("br", "bl", "tr", "tl")
+DEFAULT_CORNER = "br"
+
+#: How large the furniture is, as a multiplier on the frame-derived unit.
+#: Three steps rather than a percentage: everything in this dialog is
+#: taste, and a number with no right answer only invites fiddling.
+SIZES = {"small": 0.72, "medium": 1.0, "large": 1.45}
+DEFAULT_SIZE = "medium"
+
+#: Which side of the rule the label sits on. "auto" puts it on the inside:
+#: below the rule in a top corner, above it in a bottom one, so the type
+#: is always the part further from the frame edge. Taste, so it is a
+#: choice, with the sensible answer as the default rather than the only
+#: answer.
+LABELS = ("auto", "above", "below")
+DEFAULT_LABEL = "auto"
+
+
+def _org(x, y_rule, clearance, gap, th, below):
+    """Where the label's bottom-left corner goes."""
+    return (x, (y_rule + clearance + gap + th) if below
+            else (y_rule - clearance - gap))
+
 _INK = (28, 28, 30)
 _PAPER = (255, 255, 255)
 
@@ -191,12 +216,24 @@ _INK_DARK = (16, 16, 18)
 _INK_LIGHT = (250, 250, 250)
 
 
-def _geometry(image, um_per_px, margin):
+def _geometry(image, um_per_px, margin, corner=DEFAULT_CORNER,
+              size=DEFAULT_SIZE, label_at=DEFAULT_LABEL):
     """Everything the styles share: where the bar goes and how big.
 
     `unit` scales the furniture off the frame, so a bar looks the same on
     a 20 MP capture and on a plate cell a fifth the size. A fixed pixel
-    thickness is a hairline on one and a slab on the other.
+    thickness is a hairline on one and a slab on the other. `size` then
+    scales that again, by taste.
+
+    `size` deliberately does not change the bar's *length*. The length
+    comes from the 1-2-5 ladder, so letting size move it would mean
+    "Large" quietly reporting 500 um where "Medium" reported 200 -- a
+    presentation control silently changing the measurement. Large means a
+    bigger label on the same honest number.
+
+    Which side of the rule the label sits on is `label_at`, and "auto"
+    puts it on the inside: below in a top corner, above in a bottom one,
+    so the type is always the part further from the edge of the frame.
     """
     h, w = image.shape[:2]
     # Below this it is a thumbnail rather than a photograph, and every
@@ -210,13 +247,32 @@ def _geometry(image, um_per_px, margin):
     if picked is None:
         return None
     micrometres, length = picked
-    unit = max(0.6, w / 900.0)
+    unit = max(0.6, w / 900.0) * SIZES.get(size, SIZES[DEFAULT_SIZE])
     inset = int(round(margin * w))
-    x1, y1 = w - inset, h - inset
-    x0 = x1 - length
-    if x0 < inset // 2 or y1 - int(40 * unit) < 0:
+
+    # Room for the label, which sits above the rule in every corner. At
+    # the top that room has to come out of the inset rather than out of
+    # the picture, or the type runs off the edge.
+    headroom = int(round(46 * unit))
+    left = corner in ("bl", "tl")
+    top = corner in ("tl", "tr")
+    below = top if label_at == "auto" else (label_at == "below")
+
+    x0 = inset if left else w - inset - length
+    x1 = x0 + length
+    # The rule goes at the inset, and whichever side the label is on gets
+    # the headroom. At the top with the label above, that room has to come
+    # out of the inset or the type runs off the edge.
+    if top:
+        y1 = inset if below else inset + headroom
+    else:
+        y1 = h - inset - headroom if below else h - inset
+
+    if (x0 < 0 or x1 > w
+            or y1 - (0 if below else headroom) < 0
+            or y1 + (headroom if below else 0) > h):
         return None                 # it does not fit; a clipped bar is worse
-    return micrometres, length, unit, x0, x1, y1
+    return micrometres, length, unit, x0, x1, y1, below
 
 
 def _shadow(image, mark, spread, strength=0.6):
@@ -236,7 +292,9 @@ def _shadow(image, mark, spread, strength=0.6):
 
 def draw(image: np.ndarray, um_per_px: float | None, *,
          style: str = DEFAULT_STYLE, face: str = DEFAULT_FACE,
-         plain_units: bool = False, margin: float = 0.035) -> bool:
+         corner: str = DEFAULT_CORNER, size: str = DEFAULT_SIZE,
+         label_at: str = DEFAULT_LABEL, plain_units: bool = False,
+         margin: float = 0.035) -> bool:
     """Draw into the bottom-right of `image`, in place. Did it draw?
 
     This used to refuse when the turret belief was unconfirmed, on the
@@ -251,7 +309,10 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
         return False
     if image is None or image.ndim != 3:
         return False
-    geom = _geometry(image, um_per_px, margin)
+    geom = _geometry(image, um_per_px, margin,
+                     corner if corner in CORNERS else DEFAULT_CORNER,
+                     size if size in SIZES else DEFAULT_SIZE,
+                     label_at if label_at in LABELS else DEFAULT_LABEL)
     if geom is None:
         return False
     fn = _STYLES.get(style) or _STYLES[DEFAULT_STYLE]
@@ -261,7 +322,7 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
 
 # ---- the styles ------------------------------------------------------------
 
-def _adaptive(img, m, length, unit, x0, x1, y1, face, plain):
+def _adaptive(img, m, length, unit, x0, x1, y1, below, face, plain):
     """No furniture at all: read the corner and pick ink that contrasts.
 
     The default, because it is the only one that adds nothing to the
@@ -274,62 +335,66 @@ def _adaptive(img, m, length, unit, x0, x1, y1, face, plain):
     text = label(m, plain)
     px, wt = int(round(0.85 * 30 * unit)), max(1, int(round(1.6 * unit)))
     tw, th = measure(text, face, px, wt)
-    base = 0
-    org = (x0 + (length - tw) // 2, y1 - thick - int(10 * unit))
-    region = img[max(0, org[1] - th):y1 + 2, x0:x1]
+    org = _org(x0 + (length - tw) // 2, y1, thick, int(10 * unit), th, below)
+    lo, hi = sorted((org[1] - th, y1 + 2))
+    region = img[max(0, lo):hi, x0:x1]
     ink = _INK_DARK if float(region.mean()) > 120 else _INK_LIGHT
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), ink, -1)
     stamp(img, text, face, px, org, ink, wt)
 
 
-def _plate(img, m, length, unit, x0, x1, y1, face, plain):
+def _plate(img, m, length, unit, x0, x1, y1, below, face, plain):
     """The journal figure: white tablet, black rule. What we shipped."""
     thick = max(2, int(round(3 * unit)))
     text = label(m, plain)
     px, wt = int(round(0.72 * 30 * unit)), max(1, int(round(1.2 * unit)))
     tw, th = measure(text, face, px, wt)
-    base = 0
     pad = int(round(11 * unit))
-    px0, py0 = x0 - pad, y1 - th - base - pad * 2
-    px1, py1 = x1 + pad, y1 + pad
+    ty = _org(0, y1, thick, pad, th, below)[1]
+    px0 = x0 - pad
+    px1 = x1 + pad
+    py0 = min(y1 - thick, ty - th) - pad
+    py1 = max(y1, ty) + pad
     h, w = img.shape[:2]
     if px0 < 0 or py0 < 0 or px1 > w or py1 > h:
         return
     cv2.rectangle(img, (px0, py0), (px1, py1), (255, 255, 255), -1)
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), _INK_DARK, -1)
-    stamp(img, text, face, px, (x0 + (length - tw) // 2, y1 - thick - pad),
+    stamp(img, text, face, px,
+          _org(x0 + (length - tw) // 2, y1, thick, pad, th, below),
           _INK_DARK, wt)
 
 
-def _scrim(img, m, length, unit, x0, x1, y1, face, plain):
+def _scrim(img, m, length, unit, x0, x1, y1, below, face, plain):
     """A translucent dark tablet. Legible over anything, at the cost of
     covering a little of the picture."""
     thick = max(2, int(round(3.5 * unit)))
     text = label(m, plain)
     px, wt = int(round(0.78 * 30 * unit)), max(1, int(round(1.4 * unit)))
     tw, th = measure(text, face, px, wt)
-    base = 0
     pad = int(round(13 * unit))
     h, w = img.shape[:2]
-    bx0, by0 = max(0, x0 - pad), max(0, y1 - thick - th - base - pad)
-    bx1, by1 = min(w, x1 + pad), min(h, y1 + pad)
+    ty = _org(0, y1, thick, int(9 * unit), th, below)[1]
+    bx0 = max(0, x0 - pad)
+    bx1 = min(w, x1 + pad)
+    by0 = max(0, min(y1 - thick, ty - th) - pad)
+    by1 = min(h, max(y1, ty) + pad)
     patch = img[by0:by1, bx0:bx1].astype(np.float32)
     img[by0:by1, bx0:bx1] = (patch * 0.38 + 18 * 0.62).astype(np.uint8)
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), _INK_LIGHT, -1)
     stamp(img, text, face, px,
-          (x0 + (length - tw) // 2, y1 - thick - int(9 * unit)),
+          _org(x0 + (length - tw) // 2, y1, thick, int(9 * unit), th, below),
           _INK_LIGHT, wt)
 
 
-def _ruler(img, m, length, unit, x0, x1, y1, face, plain):
+def _ruler(img, m, length, unit, x0, x1, y1, below, face, plain):
     """The cartographer's bar: alternating segments, so the eye can halve
     and quarter the length without a ruler."""
     thick = max(3, int(round(5.5 * unit)))
     text = label(m, plain)
     px, wt = int(round(0.72 * 30 * unit)), max(1, int(round(1.3 * unit)))
     tw, th = measure(text, face, px, wt)
-    base = 0
-    org = (x1 - tw, y1 - thick - int(9 * unit))
+    org = _org(x1 - tw, y1, thick, int(9 * unit), th, below)
 
     def mark(canvas, col):
         cv2.rectangle(canvas, (x0, y1 - thick), (x1, y1), col, -1)
@@ -346,7 +411,7 @@ def _ruler(img, m, length, unit, x0, x1, y1, face, plain):
     stamp(img, text, face, px, org, _INK_LIGHT, wt)
 
 
-def _caps(img, m, length, unit, x0, x1, y1, face, plain):
+def _caps(img, m, length, unit, x0, x1, y1, below, face, plain):
     """A draughtsman's dimension line: hairline rule with end serifs. The
     lightest touch here, and the one that reads as a measurement rather
     than a label."""
@@ -355,8 +420,7 @@ def _caps(img, m, length, unit, x0, x1, y1, face, plain):
     text = label(m, plain)
     px, wt = int(round(0.78 * 30 * unit)), max(1, int(round(1.4 * unit)))
     tw, th = measure(text, face, px, wt)
-    base = 0
-    org = (x0 + (length - tw) // 2, y1 - cap - int(8 * unit))
+    org = _org(x0 + (length - tw) // 2, y1, cap, int(8 * unit), th, below)
 
     def mark(canvas, col):
         cv2.line(canvas, (x0, y1), (x1, y1), col, line, cv2.LINE_AA)
@@ -368,15 +432,14 @@ def _caps(img, m, length, unit, x0, x1, y1, face, plain):
     mark(img, _INK_LIGHT)
 
 
-def _shadow_style(img, m, length, unit, x0, x1, y1, face, plain):
+def _shadow_style(img, m, length, unit, x0, x1, y1, below, face, plain):
     """White rule and white type over a soft shadow, no box. Best on a
     dark or busy field, where white with a shadow beats any tablet."""
     thick = max(2, int(round(4 * unit)))
     text = label(m, plain)
     px, wt = int(round(0.85 * 30 * unit)), max(1, int(round(1.6 * unit)))
     tw, th = measure(text, face, px, wt)
-    base = 0
-    org = (x0 + (length - tw) // 2, y1 - thick - int(10 * unit))
+    org = _org(x0 + (length - tw) // 2, y1, thick, int(10 * unit), th, below)
 
     def mark(canvas, col):
         cv2.rectangle(canvas, (x0, y1 - thick), (x1, y1), col, -1)

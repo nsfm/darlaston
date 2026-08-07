@@ -33,6 +33,25 @@ SCALE_BAR_FACES = (
     ("hershey", N_("capture.bar.face.hershey")),
 )
 
+SCALE_BAR_CORNERS = (
+    ("br", N_("capture.bar.corner.br")),
+    ("bl", N_("capture.bar.corner.bl")),
+    ("tr", N_("capture.bar.corner.tr")),
+    ("tl", N_("capture.bar.corner.tl")),
+)
+
+SCALE_BAR_LABELS = (
+    ("auto", N_("capture.bar.label.auto")),
+    ("above", N_("capture.bar.label.above")),
+    ("below", N_("capture.bar.label.below")),
+)
+
+SCALE_BAR_SIZES = (
+    ("small", N_("capture.bar.size.small")),
+    ("medium", N_("capture.bar.size.medium")),
+    ("large", N_("capture.bar.size.large")),
+)
+
 SCALE_BAR_STYLES = (
     ("adaptive", N_("capture.files.scale_bar.style.adaptive")),
     ("plate", N_("capture.files.scale_bar.style.plate")),
@@ -427,11 +446,30 @@ class ScaleBarDialog(QtWidgets.QDialog):
         at = self.face.findData(settings.scale_bar_face)
         self.face.setCurrentIndex(at if at >= 0 else 0)
 
+        self.corner = QtWidgets.QComboBox()
+        for value, key in SCALE_BAR_CORNERS:
+            self.corner.addItem(_(key), value)
+        at = self.corner.findData(settings.scale_bar_corner)
+        self.corner.setCurrentIndex(at if at >= 0 else 0)
+
+        self.size = QtWidgets.QComboBox()
+        for value, key in SCALE_BAR_SIZES:
+            self.size.addItem(_(key), value)
+        at = self.size.findData(settings.scale_bar_size)
+        self.size.setCurrentIndex(at if at >= 0 else 1)
+
+        self.label_at = QtWidgets.QComboBox()
+        for value, key in SCALE_BAR_LABELS:
+            self.label_at.addItem(_(key), value)
+        at = self.label_at.findData(settings.scale_bar_label)
+        self.label_at.setCurrentIndex(at if at >= 0 else 0)
+
         self.plain = QtWidgets.QCheckBox(_("capture.bar.plain.label"))
         self.plain.setChecked(settings.scale_bar_plain_units)
         self.plain.setToolTip(_("capture.bar.plain.tooltip"))
 
-        for w in (self.style, self.face):
+        for w in (self.style, self.face, self.corner, self.size,
+                  self.label_at):
             w.currentIndexChanged.connect(self._repaint)
         self.plain.toggled.connect(self._repaint)
 
@@ -439,6 +477,9 @@ class ScaleBarDialog(QtWidgets.QDialog):
         form.setSpacing(9)
         form.addRow(_("capture.bar.style.label"), self.style)
         form.addRow(_("capture.bar.face.label"), self.face)
+        form.addRow(_("capture.bar.size.label"), self.size)
+        form.addRow(_("capture.bar.corner.label"), self.corner)
+        form.addRow(_("capture.bar.label.label"), self.label_at)
         form.addRow("", self.plain)
 
         note = QtWidgets.QLabel(_("capture.bar.note"))
@@ -470,6 +511,9 @@ class ScaleBarDialog(QtWidgets.QDialog):
         scalebar.draw(img, self._sample_um(),
                       style=str(self.style.currentData()),
                       face=str(self.face.currentData()),
+                      corner=str(self.corner.currentData()),
+                      size=str(self.size.currentData()),
+                      label_at=str(self.label_at.currentData()),
                       plain_units=self.plain.isChecked())
         h, w = img.shape[:2]
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).copy()
@@ -490,6 +534,9 @@ class ScaleBarDialog(QtWidgets.QDialog):
     def _save(self) -> None:
         self._settings.scale_bar_style = str(self.style.currentData())
         self._settings.scale_bar_face = str(self.face.currentData())
+        self._settings.scale_bar_corner = str(self.corner.currentData())
+        self._settings.scale_bar_size = str(self.size.currentData())
+        self._settings.scale_bar_label = str(self.label_at.currentData())
         self._settings.scale_bar_plain_units = self.plain.isChecked()
         self._settings.save()
         self.accept()

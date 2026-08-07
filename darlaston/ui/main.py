@@ -36,6 +36,8 @@ from .. import __version__, log
 from ..live.focus import Illumination, Region
 from ..live import balance
 from ..live.cell import Newest
+from ..process import scalebar
+from ..process.metadata import sensor_pitch
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
@@ -324,6 +326,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bar_action.setChecked(self.settings.scale_bar)
         self.bar_action.setToolTip(_("menu.capture.scale_bar.tooltip"))
         self.bar_action.toggled.connect(self._set_scale_bar)
+        self.bar_live_action = capture_menu.addAction(
+            _("menu.capture.scale_bar.live"))
+        self.bar_live_action.setCheckable(True)
+        self.bar_live_action.setChecked(self.settings.scale_bar_live)
+        self.bar_live_action.setToolTip(_("menu.capture.scale_bar.live.tooltip"))
+        self.bar_live_action.toggled.connect(self._set_scale_bar_live)
         self.bar_style_action = capture_menu.addAction(
             _("menu.capture.scale_bar.style"), self._open_scale_bar)
 
@@ -2235,6 +2243,53 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_scale_bar(self, on: bool) -> None:
         self.settings.scale_bar = bool(on)
         self.settings.save()
+        self._say_if_no_scale(on)
+
+    def _say_if_no_scale(self, on: bool) -> None:
+        """Turning the bar on when nothing knows the scale is a no-op.
+
+        It refuses for a good reason and it refused in silence, which is
+        the fault I argued against for the turret and then shipped: Nate
+        switched it on, shot, and found no bar and nothing to explain it.
+        The camera profile carries `pixel_um: 0.0` until somebody fills it
+        in, and without a pitch there is no micrometres per pixel and so
+        no honest bar.
+        """
+        if not on:
+            return
+        backend = self.session.backend
+        info = getattr(backend, "info", None) if backend else None
+        if self.setup is None or not self.setup.total_magnification:
+            self.strip.set_note(_("note.scale_bar.no_optics"))
+        elif not sensor_pitch(self.setup, info):
+            self.strip.set_note(_("note.scale_bar.no_pitch"))
+
+    def _set_scale_bar_live(self, on: bool) -> None:
+        self.settings.scale_bar_live = bool(on)
+        self.settings.save()
+        self._say_if_no_scale(on)
+
+    def _preview_um_per_px(self, preview_width: int) -> float | None:
+        """Micrometres per pixel *of the preview*, not of a capture.
+
+        The capture's number is sensor pitch over total magnification. The
+        preview shows the same field in fewer pixels, so one preview pixel
+        covers proportionally more slide. Getting this wrong would draw a
+        bar that is honest about the file and a lie about the screen,
+        which is the one thing a live overlay must not be.
+        """
+        if self.setup is None or not preview_width:
+            return None
+        backend = self.session.backend
+        info = getattr(backend, "info", None) if backend else None
+        total = self.setup.total_magnification
+        pitch = sensor_pitch(self.setup, info)
+        if not total or not pitch:
+            return None
+        widths = [r.width for r in getattr(info, "resolutions", ()) or ()]
+        if not widths:
+            return None
+        return (pitch / total) * (max(widths) / float(preview_width))
 
     def _open_scale_bar(self) -> None:
         """The style window, with the live frame as its sample.
@@ -2398,7 +2453,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_remaining(s.coverage_remaining, s.focus_rect)
         self.focus.set_coverage(s.coverage, s.coverage_complete)
-        self.view.set_frame(s.preview, s.peaking)
+        # The bar on the live view, when it is asked for. On a copy, so
+        # the frame the rest of the window keeps -- the balance sample,
+        # the tile thumbnail, the style window's own preview -- is the
+        # photograph rather than the photograph with furniture on it. One
+        # extra copy of 6.65 MB per frame, paid only while the toggle is
+        # on, which is the honest place to charge it.
+        shown = s.preview
+        if self.settings.scale_bar_live:
+            um = self._preview_um_per_px(s.preview.shape[1])
+            if um:
+                shown = s.preview.copy()
+                scalebar.draw(
+                    shown, um,
+                    style=self.settings.scale_bar_style,
+                    face=self.settings.scale_bar_face,
+                    corner=self.settings.scale_bar_corner,
+                    size=self.settings.scale_bar_size,
+                    label_at=self.settings.scale_bar_label,
+                    plain_units=self.settings.scale_bar_plain_units)
+        self.view.set_frame(shown, s.peaking)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.

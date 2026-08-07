@@ -150,3 +150,114 @@ def test_the_drawn_length_matches_what_it_claims(um_per_px):
     assert picked is not None
     micrometres, length = picked
     assert abs(length * um_per_px - micrometres) < um_per_px
+
+
+# ---- corner and size -------------------------------------------------------
+
+@pytest.mark.parametrize("corner,left,top", [
+    ("br", False, False), ("bl", True, False),
+    ("tr", False, True), ("tl", True, True)])
+def test_the_bar_lands_in_the_corner_it_was_asked_for(corner, left, top):
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, corner=corner)
+    ys, xs = np.where((img != 128).any(axis=2))
+    h, w = img.shape[:2]
+    # bool(), because a numpy bool is not a Python bool and `is False`
+    # against one is quietly always false.
+    assert bool(xs.max() < w / 2) is left, f"{corner}: wrong side"
+    assert bool(ys.max() < h / 2) is top, f"{corner}: wrong half"
+
+
+def test_the_label_stays_inside_the_frame_in_a_top_corner():
+    """The label sits above the rule in every corner, so at the top that
+    room has to come out of the inset rather than out of the picture."""
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, corner="tl", size="large")
+    ys, _xs = np.where((img != 128).any(axis=2))
+    assert ys.min() > 0, "the type ran off the top edge"
+
+
+@pytest.mark.parametrize("size", ["small", "medium", "large"])
+def test_size_changes_the_furniture_and_never_the_measurement(size):
+    """A presentation control that silently reported 500 um where the last
+    one said 200 would be a measurement changing itself to suit taste."""
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, size=size)
+    # The length comes from the ladder, which `size` does not touch.
+    assert scalebar.choose(1.0, 1600) == (500, 500)
+
+
+def test_larger_really_is_larger():
+    heights = []
+    for size in ("small", "medium", "large"):
+        img = _frame(1600, 1100)
+        assert scalebar.draw(img, 1.0, size=size)
+        ys, _ = np.where((img != 128).any(axis=2))
+        heights.append(ys.max() - ys.min())
+    assert heights[0] < heights[1] < heights[2], heights
+
+
+def test_an_unknown_corner_or_size_falls_back_rather_than_failing():
+    """A settings file from a newer version, or a hand-edited one."""
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, corner="middle", size="enormous")
+
+
+def _rule_and_label(img):
+    """(row of the rule, mean row of the label).
+
+    The rule is the row carrying the most ink, being a solid line across
+    the bar's whole length. Everything else is type.
+    """
+    ink = (img != 128).any(axis=2)
+    per_row = ink.sum(axis=1)
+    rule = int(np.argmax(per_row))
+    rows = np.where(per_row > 0)[0]
+    label = rows[np.abs(rows - rule) > 3]
+    return rule, float(label.mean())
+
+
+@pytest.mark.parametrize("corner,below", [("br", False), ("bl", False),
+                                          ("tl", True), ("tr", True)])
+def test_automatic_puts_the_label_on_the_inside(corner, below):
+    """The type ends up the part further from the edge of the frame: below
+    the rule at the top, above it at the bottom."""
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, corner=corner, label_at="auto")
+    rule, label = _rule_and_label(img)
+    assert (label > rule) is below, f"{corner}: label on the wrong side"
+
+
+def test_the_label_side_can_be_overridden():
+    """It is taste, so it is a choice rather than only a rule."""
+    for corner in ("br", "tl"):
+        above = _frame(1600, 1100)
+        below = _frame(1600, 1100)
+        assert scalebar.draw(above, 1.0, corner=corner, label_at="above")
+        assert scalebar.draw(below, 1.0, corner=corner, label_at="below")
+        ra, la = _rule_and_label(above)
+        rb, lb = _rule_and_label(below)
+        assert la < ra, f"{corner}: 'above' put the label below the rule"
+        assert lb > rb, f"{corner}: 'below' put the label above the rule"
+
+
+def test_the_shared_resolver_prefers_the_profile_and_falls_back_to_the_sdk():
+    """The capture and the live overlay have to agree about scale. They
+    did not: the live path read only the profile, so Nate's camera, whose
+    profile carries pixel_um 0.0, got no bar anywhere and no explanation.
+    """
+    import types
+
+    from darlaston.process.metadata import sensor_pitch
+
+    told = types.SimpleNamespace(camera=types.SimpleNamespace(pixel_um=2.4))
+    unknown = types.SimpleNamespace(camera=types.SimpleNamespace(pixel_um=0.0))
+    info = types.SimpleNamespace(resolutions=(
+        types.SimpleNamespace(index=1, pixel_um=9.6),
+        types.SimpleNamespace(index=0, pixel_um=4.8)))
+
+    assert sensor_pitch(told, info) == 2.4, "the profile is the better answer"
+    # Full resolution is index 0, and binned modes report a larger pitch.
+    assert sensor_pitch(unknown, info) == 4.8
+    assert sensor_pitch(unknown, None) is None
+    assert sensor_pitch(unknown, types.SimpleNamespace(resolutions=())) is None

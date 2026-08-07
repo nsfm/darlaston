@@ -110,6 +110,16 @@ class Settings:
     #: Write "um" instead of the micro sign, for downstream tooling that
     #: cannot take the character. Off, because the sign is correct.
     scale_bar_plain_units: bool = False
+    #: Which corner, and how large the furniture is. Neither changes the
+    #: measurement: the length still comes from the 1-2-5 ladder.
+    scale_bar_corner: str = "br"
+    scale_bar_size: str = "medium"
+    #: Which side of the rule the label sits on. "auto" is the inside:
+    #: below in a top corner, above in a bottom one.
+    scale_bar_label: str = "auto"
+    #: Draw the bar over the live view as well, so what is on screen is
+    #: what the photograph will carry.
+    scale_bar_live: bool = False
     #: Framing guides over the live view, as a camera's viewfinder offers.
     #: Kept between sessions because it is a habit rather than a decision.
     #: Who draws the window's title bar and buttons: auto | ours | system.

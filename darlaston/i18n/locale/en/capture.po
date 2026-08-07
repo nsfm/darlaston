@@ -199,3 +199,47 @@ msgstr ""
 
 msgid "capture.bar.note"
 msgstr "Drawn on the JPEG only; RAW files are unmodified."
+
+#. Which corner the bar sits in, and how large its furniture is. Neither
+#. changes the measurement: the length still comes from the round number.
+msgid "capture.bar.corner.label"
+msgstr "Corner"
+
+msgid "capture.bar.corner.br"
+msgstr "Bottom right"
+
+msgid "capture.bar.corner.bl"
+msgstr "Bottom left"
+
+msgid "capture.bar.corner.tr"
+msgstr "Top right"
+
+msgid "capture.bar.corner.tl"
+msgstr "Top left"
+
+msgid "capture.bar.size.label"
+msgstr "Size"
+
+msgid "capture.bar.size.small"
+msgstr "Small"
+
+msgid "capture.bar.size.medium"
+msgstr "Medium"
+
+msgid "capture.bar.size.large"
+msgstr "Large"
+
+#. Which side of the rule the label sits on. Automatic means the inside:
+#. below the rule in a top corner, above it in a bottom one, so the type
+#. is always the part further from the edge of the frame.
+msgid "capture.bar.label.label"
+msgstr "Label"
+
+msgid "capture.bar.label.auto"
+msgstr "Automatic (inside the frame)"
+
+msgid "capture.bar.label.above"
+msgstr "Above the rule"
+
+msgid "capture.bar.label.below"
+msgstr "Below the rule"

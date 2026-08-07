@@ -25,7 +25,7 @@ from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
 from ..process import develop, dng, scalebar
 from .writer import WriteQueue
-from ..process.metadata import from_setup
+from ..process.metadata import from_setup, sensor_pitch
 from ..session.settings import Settings, next_sequence
 
 _log = logging.getLogger(__name__)
@@ -346,10 +346,7 @@ class StillCapture:
                 # The profile wins over the SDK: get_PixelSize returns 0
                 # on some models, and a zero pitch silently drops the one
                 # tag a scale bar can be computed from.
-                pixel_um = setup.camera.pixel_um or None
-                if not pixel_um and info and info.resolutions:
-                    full = min(info.resolutions, key=lambda r: r.index)
-                    pixel_um = full.pixel_um or None
+                pixel_um = sensor_pitch(setup, info)
                 meta = from_setup(setup, exposure_us=exposure_us,
                                   gain_pct=gain_pct, subject=subject,
                                   slide=slide,
@@ -456,6 +453,9 @@ class StillCapture:
                         image, meta.um_per_px,
                         style=self._settings.scale_bar_style,
                         face=self._settings.scale_bar_face,
+                        corner=self._settings.scale_bar_corner,
+                        size=self._settings.scale_bar_size,
+                        label_at=self._settings.scale_bar_label,
                         plain_units=self._settings.scale_bar_plain_units)
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):

@@ -180,6 +180,29 @@ class CaptureMetadata:
 _LIGHT_SOURCE_TUNGSTEN = 3
 
 
+def sensor_pitch(setup, info=None) -> float | None:
+    """Micrometres per sensor pixel, or None when nobody knows.
+
+    The profile wins over the SDK: `get_PixelSize` returns 0 on some
+    models. But the profile is 0.0 until somebody fills it in, which is
+    the ordinary state of a freshly-seen camera, so the SDK is the
+    fallback rather than the other way round.
+
+    Shared because the capture and the live overlay have to agree. They
+    did not: the live path read only the profile, so a camera with a
+    pitch the SDK knew about got a bar on its photographs and none on
+    the screen.
+    """
+    pitch = getattr(getattr(setup, "camera", None), "pixel_um", 0.0) or None
+    if pitch:
+        return float(pitch)
+    resolutions = getattr(info, "resolutions", None) or ()
+    if resolutions:
+        full = min(resolutions, key=lambda r: r.index)
+        return float(full.pixel_um) or None
+    return None
+
+
 def from_setup(setup, *, exposure_us: int, gain_pct: int,
                subject: str = "", slide: str = "", calibration: str = "",
                app_version: str = "", pixel_um: float | None = None,
