@@ -95,6 +95,11 @@ class Settings:
     #: destroying the session's actual work.
     image_format: str = "both"       # both | raw | jpeg
     jpeg_quality: int = 95
+    #: Burn a scale bar into the sidecar JPEG. Off by default: it is a
+    #: mark on the photograph and that is the operator's call, not ours.
+    #: Never touches the raw, whatever this says -- the DNG stays what the
+    #: sensor recorded and a bar can always be drawn later from um_per_px.
+    scale_bar: bool = False
     #: Framing guides over the live view, as a camera's viewfinder offers.
     #: Kept between sessions because it is a habit rather than a decision.
     #: Who draws the window's title bar and buttons: auto | ours | system.

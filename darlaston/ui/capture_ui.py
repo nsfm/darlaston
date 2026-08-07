@@ -288,7 +288,14 @@ class SettingsDialog(FramedDialog):
         form.addRow(_("capture.files.root.label"), root_row)
         form.addRow(_("capture.files.folder.label"), self.folder)
         form.addRow(_("capture.files.filename.label"), self.filename)
+        # Under the format row, because it only affects the JPEG. The raw
+        # never gets one whatever this says.
+        self.scale_bar = QtWidgets.QCheckBox(_("capture.files.scale_bar.label"))
+        self.scale_bar.setChecked(settings.scale_bar)
+        self.scale_bar.setToolTip(_("capture.files.scale_bar.tooltip"))
+
         form.addRow(_("capture.files.format.label"), self.image_format)
+        form.addRow("", self.scale_bar)
         form.addRow("", self.keep_slices)
 
         self.preview = QtWidgets.QLabel()
@@ -353,6 +360,7 @@ class SettingsDialog(FramedDialog):
         self._settings.filename_pattern = self.filename.text()
         self._settings.keep_slices = self.keep_slices.isChecked()
         self._settings.image_format = str(self.image_format.currentData())
+        self._settings.scale_bar = self.scale_bar.isChecked()
         self._settings.save()
         self.accept()
 

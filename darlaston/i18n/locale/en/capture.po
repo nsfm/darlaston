@@ -131,3 +131,14 @@ msgstr ""
 #. Shown under the filename field, and blocks Save.
 msgid "capture.files.filename.empty"
 msgstr "a filename pattern cannot be empty"
+
+#. A checkbox under the image format. The bar goes on the JPEG only: the
+#. raw is what the sensor recorded and nothing is drawn on it, ever.
+msgid "capture.files.scale_bar.label"
+msgstr "Draw a scale bar on the JPEG"
+
+msgid "capture.files.scale_bar.tooltip"
+msgstr ""
+"Adds a labelled bar to the bottom-right of the photograph.\n"
+"Never drawn on the raw, and never drawn at all unless the objective is "
+"known and confirmed -- a wrong scale bar is worse than none."

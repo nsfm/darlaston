@@ -22,6 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from . import scalebar
 from .stitch import read_metadata
 from .wiggle import _develop, _read_composite
 
@@ -80,26 +81,20 @@ def _source_image(path: Path) -> tuple[np.ndarray, float | None, str]:
 
 def _scale_bar(cell: np.ndarray, um_per_px: float | None,
                source_w: int) -> None:
-    """Draw a bar into the bottom-right of `cell`, in place."""
-    if not um_per_px or um_per_px <= 0:
+    """Draw a bar into the bottom-right of `cell`, in place.
+
+    The drawing moved to `process/scalebar.py` when the photograph wanted
+    one too. Two copies of the one element on the sheet that makes a claim
+    about the physical world is two chances for them to disagree.
+
+    What stays here is the plate's own correction: the cell has been
+    downscaled from the source, so a micrometre covers proportionally
+    fewer pixels than the capture's `um_per_px` says.
+    """
+    if not um_per_px or um_per_px <= 0 or cell.shape[1] <= 0:
         return
-    h, w = cell.shape[:2]
-    # Microns per pixel *as drawn*, after the cell's own downscale.
-    drawn = um_per_px * source_w / w
-    longest = drawn * (w / 3.0)
-    choice = next((s for s in reversed(_STEPS) if s <= longest), None)
-    if choice is None:
-        return
-    length = int(round(choice / drawn))
-    x1, y1 = w - 18, h - 22
-    x0 = x1 - length
-    cv2.rectangle(cell, (x0 - 8, y1 - 26), (x1 + 8, y1 + 10),
-                  (255, 255, 255), -1)
-    cv2.rectangle(cell, (x0, y1), (x1, y1 + 5), _INK, -1)
-    text = f"{choice} um" if choice < 1000 else f"{choice // 1000} mm"
-    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-    cv2.putText(cell, text, (x1 - length // 2 - tw // 2, y1 - 7),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.52, _INK, 1, cv2.LINE_AA)
+    drawn = um_per_px * source_w / cell.shape[1]
+    scalebar.draw(cell, drawn, margin=0.028)
 
 
 def plate(sources, target: Path | str, columns: int = 3,

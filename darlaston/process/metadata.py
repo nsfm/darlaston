@@ -93,6 +93,12 @@ class CaptureMetadata:
     copyright: str = ""
     description: str = ""             # human sentence
     comment: str = ""                 # structured key=value, machine-readable
+    #: How much slide one pixel covers, in micrometres. The one number a
+    #: scale bar can be drawn from, and a field rather than only a key in
+    #: `comment` because parsing a string to draw a measurement is how a
+    #: reader and a writer come to disagree. `derived` keeps the two in
+    #: step; nothing else may set one without the other.
+    um_per_px: float | None = None
     software: str = ""
 
     def __post_init__(self) -> None:
@@ -128,6 +134,7 @@ class CaptureMetadata:
         if scale <= 0:
             raise ValueError(f"a pixel scale must be positive, not {scale}")
         parts = []
+        rescaled = (self.um_per_px / scale) if self.um_per_px else None
         for part in self.comment.split():
             key, sep, value = part.partition("=")
             if key == "um_per_px" and sep:
@@ -140,6 +147,7 @@ class CaptureMetadata:
             parts.append(part)
         return replace(
             self, comment=" ".join(parts), unique_id="",
+            um_per_px=rescaled,
             focal_plane_per_mm=(self.focal_plane_per_mm * scale
                                 if self.focal_plane_per_mm else None))
 
@@ -209,6 +217,7 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     # actually remembers. A slide may carry several.
     description = " · ".join(([subject] if subject else []) + bits)
 
+    um_per_px = (pixel_um / total) if (pixel_um and total) else None
     fields = {
         "scope": scope.name,
         "objective": obj.label if obj else "",
@@ -229,8 +238,7 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         # FocalPlaneXResolution is a scale at the sensor, and dividing it
         # by a magnification nobody recorded is how wrong scale bars get
         # published.
-        "um_per_px": (f"{pixel_um / total:.4g}"
-                      if pixel_um and total else ""),
+        "um_per_px": (f"{um_per_px:.4g}" if um_per_px else ""),
         "subject": subject,
         "slide": slide,
         "calibration": calibration,
@@ -301,5 +309,6 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         f_number=fnum,
         description=description,
         comment=comment,
+        um_per_px=um_per_px,
         software=f"darlaston {app_version}".strip(),
     )

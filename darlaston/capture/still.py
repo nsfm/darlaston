@@ -23,7 +23,7 @@ import numpy as np
 from ..calib import frames as F
 from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
-from ..process import develop, dng
+from ..process import develop, dng, scalebar
 from .writer import WriteQueue
 from ..process.metadata import from_setup
 from ..session.settings import Settings, next_sequence
@@ -452,6 +452,14 @@ class StillCapture:
                 image = develop.develop(
                     out, pattern=None if (mono or decoded) else pattern,
                     black=black, white=white, neutral=shot)
+                # On the photograph, never on the negative. `meta` carries
+                # the micrometres-per-pixel that was computed from sensor
+                # pitch over total magnification, and `draw` refuses on
+                # anything it cannot stand behind -- including an
+                # objective nobody confirmed.
+                if self._settings.scale_bar and meta is not None:
+                    scalebar.draw(image, meta.um_per_px,
+                                  confirmed=self.objective_confirmed)
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):
                     jpeg = None
