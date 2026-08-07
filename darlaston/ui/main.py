@@ -482,6 +482,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # repeat what the button already says.
         self.wb_pick = QtWidgets.QPushButton(_("shell.wb.pick.label"))
         self.wb_pick.setProperty("role", "seg")
+        self.wb_pick.setCheckable(True)          # stays lit while armed
         self.wb_pick.setToolTip(_("shell.wb.pick.tooltip"))
         self.wb_pick.clicked.connect(self._arm_white_balance)
         self.wb_reset = QtWidgets.QPushButton(_("shell.wb.reset.label"))
@@ -639,6 +640,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.shutter.set_available(status.is_live and not self.capture.busy)
         self._set_shooting_enabled(status.is_live)
+        # Including the balance controls, which need a camera to point at.
+        # This was missing: they were disabled once at startup, before the
+        # session had come up, and nothing ever enabled them again -- so
+        # the button could not be pressed at all. The per-frame refresh
+        # that used to hide the omission went with the numeric readout.
+        self._refresh_wb()
         if self.setup is not None:
             self.opportunist.set_key(flat_key(self.setup,
                                               self.subject.slide_note))
@@ -1101,12 +1108,14 @@ class MainWindow(QtWidgets.QMainWindow):
         """Point at something that should be grey. One click or one drag."""
         self.view.arm_balance(True)
         self.strip.set_note(_("note.wb.point"))
+        self._refresh_wb()
 
     def _on_balance_region(self, rect: tuple) -> None:
         """Where they pointed. Sample there, and take the balance."""
         self._wb_rect = rect
         self.pipeline.set_balance_rect(rect)
         self.strip.set_note("")
+        self._refresh_wb()               # the view disarmed itself
         # Show where it was taken, briefly. A rectangle that stays is
         # clutter over the specimen the moment it has nothing left to say.
         self.view.show_balance_rect(rect)
@@ -1150,8 +1159,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_wb(self) -> None:
         gains = balance.sane(self.settings.white_balance_gains)
         live = self.session.status.is_live
+        armed = self.view.armed_for_balance
         self.wb_pick.setEnabled(live)
+        self.wb_pick.setChecked(armed)
         self.wb_reset.setEnabled(gains != balance.UNITY)
+        # Brass lettering where there is something to do, filled while it
+        # is being done. A control that looks the same whether or not it
+        # can be pressed is one people stop trying.
+        _invite(self.wb_pick, live and not armed)
+        _invite(self.wb_reset, gains != balance.UNITY)
         self.wb_swatch.set_gains(gains)
         # The numbers are still here, for whoever wants them, where they
         # cost no space: nobody reads "R 1.33 B 0.60" and pictures a warm
@@ -2423,6 +2439,20 @@ def _fill(panel, widget) -> None:
     lay = QtWidgets.QVBoxLayout(panel.body)
     lay.setContentsMargins(0, 0, 0, 0)
     lay.addWidget(widget)
+
+
+def _invite(button, on: bool) -> None:
+    """Mark a segment as wanting a press, and make the style notice.
+
+    Qt caches the stylesheet match, so changing a property it selects on
+    does nothing visible until the widget is repolished. Without this the
+    rule is correct and the button never changes.
+    """
+    if button.property("invite") == ("true" if on else "false"):
+        return
+    button.setProperty("invite", "true" if on else "false")
+    button.style().unpolish(button)
+    button.style().polish(button)
 
 
 def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout,

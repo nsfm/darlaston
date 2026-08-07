@@ -284,6 +284,10 @@ class LiveView(QtWidgets.QWidget):
             self._balance_fade.stop()
         self.update()
 
+    @property
+    def armed_for_balance(self) -> bool:
+        return self._balancing
+
     def arm_balance(self, on: bool = True) -> None:
         """Take the next click or drag as the balance region, once.
 

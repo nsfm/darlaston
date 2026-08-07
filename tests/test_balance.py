@@ -296,3 +296,76 @@ def test_a_picked_balance_survives_a_restart(qapp, tmp_path, monkeypatch):
             "the preview came back a different colour than it was left"
     finally:
         again.shutdown()
+
+
+def test_the_button_becomes_pressable_when_the_camera_arrives(qapp, tmp_path,
+                                                              monkeypatch):
+    """It was disabled once at startup, before the session had come up, and
+    nothing enabled it again -- so it could not be pressed at all. The
+    per-frame refresh that used to paper over this went with the numeric
+    readout it existed for."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.base import CameraInfo, CameraState
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import SessionStatus
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        assert not win.wb_pick.isEnabled(), "offered before there is a camera"
+
+        live = SessionStatus(CameraState.STREAMING, info=CameraInfo(
+            model="m", serial="s", resolutions=(), max_bit_depth=12,
+            bayer_pattern="GBRG", exposure_range_us=(100, 10 ** 6),
+            gain_range_pct=(100, 2000)))
+        win.session._status = live
+        win._on_status(live)
+        assert win.wb_pick.isEnabled(), "still unpressable with a live camera"
+        assert win.wb_pick.property("invite") == "true", "gave no sign it wants pressing"
+    finally:
+        win.shutdown()
+
+
+def test_the_button_says_which_of_its_three_states_it_is_in(qapp, tmp_path,
+                                                            monkeypatch):
+    """Dim when there is nothing to do, brass when there is, filled while
+    it is doing it. A control that looks the same whether or not it can be
+    pressed is one people stop trying."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.base import CameraInfo, CameraState
+    from darlaston.camera.mock import MockCamera
+    from darlaston.camera.session import SessionStatus
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        live = SessionStatus(CameraState.STREAMING, info=CameraInfo(
+            model="m", serial="s", resolutions=(), max_bit_depth=12,
+            bayer_pattern="GBRG", exposure_range_us=(100, 10 ** 6),
+            gain_range_pct=(100, 2000)))
+        win.session._status = live
+        win._on_status(live)
+
+        # Inviting, not lit.
+        assert win.wb_pick.property("invite") == "true"
+        assert not win.wb_pick.isChecked()
+
+        # Lit while armed, and no longer inviting -- it is already doing it.
+        win._arm_white_balance()
+        assert win.wb_pick.isChecked()
+        assert win.wb_pick.property("invite") == "false"
+
+        # Back to inviting once the point has been taken.
+        win.view.arm_balance(False)
+        win._on_balance_region((0.4, 0.4, 0.2, 0.2))
+        assert not win.wb_pick.isChecked()
+        assert win.wb_pick.property("invite") == "true"
+
+        # Reset only invites when there is something to undo.
+        assert win.wb_reset.property("invite") == "false"
+        win.settings.white_balance_gains = [1.4, 1.0, 0.7]
+        win._refresh_wb()
+        assert win.wb_reset.isEnabled()
+        assert win.wb_reset.property("invite") == "true"
+    finally:
+        win.shutdown()
