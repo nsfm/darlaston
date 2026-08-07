@@ -29,6 +29,7 @@ import cv2
 import numpy as np
 
 from ..camera.buffers import Frame
+from . import balance
 from .cell import LatestFrame
 from .coverage import FocusCoverage
 from .focus import (DEFAULTS, FocusTrace, Illumination, Metric, Prefilter,
@@ -132,6 +133,12 @@ class LivePipeline:
         self._region = Region.CENTRE
         self._blank = None
         self._still_for = 0
+        #: The working white balance, and its lookup. Gains rather than a
+        #: mode: "off" is unity, so nothing downstream has to special-case
+        #: the absence of a correction. See live/balance.py for why this is
+        #: a different thing from the one calib/ measures.
+        self._wb = balance.UNITY
+        self._wb_lut = None
         self._coverage = FocusCoverage()
         self._sweeping = False
         self._custom: tuple[float, float, float, float] | None = None
@@ -203,6 +210,16 @@ class LivePipeline:
     def set_peaking(self, enabled: bool) -> None:
         with self._lock:
             self._peaking_enabled = enabled
+
+    def set_white_balance(self, gains) -> None:
+        """The gains applied to every preview from the next frame on."""
+        with self._lock:
+            self._wb = balance.sane(gains)
+            self._wb_lut = balance.lut(self._wb)
+
+    @property
+    def white_balance(self) -> tuple[float, float, float]:
+        return self._wb
 
     def start_sweep(self) -> None:
         """Begin accumulating coverage, on a fresh accumulator.
@@ -381,6 +398,7 @@ class LivePipeline:
             region, custom = self._region, self._custom
             sweeping = self._sweeping
             coverage_acc = self._coverage
+            wb_lut = self._wb_lut
 
         data = frame.data
         mark = time.perf_counter()
@@ -578,7 +596,14 @@ class LivePipeline:
         self._emit(LiveSignals(
             seq=frame.seq,
             timestamp=frame.timestamp,
-            preview=data.copy(),          # explicit: the UI outlives the pool
+            # Balanced here, and *after* the histogram above deliberately.
+            # The instruments report the sensor's own levels -- that is what
+            # the preview LUT exists for, and correcting the frame first
+            # would put the very cast back into the numbers that machinery
+            # was written to take out of them. The copy is not extra: the
+            # UI outlives the buffer pool either way, so this replaces a
+            # copy rather than adding a pass.
+            preview=balance.applied(data, wb_lut),
             histogram=hist,
             clipped_fraction=clipped,
             channel_clipped=per,
