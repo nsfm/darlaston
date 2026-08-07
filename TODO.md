@@ -123,6 +123,100 @@
       swap). Real darkfield tiles are the acid test. Undo does not yet
       re-anchor if tile 1 is undone (edge case: undoing the origin tile).
 
+- [ ] **A background mask, and what it might be worth.** Measured
+      2026-08-07 on two of Nate's stacks; the numbers are strong enough
+      that this is a plan rather than an idea.
+
+      **The fault.** `depth.png` is `argmax` over per-slice sharpness, and
+      argmax is undefined where there is no sharpness. In a featureless
+      region every slice scores about zero plus sensor noise, so the
+      winner is whichever slice had the largest noise excursion at that
+      pixel: a near-uniform random draw. Measured against a perfectly
+      uniform draw, the diatom stack's background depth came out at 0.75
+      of uniform entropy, spread over 18 of its 30 slices. The
+      pseudoscorpion's was 0.38 over 7 of 15.
+
+      This is also why the composites look fine while the depth maps do
+      not, which was Nate's observation and is the same fact from the
+      other side: the merge takes the winning slice's *pixel*, and where
+      every slice looks identical a random one is harmless. The depth map
+      takes its *index*, and there the coin toss is the whole output.
+
+      **The signal.** Peak sharpness separates background from specimen by
+      three orders of magnitude: 0.10 against 96.8 on the pseudoscorpion,
+      0.10 against 146.1 on the diatoms. Gating at the specimen's 5th
+      percentile catches 100% and 99.7% of background. There are two
+      decades of empty space to put a threshold in, so the usual worry
+      about a tuned constant does not apply here -- and it need not be a
+      constant at all: the populations separate on a log scale, so Otsu on
+      `log(peak)` finds the gap per stack. Verified against an inverted
+      stack standing in for darkfield: the threshold moved from 10^0.27 to
+      10^0.80 and the mask barely changed, 25.0% of frame against 22.7%.
+
+      **What it fixes.** Background depth standard deviation went 86.5 to
+      0 and 51.9 to 0, because those pixels stop voting. Nate: "the
+      diatoms are vastly improved", and the PLYs are the best he has had
+      from this.
+
+      **Growing it from seeds.** The gate is right that a smooth
+      translucent interior was never in focus and wrong that it is not
+      specimen: the pseudoscorpion's pedipalps came out as lace. Treating
+      the gate as *seeds* rather than as a decision fixes it. Well above
+      the gate is certain specimen, well below is certain background, and
+      the wide band between goes to the composite's own colour model
+      (grabCut, seeded by those markers rather than by a drawn rectangle).
+      The interiors filled in and the mask grew only 2% of frame, so it is
+      filling the specimen it had already found rather than bleeding.
+      The diatoms moved 25.0% to 26.1%, which is the right outcome: they
+      are textured throughout, so there was nothing to carry.
+
+      Two caveats: grabCut runs on a downscaled field so its boundaries
+      are softer than the gate's, and it is iterative, so its cost on a
+      real merge wants measuring before it goes near the pipeline.
+
+      **The next algorithm, and the interesting one.** Growth recovers
+      *membership*, not *height*. A smooth carapace is correctly marked
+      specimen and still has no depth to put there, because no slice ever
+      found focus on it. The same seeded logic should interpolate depth:
+      let a confident rim imply the surface across the smooth interior it
+      encloses, so the region takes the height its own boundary predicts
+      rather than a flat fill. That is a real algorithm rather than a
+      capture workaround, and it works where "use more contrast" is not
+      available. Candidate shapes: solve Laplace over the unconfident
+      region with the confident boundary as its Dirichlet condition, which
+      is the standard membrane interpolation and has the right smoothness;
+      or push the existing joint-bilateral weighted median further, since
+      `_refine_depth` already has the machinery and already lets
+      textureless pixels defer to textured neighbours.
+
+      **The background plane.** Filling at the 2nd percentile of specimen
+      depth puts it in *front* of the subject: Nate's upright
+      pseudoscorpion had its background at the ceiling with the specimen
+      depressed into it but correctly convex, and inverting fixed the
+      floor while turning the specimen concave, because inversion flips
+      both together. The fill belongs behind the specimen, not at an
+      extreme of its range. Keep the plane rather than dropping the
+      vertices: Nate wants it, since a solid background anchors the
+      subject for printing.
+
+- [ ] **? Is the halo a background problem?** Nate's observation and
+      possibly the most valuable thing here. The mask removed the diatom
+      blur-haloes completely from the PLY. The retouch-brush entry above
+      calls that halo physically unfixable and cites both commercial
+      stackers shipping a human with a brush as the answer, on the
+      grounds that at a depth discontinuity a ray is genuinely observed
+      twice, once sharp and once as a blur circle.
+
+      If a good share of what that brush exists for is instead
+      out-of-plane material landing on *empty field*, then it is a
+      background problem, it is separable, and it is fixable without a
+      human. That would be a real result rather than a tidier render.
+
+      It has to go through `tools/stack_bench.py` rather than through
+      anybody's eye: "the haloes look gone" and "the composite error
+      fell" are different claims and only the second is defensible. The
+      bench already has a synthetic glow case to measure against.
+
 - [ ] **A 12 fps preview drags the whole interface to 12 fps.** Nate's
       camera starts in its full 5440-wide mode, which reads out at 12 fps,
       and every control in the window then responds at that rate. Drawing
