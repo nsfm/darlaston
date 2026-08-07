@@ -450,10 +450,42 @@ def test_wigglegram_parallax_follows_depth(tmp_path):
     depth[:, W // 2:] = 255
     cv2.imwrite(str(tmp_path / "depth.png"), depth)
 
-    wob = wigglegram(tmp_path)
+    # Four phases of the wobble rather than the default twenty-four. The
+    # parallax below is read off the *stereo* pair, and nothing here asserts
+    # anything about the wobble beyond the two files landing -- so the only
+    # thing the other twenty cost is VP9 encoding, at about 0.44 s per
+    # 640x480 frame in this build. Four still walks the whole path: open the
+    # writer, loop the four baked cycles over it, release, then the animated
+    # WebP. This one line was 35 s of a 230 s suite. (The encoder's own speed
+    # is a real question about the product, not about the test -- see
+    # spike/docs/test-speed.md.)
+    wob = wigglegram(tmp_path, frames=4)
     pair, ana = stereo(tmp_path)
     assert wob.exists() and pair.exists() and ana.exists()
     assert (tmp_path / "wiggle.webp").exists()
+
+    # Existence was the whole claim, and it is not enough: a writer that is
+    # opened and released without ever being fed leaves a file that exists.
+    # Checked by putting exactly that defect back, which passed. So count the
+    # frames -- four phases through the four cycles the module bakes in, which
+    # is also the only thing that pins those cycles at all.
+    if wob.suffix == ".webm":
+        clip = cv2.VideoCapture(str(wob))
+        try:
+            read = 0
+            while clip.read()[0]:
+                read += 1
+        finally:
+            clip.release()
+        assert read == 4 * 4, f"the wobble holds {read} frames, not 16"
+    else:
+        # `wigglegram` falls back to the animated WebP where VP9 will not
+        # open. Rare, and the check must not go quiet when it happens --
+        # a conditional assertion that silently stops asserting is how a
+        # test starts passing for the wrong reason. Size is a weaker
+        # claim than a frame count and it still catches an empty file.
+        assert wob.stat().st_size > 2000, (
+            f"fell back to {wob.name} and it is {wob.stat().st_size} bytes")
 
     # The pair is [right | left]; correlate each half of the scene between
     # the two eyes and demand opposite horizontal shifts.
