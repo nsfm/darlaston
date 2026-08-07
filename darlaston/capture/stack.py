@@ -201,7 +201,11 @@ class StackTrigger:
     #: the discriminator that stays honest there.
     SETTLE_FRAMES = 5
     #: Never two slices within this many seconds regardless of the signals.
-    MIN_INTERVAL = 2.0
+    #: Two was chosen when a capture took 5.4 s anyway, so it never bound.
+    #: With the write queued the shortest gap Nate managed was 1.90 s --
+    #: this constant, not the disk, and a guard that has become the limit
+    #: is no longer a guard.
+    MIN_INTERVAL = 1.0
     #: A starting floor before anything is measured. Deliberately generous;
     #: the first pause replaces it.
     DEFAULT_FLOOR = 2e-4

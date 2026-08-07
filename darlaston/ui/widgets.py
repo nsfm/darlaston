@@ -1171,3 +1171,135 @@ class BalanceSwatch(QtWidgets.QWidget):
             p.setBrush(self.colour())
             p.setPen(QtGui.QPen(QtGui.QColor(LINE), 1))
             p.drawRoundedRect(box, 3, 3)
+
+
+class SaveGauge(QtWidgets.QWidget):
+    """How much of the stack is still on its way to disk.
+
+    Under the stack window rather than in the status strip, and this is
+    the whole point of it. The strip is where "hold still -- exposing"
+    appears, and a line reading "saving" arriving in that space is an
+    instruction to wait however well the operator knows better: Nate felt
+    it and stopped racking. Same information, moved out of the sentence
+    that governs their hands and into a gauge beside the work.
+
+    One cell per outstanding write, so depth is a count rather than a
+    number to read, and the leftmost cell fills as its write proceeds.
+    The fill comes from a measured duration -- what a write has actually
+    been costing on this machine, this disk, this sensor -- because a bar
+    that cannot say how far along it is can only pulse, and a pulse says
+    "something is happening" where this needs to say "nearly done".
+
+    Borrowed wholesale from ValueBar: the same amber, the same ordered
+    dither, the same dissolve rather than a hard edge. One dither grammar
+    in the window. It differs in being half the height and having no text
+    and no handle, because nothing here is draggable and a number would
+    invite reading it.
+
+    Invisible when the queue is empty, which is nearly always.
+    """
+
+    #: Slim. This is furniture, not an instrument.
+    HEIGHT = 7
+    #: Gap between cells, device pixels.
+    GAP = 2
+    #: How far the dissolve reaches back from the leading edge of a fill.
+    DITHER = 18
+    CELL = 2
+    #: Cells past this and the gauge stops drawing them individually --
+    #: at a dozen they would be two pixels each and read as a texture.
+    LEGIBLE = 8
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._depth = 0
+        self._fraction = 0.0
+        self._pressed = False
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setVisible(False)
+
+    def set_progress(self, depth: int, fraction: float,
+                     pressed: bool = False) -> None:
+        """`(depth, fraction)` from `WriteQueue.progress`, plus whether the
+        queue has passed its watermark.
+
+        `pressed` is the thing a depth count cannot say on its own. Eight
+        outstanding writes on a roomy machine is the queue working; eight
+        on a cramped one is the next shutter press about to be refused,
+        and the cells look identical either way.
+        """
+        depth = max(0, int(depth))
+        fraction = min(1.0, max(0.0, float(fraction)))
+        if (depth, round(fraction, 3), pressed) == (
+                self._depth, round(self._fraction, 3), self._pressed):
+            return
+        self._depth, self._fraction, self._pressed = depth, fraction, pressed
+        self.setVisible(depth > 0)
+        if depth:
+            self.setToolTip(_("gauge.saving.tooltip", count=depth))
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        if self._depth <= 0:
+            return
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+            # The ground, explicitly, before anything else. Without it the
+            # gaps between cells keep whatever the palette painted and read
+            # as a row of bright tick marks competing with the one thing
+            # here meant to draw the eye.
+            p.fillRect(self.rect(), QtGui.QColor("#0e100e"))
+            n = min(self._depth, self.LEGIBLE)
+            full = self.width()
+            span = (full - self.GAP * (n - 1)) / n if n else full
+            for i in range(n):
+                x = i * (span + self.GAP)
+                # The queue drains from the front, so the leftmost cell is
+                # the one being written and the only one that fills. The
+                # rest are waiting, and waiting is not progress.
+                p.fillRect(QtCore.QRectF(x, 0, span, self.height()),
+                           QtGui.QColor("#1b1d1a"))
+                if i == 0 and self._fraction > 0:
+                    edge = span * self._fraction
+                    solid = max(0.0, edge - self.DITHER)
+                    p.fillRect(QtCore.QRectF(x, 0, solid, self.height()),
+                               BRASS)
+                    self._dissolve(p, x + solid, x + edge)
+                elif i:
+                    # Queued but untouched: the outline of a cell, so the
+                    # count is legible without four amber blocks claiming
+                    # four things are happening at once.
+                    p.fillRect(QtCore.QRectF(x, self.height() - 1, span, 1),
+                               QtGui.QColor("#4a3f28"))
+            if self._pressed or self._depth > self.LEGIBLE:
+                # A solid rule closing the row, for two situations that
+                # amount to the same warning: more outstanding than cells
+                # can show, or past the watermark and about to start
+                # refusing captures. Either way the row is understating
+                # what sits behind it, and understating that quietly is
+                # how a shutter comes to ignore somebody without saying
+                # so -- which is the fault this whole branch began with.
+                p.fillRect(QtCore.QRectF(full - 3, 0, 3, self.height()),
+                           BRASS)
+
+    def _dissolve(self, p: QtGui.QPainter, start: float, end: float) -> None:
+        """The ramp from solid to nothing, one Bayer cell at a time."""
+        if end <= start:
+            return
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(BRASS)
+        width = end - start
+        cols = max(1, int(width // self.CELL))
+        rows = max(1, int(self.height() // self.CELL))
+        for cx in range(cols):
+            # Coverage falls off as the square, the same law ValueBar uses,
+            # so the two dissolves read as the same material.
+            t = (cx + 0.5) / cols
+            keep = (1.0 - t) ** 2
+            for cy in range(rows):
+                if _BAYER[cy % 8][cx % 8] < keep:
+                    p.drawRect(QtCore.QRectF(
+                        start + cx * self.CELL, cy * self.CELL,
+                        self.CELL, self.CELL))

@@ -1026,3 +1026,119 @@ def test_a_decoded_capture_puts_red_where_the_dng_says_red_is(tmp_path):
     assert means[2] > means[0], \
         f"red and blue are swapped in the raw: B,G,R = {means}"
     assert round(means[2]) == 3000 and round(means[0]) == 100
+
+
+def test_the_trigger_is_released_by_the_exposure_not_by_the_file(tmp_path):
+    """Deferring the write is only half the fix, and the half that does
+    nothing on its own.
+
+    StackTrigger holds `_pending` from the moment it fires until a slice
+    lands, and refuses to look at a single frame in between. "A slice
+    landed" used to mean a file on disk. Moving the write to a queue and
+    leaving that alone would have freed the camera and left the trigger
+    deaf for exactly as long as before -- the whole measured fault, still
+    there, behind a fix that looked finished.
+
+    So the capture says when the pixels are off the sensor, separately
+    from saying when the file exists.
+    """
+    import time
+
+    from darlaston.capture.writer import WriteQueue
+
+    cam = MockCamera()
+    cam.open()
+    session = types.SimpleNamespace(backend=cam)
+    settings = Settings(capture_root=str(tmp_path))
+
+    held = threading.Event()
+    order = []
+    done = threading.Event()
+
+    # A queue whose job blocks: the file cannot appear until released.
+    writer = WriteQueue(budget=8 * 1024 * 1024 * 1024, name="test-writer")
+    real_submit = writer.submit
+    writer.submit = lambda n, job, label="": real_submit(
+        n, lambda: (held.wait(20.0), job()), label)
+
+    cap = StillCapture(
+        session, settings, writer=writer,
+        on_exposed=lambda: order.append("exposed"),
+        on_result=lambda r: (order.append("written"), done.set()))
+
+    assert cap.trigger(None, subject="t")
+    for _ in range(500):                       # the exposure, not the write
+        if order:
+            break
+        time.sleep(0.02)
+
+    assert order == ["exposed"], \
+        "the trigger is still waiting on the file, which is the whole fault"
+    assert not done.is_set(), "the premise: the write has not happened yet"
+
+    held.set()
+    assert done.wait(30), "the write never completed"
+    assert order == ["exposed", "written"]
+    cam.close()
+
+
+def test_quitting_waits_for_frames_that_exist_nowhere_but_in_memory(tmp_path):
+    """The writer is a daemon thread, so whatever is still in it when the
+    process goes is gone. Ctrl-C reaches `shutdown` without ever passing
+    through the close question, which is why the wait lives there.
+    """
+    from darlaston.capture.writer import WriteQueue
+
+    q = WriteQueue(budget=1024 * 1024 * 1024, name="test-shutdown-writer")
+    landed = []
+    slow = threading.Event()
+    for i in range(3):
+        assert q.submit(1024, lambda i=i: (slow.wait(0.2), landed.append(i)))
+
+    assert q.depth, "the premise: work is outstanding"
+    assert q.drain(timeout=20.0), "gave up on frames it had accepted"
+    assert landed == [0, 1, 2], "quit with captures still unwritten"
+
+
+def test_the_picked_balance_trims_the_measured_one_instead_of_erasing_it():
+    """Nate's slices came out visibly green beside a preview that looked
+    white, and this is why.
+
+    The flat-measured balance is absolute and lives in the raw's domain:
+    sensor, optics and lamp, measured off a blank field of Bayer data. The
+    picked one is a small residual trim, taken off the preview -- which on
+    a ToupTek has already been through the camera's ISP, and `grab_raw`
+    turns the ISP off. Letting the pick replace the flat threw away the
+    entire raw-domain correction and kept only the trim.
+
+    Real numbers from his calibration store and settings.
+    """
+    from darlaston.live import balance
+
+    measured = (1.3487, 1.0, 3.3238)      # from the flat, raw domain
+    picked = (1.2145, 1.0, 0.9051)        # off the preview, a trim
+
+    composed = balance.sane((measured[0] * picked[0], 1.0,
+                             measured[2] * picked[2]))
+    assert composed == pytest.approx((1.638, 1.0, 3.008), abs=0.01)
+
+    # What actually went into his files, and how far off it was.
+    assert picked[2] / composed[2] < 0.35, \
+        "blue was applied at about a third of what the sensor needed"
+
+    # The composed answer belongs in the same world as an independent
+    # estimate of what that raw needs; the pick alone does not.
+    grey_world_says = (1.545, 1.0, 2.314)
+    assert 0.5 < composed[2] / grey_world_says[2] < 2.0
+    assert picked[2] / grey_world_says[2] < 0.5, "the defect this replaces"
+
+
+def test_a_pick_with_no_flat_behind_it_still_stands_on_its_own():
+    """Composition must not require a calibration that may not exist. With
+    no measured balance the pick is the whole answer, as before."""
+    from darlaston.live import balance
+
+    picked = (1.2145, 1.0, 0.9051)
+    composed = balance.sane((balance.UNITY[0] * picked[0], 1.0,
+                             balance.UNITY[2] * picked[2]))
+    assert composed == pytest.approx(picked, abs=1e-6)

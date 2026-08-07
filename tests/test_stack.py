@@ -638,3 +638,128 @@ def test_arrangement_finds_isolated_specimens_and_refuses_a_smear(tmp_path):
     assert find_specimens(tmp_path) == []
     with pytest.raises(ValueError):
         arrange([], tmp_path / "none.png")
+
+
+def test_a_slow_shutter_silently_swallows_deliberate_pauses():
+    """Nate's report was that the trigger fires during gentle movement.
+    Traced on the synthetic stage, it does no such thing -- what it does is
+    ignore pauses while the previous slice is still being written, and say
+    nothing about it. Six deliberate rack-and-pause gestures against a
+    5.4 s shutter (which is what an unqueued 20 MP capture measured) yield
+    two slices. From the bench that is indistinguishable from firing at the
+    wrong moment: you stop, nothing happens, you move on, and a slice
+    lands at some later pause instead.
+
+    This is the test that says the write queue is a correctness fix and
+    not only a speed one.
+    """
+    def gestures(busy_fields):
+        cam, push = _rig()
+        state = {"busy": 0}
+
+        def fire():
+            if state["busy"] > 0:
+                return False           # exactly what StillCapture.trigger does
+            state["busy"] = busy_fields
+            return True
+
+        def tick():
+            signals = push()
+            if state["busy"] > 0:
+                state["busy"] -= 1
+            return signals
+
+        trig = StackTrigger(fire)
+        trig.MIN_INTERVAL = 0.0
+        trig.arm()
+        for _ in range(20):
+            trig.observe(tick())
+        trig.slice_landed()
+        state["busy"] = 0
+
+        landed = 0
+        for _ in range(6):
+            for _ in range(6):                 # rack a step, deliberately
+                cam.focus_z += 0.15
+                if trig.observe(tick()):
+                    landed += 1
+                    trig.slice_landed()
+            for _ in range(20):                # stop, and wait properly
+                if trig.observe(tick()):
+                    landed += 1
+                    trig.slice_landed()
+        return landed
+
+    # ~12 sharpness fields a second: the field arrives at half of a 24 fps
+    # preview. 65 fields is the 5.4 s per slice measured on a real stack.
+    assert gestures(0) == 6, "the premise: every deliberate pause is a slice"
+    assert gestures(65) < 4, \
+        "a 5.4 s shutter used to swallow most of them; if this now passes, " \
+        "the trigger changed and this test is measuring nothing"
+
+
+def test_a_slice_is_filed_with_the_focus_of_its_own_plane(tmp_path):
+    """`metric` was passed 0.0 at the only call site, so all eighteen
+    slices of Nate's stack filed the field that sequences them as zero.
+
+    And with the write deferred it is no longer enough to read the live
+    metric when the file lands: by then the operator is several planes
+    further on. Each exposure's metric is banked as the shutter fires and
+    spent when its file arrives, in the same order.
+    """
+    from collections import deque
+
+    session = StackSession(tmp_path, subject="diatom")
+    banked = deque()
+
+    for plane, metric in enumerate([12.5, 31.0, 44.25, 30.75], start=1):
+        banked.append(metric)                     # as the shutter fires
+        src = tmp_path / f"cap_{plane}.dng"
+        src.write_bytes(b"raw")
+
+    for plane in range(1, 5):                     # ...as each file lands
+        session.adopt(tmp_path / f"cap_{plane}.dng", metric=banked.popleft())
+
+    filed = [s.metric for s in StackSession.load(session.dir).slices]
+    assert filed == [12.5, 31.0, 44.25, 30.75], \
+        "slices filed with something other than their own plane's focus"
+    assert not any(m == 0.0 for m in filed), "the defect this replaces"
+
+
+def test_a_merge_carries_the_balance_its_slices_were_shot_with(tmp_path):
+    """Grey-world was the only source of the composite's AsShotNeutral, so
+    merging threw away whatever the operator had picked off the screen and
+    substituted "this field averages to grey". Measured on Nate's stack:
+    the slices said (0.8234, 1.0, 1.1049), which is exactly the reciprocal
+    of the gains he picked, and stacked.dng said (0.6471, 1.0, 0.4321).
+
+    A composite that confidently disagrees with every frame it is made of
+    reads as the slices being wrong. They were not.
+    """
+    from darlaston.process import dng
+
+    picked = (0.8234, 1.0, 1.1049)
+    raw = np.full((64, 64), 800, np.uint16)
+    raw[0::2, 1::2] = 1400                 # a decidedly non-grey field
+    path = tmp_path / "slice_001.dng"
+    dng.write_bayer_streamed(
+        path, lambda a, c: raw[a:a + c], 64, 64,
+        preview=dng.make_preview(raw, bayer=True, white=4095),
+        neutral=picked, white=4095)
+
+    assert dng.read_neutral(path) == pytest.approx(picked, abs=1e-3), \
+        "the tag did not survive the round trip"
+    # Grey-world on this frame says something else entirely, which is the
+    # whole point: the two sources disagree, and the slice is the honest one.
+    assert dng.grey_world_neutral(raw) != pytest.approx(picked, abs=1e-2)
+
+
+def test_reading_a_neutral_never_raises_on_a_file_that_has_none(tmp_path):
+    """Provenance is a bonus, never a gate: a merge must not fail because
+    one slice came from somewhere else."""
+    from darlaston.process import dng
+
+    junk = tmp_path / "not.dng"
+    junk.write_bytes(b"II*\x00" + b"\x00" * 64)
+    assert dng.read_neutral(junk) is None
+    assert dng.read_neutral(tmp_path / "absent.dng") is None

@@ -1,7 +1,6 @@
 # Camera support
 
-Run `python -m darlaston.ui.main --list-cameras` to see what your
-machine offers.
+Run `python -m darlaston.ui.main --list-cameras` to see what your machine offers.
 
 ## Supported now
 
@@ -59,9 +58,6 @@ Two traps worth knowing, both handled:
   somewhere deep in a capture.
 
 ### Ordinary USB cameras (V4L2 / UVC) — supported, without raw
-
-Run with `--usb`. This is the 50-to-200-pound class that clamps to an
-eyepiece or screws into a C-mount and appears as `/dev/video0`.
 
 **These cameras do not give you raw, and that is the class, not a
 limitation we could code around.** UVC standardises exactly two

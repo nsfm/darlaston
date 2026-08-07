@@ -105,12 +105,11 @@ msgstr "hold still · {n}/{total}"
 msgid "note.moved.discarded"
 msgstr "discarded, the stage moved"
 
-#. Over the live view after the shutter closes, while the frame is being
-#. calibrated and written. Movement is harmless by now -- this is here so
-#. the pause between slices is explained rather than mysterious.
-msgid "note.writing"
-msgstr "saving"
-
 #. While waiting for the operator to point at a neutral patch.
 msgid "note.wb.point"
 msgstr "point at something grey"
+
+msgid "note.stack_settling"
+msgid_plural "note.stack_settling"
+msgstr[0] "saving the last slice…"
+msgstr[1] "saving the last {count} slices…"

@@ -6,7 +6,11 @@ Originally built for photographing diatom arrangements, _*darlaston*_ is a tool 
 
 Named for **Herbert William Hutton Darlaston** (1867-1949), who prepared nearly a thousand microscope slides in his first year at the bench only to give most of them away. He continued his work for the next fifty years under the promise _Every Slide Perfect_.
 
-## What it does
+## What is it?
+
+<p align="center">
+  <img src="assets/darlaston_ui.jpg" alt="darlaston UI screenshot" width="500">
+</p>
 
 _*darlaston*_ is compatible with most USB microscope cameras and offers a full suite of photomicrography utilities:
 

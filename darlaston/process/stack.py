@@ -474,7 +474,20 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
                          0, 65520).astype(np.uint16)[:, :, ::-1]
     del acc
 
-    neutral = dng.grey_world_neutral(raws[len(raws) // 2])
+    # The slices already carry the answer. Grey-world was the only source
+    # here, so a merge threw away whatever balance the operator had picked
+    # off the screen and substituted the assumption that the field averages
+    # to grey -- which is exactly the assumption `develop` warns about, and
+    # a diatom on a coloured mount is not it. It shows as a composite that
+    # looks confidently neutral beside slices that do not match it: Nate
+    # read that as the slices having lost their white balance, when it was
+    # the composite that had invented one.
+    #
+    # Grey-world stays as the fallback, for a stack merged from slices that
+    # never had a balance to carry.
+    middle = session.dir / session.slices[len(raws) // 2].filename
+    neutral = dng.read_neutral(middle) or dng.grey_world_neutral(
+        raws[len(raws) // 2])
     # Provenance rides along: the middle slice's own tags -- photographer,
     # optics, exposure -- become the composite's. It is one photograph made
     # of many exposures, and it should say who took it and through what.

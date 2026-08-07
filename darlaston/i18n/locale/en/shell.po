@@ -194,3 +194,19 @@ msgstr "White balance applied: gains R {r}  B {b}"
 
 msgid "shell.wb.swatch.tooltip.off"
 msgstr "No white balance applied"
+
+#. Listed in the "still working" question at close. Unlike every other job
+#. there, these are photographs that have already been taken and exist
+#. nowhere but in memory, so the close drains them regardless of the
+#. answer -- this line is why the wait happens, not a request to allow it.
+msgid "shell.quit.job.writing"
+msgid_plural "shell.quit.job.writing"
+msgstr[0] "saving a photograph that has been taken but not yet written"
+msgstr[1] "saving {count} photographs that have been taken but not yet written"
+
+#. Tooltip on the small gauge under the stack window. The gauge itself is
+#. wordless on purpose; this is for somebody who stops to ask what it is.
+msgid "gauge.saving.tooltip"
+msgstr ""
+"{count} exposure(s) still being written.\n"
+"Nothing to wait for -- keep racking."
