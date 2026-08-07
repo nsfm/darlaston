@@ -87,12 +87,18 @@ class StillCapture:
                  on_state: Callable[[str], None] | None = None,
                  on_result: Callable[[CaptureResult], None] | None = None,
                  store: CalibrationStore | None = None,
-                 pipeline=None, writer: WriteQueue | None = None) -> None:
+                 pipeline=None, writer: WriteQueue | None = None,
+                 on_exposed: Callable[[], None] | None = None) -> None:
         self._session = session
         self._settings = settings
         self._store = store or CalibrationStore()
         self._on_state = on_state or (lambda _s: None)
         self._on_result = on_result or (lambda _r: None)
+        #: The exposure is over and the frame is in memory. Distinct from
+        #: `on_result`, which now waits for the queue, and the distinction
+        #: is the point: whoever was told to hold still is released here,
+        #: and whoever needs the file has to wait for the file.
+        self._on_exposed = on_exposed or (lambda: None)
         self._pipeline = pipeline
         self._busy = threading.Lock()
         #: Post-shutter work, off this thread. Shared rather than made
@@ -239,6 +245,12 @@ class StillCapture:
             sensor_white = (1 << depth) - 1
 
             # ---- the operator is free from here ------------------------
+            # Said before the queue, not after it. Deferring the write and
+            # then leaving this until the write finished would have freed
+            # the camera and left the stack trigger deaf for exactly as
+            # long as before: it holds `_pending` from firing until a
+            # slice lands, and a slice landing used to mean a file on disk.
+            self._on_exposed()
             # The pixels are off the sensor and the guard has had its
             # measurement. Everything below this line is arithmetic and
             # file writing, and none of it needs a hand held still on a

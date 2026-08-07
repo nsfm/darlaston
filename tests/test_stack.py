@@ -696,3 +696,31 @@ def test_a_slow_shutter_silently_swallows_deliberate_pauses():
     assert gestures(65) < 4, \
         "a 5.4 s shutter used to swallow most of them; if this now passes, " \
         "the trigger changed and this test is measuring nothing"
+
+
+def test_a_slice_is_filed_with_the_focus_of_its_own_plane(tmp_path):
+    """`metric` was passed 0.0 at the only call site, so all eighteen
+    slices of Nate's stack filed the field that sequences them as zero.
+
+    And with the write deferred it is no longer enough to read the live
+    metric when the file lands: by then the operator is several planes
+    further on. Each exposure's metric is banked as the shutter fires and
+    spent when its file arrives, in the same order.
+    """
+    from collections import deque
+
+    session = StackSession(tmp_path, subject="diatom")
+    banked = deque()
+
+    for plane, metric in enumerate([12.5, 31.0, 44.25, 30.75], start=1):
+        banked.append(metric)                     # as the shutter fires
+        src = tmp_path / f"cap_{plane}.dng"
+        src.write_bytes(b"raw")
+
+    for plane in range(1, 5):                     # ...as each file lands
+        session.adopt(tmp_path / f"cap_{plane}.dng", metric=banked.popleft())
+
+    filed = [s.metric for s in StackSession.load(session.dir).slices]
+    assert filed == [12.5, 31.0, 44.25, 30.75], \
+        "slices filed with something other than their own plane's focus"
+    assert not any(m == 0.0 for m in filed), "the defect this replaces"

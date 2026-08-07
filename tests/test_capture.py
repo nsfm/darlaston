@@ -1026,3 +1026,75 @@ def test_a_decoded_capture_puts_red_where_the_dng_says_red_is(tmp_path):
     assert means[2] > means[0], \
         f"red and blue are swapped in the raw: B,G,R = {means}"
     assert round(means[2]) == 3000 and round(means[0]) == 100
+
+
+def test_the_trigger_is_released_by_the_exposure_not_by_the_file(tmp_path):
+    """Deferring the write is only half the fix, and the half that does
+    nothing on its own.
+
+    StackTrigger holds `_pending` from the moment it fires until a slice
+    lands, and refuses to look at a single frame in between. "A slice
+    landed" used to mean a file on disk. Moving the write to a queue and
+    leaving that alone would have freed the camera and left the trigger
+    deaf for exactly as long as before -- the whole measured fault, still
+    there, behind a fix that looked finished.
+
+    So the capture says when the pixels are off the sensor, separately
+    from saying when the file exists.
+    """
+    import time
+
+    from darlaston.capture.writer import WriteQueue
+
+    cam = MockCamera()
+    cam.open()
+    session = types.SimpleNamespace(backend=cam)
+    settings = Settings(capture_root=str(tmp_path))
+
+    held = threading.Event()
+    order = []
+    done = threading.Event()
+
+    # A queue whose job blocks: the file cannot appear until released.
+    writer = WriteQueue(budget=8 * 1024 * 1024 * 1024, name="test-writer")
+    real_submit = writer.submit
+    writer.submit = lambda n, job, label="": real_submit(
+        n, lambda: (held.wait(20.0), job()), label)
+
+    cap = StillCapture(
+        session, settings, writer=writer,
+        on_exposed=lambda: order.append("exposed"),
+        on_result=lambda r: (order.append("written"), done.set()))
+
+    assert cap.trigger(None, subject="t")
+    for _ in range(500):                       # the exposure, not the write
+        if order:
+            break
+        time.sleep(0.02)
+
+    assert order == ["exposed"], \
+        "the trigger is still waiting on the file, which is the whole fault"
+    assert not done.is_set(), "the premise: the write has not happened yet"
+
+    held.set()
+    assert done.wait(30), "the write never completed"
+    assert order == ["exposed", "written"]
+    cam.close()
+
+
+def test_quitting_waits_for_frames_that_exist_nowhere_but_in_memory(tmp_path):
+    """The writer is a daemon thread, so whatever is still in it when the
+    process goes is gone. Ctrl-C reaches `shutdown` without ever passing
+    through the close question, which is why the wait lives there.
+    """
+    from darlaston.capture.writer import WriteQueue
+
+    q = WriteQueue(budget=1024 * 1024 * 1024, name="test-shutdown-writer")
+    landed = []
+    slow = threading.Event()
+    for i in range(3):
+        assert q.submit(1024, lambda i=i: (slow.wait(0.2), landed.append(i)))
+
+    assert q.depth, "the premise: work is outstanding"
+    assert q.drain(timeout=20.0), "gave up on frames it had accepted"
+    assert landed == [0, 1, 2], "quit with captures still unwritten"

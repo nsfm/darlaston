@@ -167,7 +167,7 @@ def test_the_budget_is_a_share_of_the_machine_not_a_constant():
     assert b >= 6 * 40 * MB or b == 256 * MB
 
 
-@pytest.mark.parametrize("n", [1, 5, 20])
+@pytest.mark.parametrize("n", [1, 5, WriteQueue.MAX_PENDING])
 def test_the_high_water_mark_says_whether_the_queue_was_ever_the_problem(n):
     q = WriteQueue(budget=1000 * MB)
     gate = threading.Event()
@@ -240,3 +240,14 @@ def test_a_cramped_machine_gets_a_share_not_the_same_flat_number():
     # question rather than an absolute one.
     for gb in (0.25, 0.5, 1, 2, 8, 32, 128):
         assert budget_when(gb) <= gb * 1024 * MB / 4, f"{gb} GB machine"
+
+
+def test_a_dozen_is_the_depth_because_it_drains_while_it_fills():
+    """Depth absorbs a burst of racking; it does not hold a session. The
+    queue is writing the whole time it is filling, so a deeper one only
+    hides a disk that cannot keep up."""
+    assert WriteQueue.MAX_PENDING == 12
+    # And the two bounds have to be able to bite in either order: on a
+    # 20 MP camera the bytes run out first, on a webcam the slots do.
+    q = WriteQueue(budget=10_000 * MB)
+    assert q.room_for(40 * MB * 3), "a single 20 MP frame does not fit"

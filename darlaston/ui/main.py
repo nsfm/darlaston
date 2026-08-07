@@ -17,6 +17,7 @@ import signal
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -98,6 +99,8 @@ class Bridge(QtCore.QObject):
     status = QtCore.Signal(object)
     capture_state = QtCore.Signal(str)
     capture_result = QtCore.Signal(object)
+    #: The shutter is done, the file is not. Only the stack trigger cares.
+    capture_exposed = QtCore.Signal()
     timelapse = QtCore.Signal(object)
     stitch = QtCore.Signal(object)
     stack_merge = QtCore.Signal(object)
@@ -141,6 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.status.connect(self._on_status)
         self.bridge.capture_state.connect(self._on_capture_state)
         self.bridge.capture_result.connect(self._on_capture_result)
+        self.bridge.capture_exposed.connect(self._on_capture_exposed)
         self.bridge.calib_progress.connect(self._on_calib_progress)
         self.bridge.banked.connect(self._on_banked)
         self.bridge.banking.connect(self._on_banking)
@@ -156,7 +160,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.capture = StillCapture(self.session, self.settings,
                                     self.bridge.capture_state.emit,
                                     self.bridge.capture_result.emit,
-                                    store=self.store, pipeline=self.pipeline)
+                                    store=self.store, pipeline=self.pipeline,
+                                    on_exposed=self.bridge.capture_exposed.emit)
         self.timelapse = Timelapse(self.capture, self.bridge.timelapse.emit)
         self.bridge.timelapse.connect(self._on_timelapse)
         self.bridge.stitch.connect(self._on_stitch)
@@ -178,6 +183,12 @@ class MainWindow(QtWidgets.QMainWindow):
         #: at. A stack has no absolute Z, so this number is the only thing
         #: that sequences its slices.
         self._focus_at_capture = 0.0
+        #: One metric per exposed-but-unfiled slice. A deque rather than a
+        #: single value because several can now be in the air at once, and
+        #: reading the live metric when the file finally lands would file
+        #: each slice with the focus of whatever plane the operator had
+        #: reached by then -- several slices later.
+        self._exposed_metrics: deque[float] = deque()
         self.calibration = CalibrationService(self.session, self.store,
                                               self.bridge.calib_progress.emit)
         self.opportunist = Opportunist(self.session,
@@ -1301,6 +1312,18 @@ class MainWindow(QtWidgets.QMainWindow):
         elif not result.ok and self.stack_session is not None:
             self.stack_trigger.capture_failed()
 
+    def _on_capture_exposed(self) -> None:
+        """The frame is off the sensor. Let the trigger watch again.
+
+        The baseline for "has the focus moved since the last slice" is the
+        sharpness field as of now, which is the plane just captured. Waiting
+        for the file instead would hold the trigger through the write and
+        make it miss the next pause, which is the whole fault being fixed.
+        """
+        if self.stack_session is not None:
+            self._exposed_metrics.append(self._focus_at_capture)
+            self.stack_trigger.slice_landed()
+
     def _adopt_slice(self, result: CaptureResult) -> None:
         """A slice landed. Adopt it, advance the trigger, feed the assembly.
 
@@ -1309,6 +1332,10 @@ class MainWindow(QtWidgets.QMainWindow):
         revisit -- a dialog would cost more than the retake. The trigger goes
         back to watching, and the same pause will fire it again.
         """
+        # Popped before the moved check, so a discarded slice takes its
+        # metric with it and the queue stays in step with the files.
+        metric = (self._exposed_metrics.popleft()
+                  if self._exposed_metrics else self._focus_at_capture)
         if result.moved:
             result.path.unlink(missing_ok=True)
             self.stack_trigger.capture_failed()
@@ -1318,9 +1345,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # was hardcoded to 0.0, so every slice of every stack ever taken
         # filed the field that is meant to sequence them as zero -- all
         # eighteen of Nate's, checked in the manifest.
-        s = self.stack_session.adopt(result.path,
-                                     metric=self._focus_at_capture)
-        self.stack_trigger.slice_landed()
+        s = self.stack_session.adopt(result.path, metric=metric)
         if self.mosaic is not None and self._tile_anchor is None:
             # First slice anchors the tile: its position is the tile's
             # position, and moving ~a third of a field from here is the
@@ -1436,6 +1461,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.mosaic is not None:
                 # Chip off mid-mosaic keeps what was racked: the current
                 # field's slices seal into their tile right now.
+                self._settle_slices()
                 self._seal_tile_stack()
                 self.stack_window.hide()
                 return
@@ -1445,18 +1471,75 @@ class MainWindow(QtWidgets.QMainWindow):
             # explicit endings, and they live in the window.
             if not self._stack_ending:
                 self.stack_window.hide()
+                self._settle_slices()
                 self.stack_session = None
 
     _stack_ending = False
+    #: Inside `_settle_slices`, which turns the event loop and so can be
+    #: re-entered by the very click that started it.
+    _settling = False
+
+    def _settle_slices(self, timeout: float = 30.0) -> None:
+        """Let every exposed slice land and be filed before a stack ends.
+
+        Deferring the write put a gap between "the shutter fired" and "the
+        file exists", and every ending here closes `stack_session` in that
+        gap. A slice still in the queue would arrive at a window that no
+        longer has a stack to adopt it into: orphaned beside the capture
+        folder, absent from the manifest, and missing from the merge --
+        with nothing said, because from the app's side nothing went wrong.
+
+        Turning the event loop rather than only waiting: adoption happens
+        on this thread in response to a queued signal, so a bare `drain`
+        would return with the last few results still sitting unprocessed.
+
+        Which means this can be re-entered -- `processEvents` delivers
+        clicks as readily as it delivers results, and Finish is a button
+        somebody waiting can press twice. Once through is enough; the
+        second call has nothing left to wait for anyway.
+        """
+        if self._settling:
+            return
+        app = QtWidgets.QApplication.instance()
+
+        def turn() -> None:
+            if app is not None:
+                app.processEvents(
+                    QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            else:
+                time.sleep(0.05)
+
+        if self.capture.writing:
+            self.strip.set_note(n_("note.stack_settling",
+                                   self.capture.writing))
+        self._settling = True
+        try:
+            deadline = time.monotonic() + timeout
+            while self.capture.writing and time.monotonic() < deadline:
+                turn()
+            turn()                  # the last results, into _adopt_slice
+        finally:
+            self._settling = False
+        if self.capture.writing:
+            _log.error("%d slice(s) still unwritten as the stack ended",
+                       self.capture.writing)
 
     def _finish_stack(self) -> None:
         """Finish & merge, from the window. The window stays: the progress
         bar and the result belong where the operator was already looking."""
-        if self.stack_session is None or len(self.stack_session.slices) < 2:
+        if self.stack_session is None:
             self.assembly.set_merging(None, None,
                                       "need at least two slices")
             return
         self.stack_trigger.disarm()
+        # Before the count is read, not after: the last slices of a stack
+        # are exactly the ones most likely to still be in the queue when
+        # somebody presses Finish.
+        self._settle_slices()
+        if len(self.stack_session.slices) < 2:
+            self.assembly.set_merging(None, None,
+                                      "need at least two slices")
+            return
         done, self.stack_session = self.stack_session, None
         self._stack_ending = True
         self.focus.stack.setChecked(False)
@@ -2383,6 +2466,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_shut", False):
             return
         self._shut = True
+        # First, and before the seal below reads the slice list. Frames
+        # that have been exposed exist nowhere but in this process, and
+        # the writer is a daemon thread: whatever is still in it when this
+        # returns is gone. Ctrl-C arrives here too, which is why the wait
+        # lives in `shutdown` rather than in `closeEvent` -- the signal
+        # path never passes through the close question at all.
+        try:
+            if self.capture.writing and not self.capture.drain(timeout=20.0):
+                _log.error("quit with %d capture(s) unwritten",
+                           self.capture.writing)
+        except Exception:
+            pass                   # closing must never be blocked
         # A field mid-stack at quit still becomes its tile: the manifest
         # write is what matters -- the merge can wait for the stitcher's
         # merge-on-demand another day.
@@ -2462,13 +2557,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 event.ignore()
                 return
             _log.warning("closing while still running: %s", ", ".join(busy))
-        # After the question, not before it: whatever the operator decided
-        # about the long jobs, frames already off the sensor still get
-        # their chance to land. This is a bounded wait on work that is
-        # nearly done, not a job that could run for minutes.
-        if self.capture.writing and not self.capture.drain(timeout=20.0):
-            _log.error("closed with %d capture(s) still unwritten",
-                       self.capture.writing)
+        # `shutdown` waits for the write queue, and is reached from here
+        # and from Ctrl-C both.
         self.shutdown()
         super().closeEvent(event)
 

@@ -124,3 +124,11 @@ msgid "note.slice_landed.behind"
 msgid_plural "note.slice_landed.behind"
 msgstr[0] "slice ✓, still saving one. Keep racking, it will catch up"
 msgstr[1] "slice ✓, still saving {count}. Keep racking, it will catch up"
+
+#. While a stack finishes and the last exposed slices are still being
+#. written. {count} is how many. Brief, and only ever seen when somebody
+#. presses Finish while the queue is still catching up.
+msgid "note.stack_settling"
+msgid_plural "note.stack_settling"
+msgstr[0] "saving the last slice…"
+msgstr[1] "saving the last {count} slices…"

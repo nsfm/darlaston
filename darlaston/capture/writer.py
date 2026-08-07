@@ -88,7 +88,12 @@ class WriteQueue:
     #: Never more than this many outstanding regardless of size. A guard
     #: against a small-sensor camera queueing hundreds of tiny frames and
     #: turning a crash into hundreds of lost captures rather than a few.
-    MAX_PENDING = 24
+    #: A dozen is Nate's number and the right one: the queue drains the
+    #: whole time it is filling, so depth is there to absorb a burst of
+    #: racking, not to hold a session. Twelve 20 MP frames is about half a
+    #: gigabyte and about a minute of writing, and anything deeper is a
+    #: disk that cannot keep up being hidden rather than reported.
+    MAX_PENDING = 12
 
     #: The watermark. Past this share of the budget the queue is no longer
     #: absorbing the delay, it is only postponing it, and the operator is
