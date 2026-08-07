@@ -212,9 +212,15 @@ def test_every_long_job_the_window_starts_is_one_the_guard_knows(win):
     import inspect
     import re
 
+    #: Threads short enough that asking about them would be noise. A slice
+    #: read is about a fifth of a second and produces a preview, not a
+    #: file -- losing one costs a redraw. Named rather than pattern-matched
+    #: so adding a long job under a new name still fails this.
+    BRIEF = {"slice-preview"}
+
     source = inspect.getsource(type(win))
     started = set(re.findall(r'name="([a-z-]+)"\)\.start\(\)', source))
     assert started, "the search found no threads at all, so it proves nothing"
-    unguarded = started - set(win.LONG_JOBS)
+    unguarded = started - set(win.LONG_JOBS) - BRIEF
     assert not unguarded, (
         f"threads nobody would be warned about: {sorted(unguarded)}")

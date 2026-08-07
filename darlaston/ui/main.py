@@ -32,6 +32,7 @@ from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
 from .. import __version__, log
 from ..live.focus import Illumination, Region
+from ..live.cell import Newest
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
@@ -75,6 +76,7 @@ class Bridge(QtCore.QObject):
     stitch = QtCore.Signal(object)
     stack_merge = QtCore.Signal(object)
     tile_merge = QtCore.Signal(object)
+    slice_preview = QtCore.Signal(object)
     wiggle = QtCore.Signal(object)
     calib_progress = QtCore.Signal(object)
     banked = QtCore.Signal(int, int)
@@ -101,6 +103,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.bridge = Bridge()
         self.bridge.signals.connect(self._on_signals)
+        #: Newest-wins between the analysis thread and this one. Qt's
+        #: queued connection is a FIFO with no bound, so a stall here does
+        #: not drop frames, it delays them -- and each one waiting holds a
+        #: 6.65 MB preview. See `live/cell.Newest`.
+        self._newest: Newest = Newest()
+        self.bridge.slice_preview.connect(self._on_slice_preview)
+        #: Set while a slice is being read for the assembly preview.
+        self._reading_slice = threading.Event()
         self.bridge.status.connect(self._on_status)
         self.bridge.capture_state.connect(self._on_capture_state)
         self.bridge.capture_result.connect(self._on_capture_result)
@@ -108,7 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.bridge.banked.connect(self._on_banked)
         self.bridge.banking.connect(self._on_banking)
 
-        self.pipeline = LivePipeline(self.bridge.signals.emit,
+        self.pipeline = LivePipeline(self._publish_signals,
                                      illumination=Illumination.BRIGHTFIELD)
         self.session = CameraSession(make_backend,
                                      self.bridge.status.emit,
@@ -1148,16 +1158,64 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_frame = (w, h)
             self._tile_preview = (self._last_preview.copy()
                                   if self._last_preview is not None else None)
-        try:
-            from ..process.stitch import read_bayer_dng
-            self.assembly.add_slice(
-                read_bayer_dng(self.stack_session.dir / s.filename)[::2, ::2])
-        except Exception:
-            pass                       # the preview must never block capture
+        self._read_slice_for_preview(self.stack_session.dir / s.filename)
         if self.mosaic is not None:
             self.strip.set_note(_("note.slice_landed.first", n=s.index))
         else:
             self.strip.set_note(_("note.slice_landed", n=s.index))
+
+    def _read_slice_for_preview(self, path) -> None:
+        """Fold a landed slice into the assembly preview, off this thread.
+
+        Measured on a 20 MP 12-bit slice, which is the camera this was
+        written for: `read_bayer_dng` takes 208 ms, of which only 8.6 ms is
+        reading the file -- the rest is unpacking 12-bit samples. Done here
+        it froze the window for a quarter of a second at exactly the moment
+        the operator had stopped racking and was watching for the preview,
+        and a sixty-slice stack spent fifteen seconds that way.
+
+        A worker really does help, which was worth checking rather than
+        assuming: the work is numpy ufuncs over twenty million samples and
+        they release the GIL, so the worst stall on this thread measured
+        12 ms against 297 ms. Pure-Python parsing would have moved the cost
+        without freeing anything.
+
+        `add_slice` itself stays here. It is 35 ms, it owns the assembly's
+        accumulators, and it runs once per rack-and-pause rather than per
+        frame -- moving it would mean sharing that state across threads for
+        a seventh of the saving.
+        """
+        if self._reading_slice.is_set():
+            # Two slices landing inside one read is possible on a fast
+            # rack. The preview is a running composite, so the newer one
+            # would be folded in over a stale accumulator; skipping it
+            # loses a preview frame, not a slice.
+            _log.debug("slice preview skipped: a read is still running")
+            return
+        self._reading_slice.set()
+
+        def work() -> None:
+            try:
+                from ..process.stitch import read_bayer_dng
+                self.bridge.slice_preview.emit(read_bayer_dng(path)[::2, ::2])
+            except Exception:
+                # The preview must never block capture -- but a slice that
+                # cannot be read is worth knowing about, because the merge
+                # will read the same file later.
+                _log.exception("could not read %s for the assembly preview",
+                               path)
+            finally:
+                self._reading_slice.clear()
+
+        threading.Thread(target=work, daemon=True,
+                         name="slice-preview").start()
+
+    @QtCore.Slot(object)
+    def _on_slice_preview(self, quarter) -> None:
+        try:
+            self.assembly.add_slice(quarter)
+        except Exception:
+            _log.exception("the assembly preview could not fold in a slice")
 
     def _adopt_tile(self, result: CaptureResult) -> None:
         h, w = ((self._last_preview.shape[:2])
@@ -1960,8 +2018,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- live ------------------------------------------------------------
 
+    def _publish_signals(self, s: LiveSignals) -> None:
+        """Hand a frame to the interface. Runs on the analysis thread.
+
+        The wake-up carries nothing. Qt's queued connection is a FIFO with
+        no bound, so emitting the frame itself meant a stall on the
+        interface thread delivered every backed-up frame in turn, oldest
+        first -- the operator watching their hand as it was a second ago.
+        The cell holds the newest and the slot reads it there.
+        """
+        if self._newest.put(s):
+            self.bridge.signals.emit(None)
+
     @QtCore.Slot(object)
-    def _on_signals(self, s: LiveSignals) -> None:
+    def _on_signals(self, _wake) -> None:
+        # The payload is deliberately nothing: by the time this runs the
+        # cell may hold a newer frame than the one that asked for it, and
+        # that newer one is what is worth drawing.
+        s = self._newest.take()
+        if s is None:
+            return
         # Not while a guided routine is running: banking a field mid-routine
         # is startling, and during a dark capture the lamp is off, so anything
         # taken then would be a black frame masquerading as a flat.
