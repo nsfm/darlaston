@@ -116,9 +116,6 @@ class WriteQueue:
         self._running = 0
         self._worker: threading.Thread | None = None
         self._stopping = False
-        #: Highest depth reached, for saying afterwards whether the queue
-        #: was ever the thing in the way.
-        self.high_water = 0
         #: What a write has actually taken here, smoothed. Measured rather
         #: than assumed: it is the sensor's size, the disk, and how busy
         #: the live preview is, and no constant knows any of those. A
@@ -150,7 +147,6 @@ class WriteQueue:
                 return False
             self._bytes += nbytes
             self._queue.append((nbytes, job, label))
-            self.high_water = max(self.high_water, self.depth)
             self._ensure_worker()
             self._wake.notify()
             return True
@@ -200,13 +196,6 @@ class WriteQueue:
         if depth == 0 or began is None or typical <= 0.0:
             return depth, 0.0
         return depth, min(0.95, (time.monotonic() - began) / typical)
-
-    @property
-    def fullness(self) -> float:
-        """How full, 0 to 1, by whichever bound is closer to biting."""
-        by_bytes = self._bytes / self.budget if self.budget else 0.0
-        by_count = self.depth / self.MAX_PENDING
-        return min(1.0, max(by_bytes, by_count))
 
     def room_for(self, nbytes: int) -> bool:
         """Would `submit` accept this? Asked before starting an exposure.

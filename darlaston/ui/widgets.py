@@ -1214,19 +1214,28 @@ class SaveGauge(QtWidgets.QWidget):
         super().__init__(parent)
         self._depth = 0
         self._fraction = 0.0
+        self._pressed = False
         self.setFixedHeight(self.HEIGHT)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
                            QtWidgets.QSizePolicy.Policy.Fixed)
         self.setVisible(False)
 
-    def set_progress(self, depth: int, fraction: float) -> None:
-        """`(depth, fraction)` straight from `WriteQueue.progress`."""
+    def set_progress(self, depth: int, fraction: float,
+                     pressed: bool = False) -> None:
+        """`(depth, fraction)` from `WriteQueue.progress`, plus whether the
+        queue has passed its watermark.
+
+        `pressed` is the thing a depth count cannot say on its own. Eight
+        outstanding writes on a roomy machine is the queue working; eight
+        on a cramped one is the next shutter press about to be refused,
+        and the cells look identical either way.
+        """
         depth = max(0, int(depth))
         fraction = min(1.0, max(0.0, float(fraction)))
-        if (depth, round(fraction, 3)) == (self._depth,
-                                           round(self._fraction, 3)):
+        if (depth, round(fraction, 3), pressed) == (
+                self._depth, round(self._fraction, 3), self._pressed):
             return
-        self._depth, self._fraction = depth, fraction
+        self._depth, self._fraction, self._pressed = depth, fraction, pressed
         self.setVisible(depth > 0)
         if depth:
             self.setToolTip(_("gauge.saving.tooltip", count=depth))
@@ -1264,9 +1273,14 @@ class SaveGauge(QtWidgets.QWidget):
                     # four things are happening at once.
                     p.fillRect(QtCore.QRectF(x, self.height() - 1, span, 1),
                                QtGui.QColor("#4a3f28"))
-            if self._depth > self.LEGIBLE:
-                # Past what cells can say, the last one goes solid rather
-                # than the row silently under-reporting the backlog.
+            if self._pressed or self._depth > self.LEGIBLE:
+                # A solid rule closing the row, for two situations that
+                # amount to the same warning: more outstanding than cells
+                # can show, or past the watermark and about to start
+                # refusing captures. Either way the row is understating
+                # what sits behind it, and understating that quietly is
+                # how a shutter comes to ignore somebody without saying
+                # so -- which is the fault this whole branch began with.
                 p.fillRect(QtCore.QRectF(full - 3, 0, 3, self.height()),
                            BRASS)
 

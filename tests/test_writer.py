@@ -167,19 +167,6 @@ def test_the_budget_is_a_share_of_the_machine_not_a_constant():
     assert b >= 6 * 40 * MB or b == 256 * MB
 
 
-@pytest.mark.parametrize("n", [1, 5, WriteQueue.MAX_PENDING])
-def test_the_high_water_mark_says_whether_the_queue_was_ever_the_problem(n):
-    q = WriteQueue(budget=1000 * MB)
-    gate = threading.Event()
-    q.submit(MB, lambda: gate.wait(5.0))
-    for _ in range(n - 1):
-        q.submit(MB, lambda: None)
-    gate.set()
-    _drained(q)
-    assert q.high_water == n
-    assert q.idle
-
-
 # ---- the watermark ---------------------------------------------------------
 
 def test_the_watermark_warns_before_the_shutter_starts_refusing():
@@ -212,7 +199,6 @@ def test_pressure_is_reported_by_whichever_bound_bites_first():
         q.submit(1, lambda: hold.wait(5.0))
     assert q.pending_bytes < q.budget * 0.01, "the byte bound is nowhere near"
     assert q.under_pressure, "full of slots and calling itself idle"
-    assert q.fullness >= WriteQueue.PRESSURE
     hold.set()
     _drained(q)
 
@@ -318,3 +304,27 @@ def test_the_gauge_paints_at_every_depth_without_falling_over(qapp):
             img.fill(QtGui.QColor("#0b0d0b"))
             g.render(img)                       # must not raise
     assert g.toolTip(), "no way to ask what it is"
+
+
+def test_the_gauge_closes_the_row_when_the_queue_is_under_pressure(qapp):
+    """A depth count cannot say this on its own. Eight outstanding writes
+    on a roomy machine is the queue working; eight on a cramped one is the
+    next shutter press about to be refused, and the cells look identical
+    either way."""
+    from PySide6 import QtGui
+    from darlaston.ui.widgets import SaveGauge
+
+    def render(depth, pressed):
+        g = SaveGauge()
+        g.resize(120, SaveGauge.HEIGHT)
+        g.set_progress(depth, 0.3, pressed=pressed)
+        img = QtGui.QImage(120, SaveGauge.HEIGHT,
+                           QtGui.QImage.Format.Format_RGB32)
+        img.fill(QtGui.QColor("#0b0d0b"))
+        g.render(img)
+        # The closing rule, at the right-hand edge.
+        return QtGui.QColor(img.pixel(118, SaveGauge.HEIGHT // 2)).name()
+
+    calm, pressed = render(3, False), render(3, True)
+    assert calm != pressed, "under pressure and drawn identically"
+    assert pressed.lower() == "#c89b4a", "the closing rule is not amber"

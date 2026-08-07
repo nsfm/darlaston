@@ -1330,7 +1330,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_gauge(self) -> None:
         """Ten times a second, and cheap: two ints off the queue."""
-        self.save_gauge.set_progress(*self.capture.progress())
+        self.save_gauge.set_progress(*self.capture.progress(),
+                                     pressed=self.capture.catching_up)
 
     def _on_capture_exposed(self) -> None:
         """The frame is off the sensor. Let the trigger watch again.
