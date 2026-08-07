@@ -56,7 +56,11 @@ def test_no_position_until_first_lock():
     t.advance(None, 0.0, (100, 100))
     assert t.position is None, "a map must never be seeded from nothing"
     t.advance((1.0, 1.0), 0.9, (100, 100))
-    assert t.position is not None
+    # The value, not merely that there is one: a property that answered
+    # (0.0, 0.0) from the first frame would satisfy "is not None" and would
+    # be the bug this guards against. The sense is inverted on purpose --
+    # when the scene slides left, the view has moved right over the slide.
+    assert t.position == (-1.0, -1.0)
 
 
 # ---- the map's banking policy ------------------------------------------------
@@ -165,9 +169,14 @@ def test_guard_reads_near_zero_when_still():
 
 
 def test_guard_stays_silent_without_a_lock():
-    _cam, pipe, _push, _ = _rig()
+    cam, pipe, push, _ = _rig()
     assert pipe.guard_begin() is None, \
-        "no frames yet, nothing to measure against — the guard must not arm"
+        "no frames yet, nothing to measure against -- the guard must not arm"
+    # And it does arm once there is something to measure against, or the
+    # assertion above would hold just as well for a guard that never armed.
+    push(); push()
+    assert pipe.guard_begin() is not None, "the guard never arms at all"
+    cam.close()
 
 
 def test_guard_reports_unmeasurable_as_infinite():
@@ -186,10 +195,20 @@ def test_guard_reports_unmeasurable_as_infinite():
 
 
 def test_guard_times_out_to_none_when_no_frames_arrive():
+    import time as _t
+
     cam, pipe, push, _ = _rig()
     push(); push()
     token = pipe.guard_begin()
+    t0 = _t.perf_counter()
     assert pipe.guard_measure(token, timeout=0.05) is None
+    waited = _t.perf_counter() - t0
+    # It *waited*, rather than answering None straight away. Without this
+    # the test cannot tell a timeout from a guard that never measures
+    # anything -- and a capture that returns instantly having measured
+    # nothing is the failure, not the timeout.
+    assert waited >= 0.04, f"returned after {waited * 1e3:.0f} ms; never waited"
+    assert waited < 1.0, f"waited {waited:.2f}s for a 0.05s timeout"
     cam.close()
 
 
