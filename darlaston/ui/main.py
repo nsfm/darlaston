@@ -2307,18 +2307,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         from .capture_ui import ScaleBarDialog
 
-        sample = None
+        sample, shrink = None, 1.0
         if self._last_preview is not None:
             frame = self._last_preview
             h, w = frame.shape[:2]
             side = min(h, w) // 2
             crop = frame[h - side:h, max(0, w - side * 2):w]
             if crop.size:
+                shrink = 470.0 / crop.shape[1]
                 sample = cv2.resize(
                     crop, (470, max(1, int(470 * crop.shape[0]
                                            / crop.shape[1]))),
                     interpolation=cv2.INTER_AREA)
-        dialog = ScaleBarDialog(self.settings, self, sample=sample)
+        um = self._preview_um_per_px(
+            self._last_preview.shape[1] if self._last_preview is not None
+            else 0)
+        dialog = ScaleBarDialog(self.settings, self, sample=sample,
+                                um_per_px=um, sample_scale=shrink)
         dialog.setStyleSheet(theme.stylesheet())
         dialog.exec()
 
@@ -2476,7 +2481,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     corner=self.settings.scale_bar_corner,
                     size=self.settings.scale_bar_size,
                     label_at=self.settings.scale_bar_label,
-                    plain_units=self.settings.scale_bar_plain_units)
+                    plain_units=self.settings.scale_bar_plain_units,
+                    opacity=self.settings.scale_bar_opacity)
         self.view.set_frame(shown, s.peaking)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture

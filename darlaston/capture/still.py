@@ -456,6 +456,7 @@ class StillCapture:
                         corner=self._settings.scale_bar_corner,
                         size=self._settings.scale_bar_size,
                         label_at=self._settings.scale_bar_label,
+                        opacity=self._settings.scale_bar_opacity,
                         plain_units=self._settings.scale_bar_plain_units)
                 if not develop.write_jpeg(jpeg, image,
                                           self._settings.jpeg_quality):

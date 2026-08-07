@@ -117,6 +117,9 @@ class Settings:
     #: Which side of the rule the label sits on. "auto" is the inside:
     #: below in a top corner, above in a bottom one.
     scale_bar_label: str = "auto"
+    #: How solid the mark is, 0.15 to 1. A bar is a reference rather than
+    #: a caption, so it can afford to sit under the picture a little.
+    scale_bar_opacity: float = 1.0
     #: Draw the bar over the live view as well, so what is on screen is
     #: what the photograph will carry.
     scale_bar_live: bool = False

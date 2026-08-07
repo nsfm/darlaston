@@ -16,6 +16,7 @@ from ..i18n import N_, _
 from ..session.settings import (TOKENS, Settings, filename_problem,
                                 pictures_dir)
 from . import theme
+from ..process import scalebar
 from .framed import FramedDialog
 
 
@@ -423,9 +424,13 @@ class ScaleBarDialog(QtWidgets.QDialog):
     settings.
     """
 
-    def __init__(self, settings, parent=None, sample=None) -> None:
+    def __init__(self, settings, parent=None, sample=None,
+                 um_per_px=None, sample_scale=1.0) -> None:
         super().__init__(parent)
         self._settings = settings
+        #: The real scale, and how much the sample was shrunk to fit.
+        self._um = float(um_per_px) if um_per_px else 0.0
+        self._scale = float(sample_scale) or 1.0
         self._sample = sample if sample is not None else _newest_capture(
             settings.capture_root)
         self.setWindowTitle(_("capture.bar.title"))
@@ -464,6 +469,12 @@ class ScaleBarDialog(QtWidgets.QDialog):
         at = self.label_at.findData(settings.scale_bar_label)
         self.label_at.setCurrentIndex(at if at >= 0 else 0)
 
+        self.opacity = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.opacity.setRange(int(scalebar.MIN_OPACITY * 100), 100)
+        self.opacity.setValue(int(round(settings.scale_bar_opacity * 100)))
+        self.opacity.setToolTip(_("capture.bar.opacity.tooltip"))
+        self.opacity.valueChanged.connect(self._repaint)
+
         self.plain = QtWidgets.QCheckBox(_("capture.bar.plain.label"))
         self.plain.setChecked(settings.scale_bar_plain_units)
         self.plain.setToolTip(_("capture.bar.plain.tooltip"))
@@ -480,8 +491,16 @@ class ScaleBarDialog(QtWidgets.QDialog):
         form.addRow(_("capture.bar.size.label"), self.size)
         form.addRow(_("capture.bar.corner.label"), self.corner)
         form.addRow(_("capture.bar.label.label"), self.label_at)
+        form.addRow(_("capture.bar.opacity.label"), self.opacity)
         form.addRow("", self.plain)
 
+        if not self._um:
+            warn = QtWidgets.QLabel(_("capture.bar.no_scale"))
+            warn.setProperty("role", "key")
+            warn.setWordWrap(True)
+            lay_warn = warn
+        else:
+            lay_warn = None
         note = QtWidgets.QLabel(_("capture.bar.note"))
         note.setProperty("role", "key")
         note.setWordWrap(True)
@@ -496,6 +515,8 @@ class ScaleBarDialog(QtWidgets.QDialog):
         lay.setContentsMargins(18, 16, 18, 14)
         lay.setSpacing(12)
         lay.addWidget(self.shot)
+        if lay_warn is not None:
+            lay.addWidget(lay_warn)
         lay.addLayout(form)
         lay.addWidget(note)
         lay.addWidget(buttons)
@@ -514,7 +535,8 @@ class ScaleBarDialog(QtWidgets.QDialog):
                       corner=str(self.corner.currentData()),
                       size=str(self.size.currentData()),
                       label_at=str(self.label_at.currentData()),
-                      plain_units=self.plain.isChecked())
+                      plain_units=self.plain.isChecked(),
+                      opacity=self.opacity.value() / 100.0)
         h, w = img.shape[:2]
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).copy()
         qi = QtGui.QImage(rgb.data, w, h, 3 * w,
@@ -522,13 +544,24 @@ class ScaleBarDialog(QtWidgets.QDialog):
         self.shot.setPixmap(QtGui.QPixmap.fromImage(qi))
 
     def _sample_um(self) -> float:
-        """Micrometres per pixel for the preview, not for the capture.
+        """Micrometres per pixel for the sample as it is shown.
 
-        Chosen so the bar lands at a believable fraction of the frame
-        whatever the sample is: this window is about how the bar looks,
-        and a real scale on an arbitrary crop would sometimes produce no
-        bar at all and teach the operator nothing.
+        The real number when the window was given one. It used to be a
+        made-up value chosen so a bar always appeared, and that is exactly
+        what hid a real fault: Nate's camera had no pixel pitch, so the
+        photographs and the live view correctly drew nothing while this
+        window cheerfully showed him a bar. A preview that cannot fail
+        cannot warn.
+
+        Cropping does not change micrometres per pixel, since it is a
+        property of one pixel. Resizing does, and the window resizes to
+        fit, so the scale is corrected by exactly that factor.
         """
+        if self._um and self._scale:
+            return self._um / self._scale
+        # No scale known. Fall back to something that draws, and say so:
+        # the operator came here to choose a style and should be able to,
+        # but they must not leave believing their files will carry a bar.
         return 200.0 / max(1, self._sample.shape[1]) * 3.0
 
     def _save(self) -> None:
@@ -538,6 +571,7 @@ class ScaleBarDialog(QtWidgets.QDialog):
         self._settings.scale_bar_size = str(self.size.currentData())
         self._settings.scale_bar_label = str(self.label_at.currentData())
         self._settings.scale_bar_plain_units = self.plain.isChecked()
+        self._settings.scale_bar_opacity = self.opacity.value() / 100.0
         self._settings.save()
         self.accept()
 

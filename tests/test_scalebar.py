@@ -261,3 +261,44 @@ def test_the_shared_resolver_prefers_the_profile_and_falls_back_to_the_sdk():
     assert sensor_pitch(unknown, info) == 4.8
     assert sensor_pitch(unknown, None) is None
     assert sensor_pitch(unknown, types.SimpleNamespace(resolutions=())) is None
+
+
+# ---- opacity ---------------------------------------------------------------
+
+def test_opacity_thins_the_whole_mark_and_not_only_its_ink():
+    """One value over furniture and type together. Blending them
+    separately would give a legible label on a ghostly rule, which reads
+    as a rendering fault rather than as a choice."""
+    solid, faint = _frame(1600, 1100), _frame(1600, 1100)
+    assert scalebar.draw(solid, 1.0, style="scrim", opacity=1.0)
+    assert scalebar.draw(faint, 1.0, style="scrim", opacity=0.4)
+
+    off_solid = np.abs(solid.astype(int) - 128).max()
+    off_faint = np.abs(faint.astype(int) - 128).max()
+    assert off_faint < off_solid * 0.6, "barely thinned"
+    # And it is still in the same place, covering the same area.
+    assert ((solid != 128).any(axis=2)).sum() > 0
+    assert ((faint != 128).any(axis=2)).sum() > 0
+
+
+def test_opacity_has_a_floor_so_the_control_cannot_erase_the_bar():
+    """A slider that reaches zero is a second off switch, hidden inside a
+    presentation control, that leaves the toggle above it claiming the bar
+    is on."""
+    img = _frame(1600, 1100)
+    assert scalebar.draw(img, 1.0, opacity=0.0)
+    assert (img != 128).any(), "opacity 0 erased it"
+
+    floor = _frame(1600, 1100)
+    scalebar.draw(floor, 1.0, opacity=scalebar.MIN_OPACITY)
+    assert np.array_equal(img, floor), "below the floor is not the floor"
+
+
+def test_a_solid_bar_costs_nothing_extra():
+    """The blend copies a region. At full opacity there is nothing to
+    blend, so that path is skipped rather than copying and blending with
+    a weight of one."""
+    a, b = _frame(1600, 1100), _frame(1600, 1100)
+    assert scalebar.draw(a, 1.0, opacity=1.0)
+    assert scalebar.draw(b, 1.0)
+    assert np.array_equal(a, b)

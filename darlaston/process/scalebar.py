@@ -162,6 +162,11 @@ DEFAULT_SIZE = "medium"
 LABELS = ("auto", "above", "below")
 DEFAULT_LABEL = "auto"
 
+#: How solid the bar is. One over the whole mark, furniture and type
+#: together, so a half-opaque bar is half-opaque everywhere rather than
+#: dissolving into a legible label on a ghostly rule.
+MIN_OPACITY = 0.15
+
 
 def _org(x, y_rule, clearance, gap, th, below):
     """Where the label's bottom-left corner goes."""
@@ -294,7 +299,7 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
          style: str = DEFAULT_STYLE, face: str = DEFAULT_FACE,
          corner: str = DEFAULT_CORNER, size: str = DEFAULT_SIZE,
          label_at: str = DEFAULT_LABEL, plain_units: bool = False,
-         margin: float = 0.035) -> bool:
+         opacity: float = 1.0, margin: float = 0.035) -> bool:
     """Draw into the bottom-right of `image`, in place. Did it draw?
 
     This used to refuse when the turret belief was unconfirmed, on the
@@ -316,7 +321,28 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
     if geom is None:
         return False
     fn = _STYLES.get(style) or _STYLES[DEFAULT_STYLE]
-    fn(image, *geom, face if face in FACES else DEFAULT_FACE, plain_units)
+    face = face if face in FACES else DEFAULT_FACE
+    alpha = min(1.0, max(MIN_OPACITY, float(opacity)))
+
+    if alpha >= 0.999:
+        fn(image, *geom, face, plain_units)
+        return True
+
+    # Draw at full strength into the region the mark occupies, then blend
+    # that region back. Blending the whole frame would be two copies of a
+    # 20 MP capture for a mark a few hundred pixels across, and this runs
+    # on every live frame when the overlay is on.
+    _micrometres, length, unit, x0, x1, y1, _below = geom
+    pad = int(round(60 * unit))
+    h, w = image.shape[:2]
+    ry0, ry1 = max(0, y1 - pad), min(h, y1 + pad)
+    rx0, rx1 = max(0, x0 - pad), min(w, x1 + pad)
+    before = image[ry0:ry1, rx0:rx1].copy()
+    fn(image, *geom, face, plain_units)
+    after = image[ry0:ry1, rx0:rx1]
+    image[ry0:ry1, rx0:rx1] = (
+        before.astype(np.float32) * (1.0 - alpha)
+        + after.astype(np.float32) * alpha).astype(np.uint8)
     return True
 
 

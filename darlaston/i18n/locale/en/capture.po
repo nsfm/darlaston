@@ -243,3 +243,23 @@ msgstr "Above the rule"
 
 msgid "capture.bar.label.below"
 msgstr "Below the rule"
+
+#. Shown in the scale bar window when nothing knows the scale. The preview
+#. above it is drawn at an invented size so a style can still be chosen,
+#. and that must not be mistaken for the photographs carrying one.
+msgid "capture.bar.no_scale"
+msgstr ""
+"The preview below is an example. Nothing knows this camera's scale yet, "
+"so photographs will carry no bar. Set the sensor size under Setup > "
+"Cameras."
+
+#. How solid the mark is. A bar is a reference rather than a caption, so
+#. it can afford to sit under the picture a little, and on the live view
+#. a solid one is in the way of the thing being looked at.
+msgid "capture.bar.opacity.label"
+msgstr "Opacity"
+
+msgid "capture.bar.opacity.tooltip"
+msgstr ""
+"Applies wherever the bar is drawn, on the photograph and on the live "
+"view alike."
