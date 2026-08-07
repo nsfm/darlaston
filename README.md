@@ -9,7 +9,7 @@ Named for **Herbert William Hutton Darlaston** (1867-1949), who prepared nearly 
 ## What is it?
 
 <p align="center">
-  <img src="assets/darlaston_ui.jpg" alt="darlaston UI screenshot" width="500">
+  <img src="assets/darlaston_ui.jpg" alt="darlaston UI screenshot" width="700">
 </p>
 
 _*darlaston*_ is compatible with most USB microscope cameras and offers a full suite of photomicrography utilities:
