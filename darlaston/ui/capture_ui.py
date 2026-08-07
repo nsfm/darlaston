@@ -475,6 +475,16 @@ class ScaleBarDialog(QtWidgets.QDialog):
         self.opacity.setToolTip(_("capture.bar.opacity.tooltip"))
         self.opacity.valueChanged.connect(self._repaint)
 
+        self.live_opacity = QtWidgets.QSlider(
+            QtCore.Qt.Orientation.Horizontal)
+        self.live_opacity.setRange(int(scalebar.MIN_OPACITY * 100), 100)
+        self.live_opacity.setValue(
+            int(round(settings.scale_bar_live_opacity * 100)))
+        self.live_opacity.setToolTip(_("capture.bar.live_opacity.tooltip"))
+        # Not connected to the repaint: the preview above shows the
+        # photograph, and showing it at the live view's opacity would be
+        # a preview of the wrong thing.
+
         self.plain = QtWidgets.QCheckBox(_("capture.bar.plain.label"))
         self.plain.setChecked(settings.scale_bar_plain_units)
         self.plain.setToolTip(_("capture.bar.plain.tooltip"))
@@ -492,6 +502,7 @@ class ScaleBarDialog(QtWidgets.QDialog):
         form.addRow(_("capture.bar.corner.label"), self.corner)
         form.addRow(_("capture.bar.label.label"), self.label_at)
         form.addRow(_("capture.bar.opacity.label"), self.opacity)
+        form.addRow(_("capture.bar.live_opacity.label"), self.live_opacity)
         form.addRow("", self.plain)
 
         if not self._um:
@@ -572,6 +583,8 @@ class ScaleBarDialog(QtWidgets.QDialog):
         self._settings.scale_bar_label = str(self.label_at.currentData())
         self._settings.scale_bar_plain_units = self.plain.isChecked()
         self._settings.scale_bar_opacity = self.opacity.value() / 100.0
+        self._settings.scale_bar_live_opacity = (
+            self.live_opacity.value() / 100.0)
         self._settings.save()
         self.accept()
 

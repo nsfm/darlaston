@@ -120,6 +120,30 @@ class Settings:
     #: How solid the mark is, 0.15 to 1. A bar is a reference rather than
     #: a caption, so it can afford to sit under the picture a little.
     scale_bar_opacity: float = 1.0
+    #: And separately for the live view, which is a different job. On the
+    #: photograph the bar is part of the finished thing; on screen it is a
+    #: reminder sitting over the subject being examined, so it defaults
+    #: fainter than the one that gets published.
+    scale_bar_live_opacity: float = 0.5
+
+    def bar_style(self, live: bool = False) -> dict:
+        """The scale bar's settings, as `scalebar.draw` takes them.
+
+        One place, because there are four callers now -- the capture, the
+        live view, the plate and the style window -- and the plate had
+        already drifted, drawing the module's defaults while the operator
+        had chosen something else next door.
+        """
+        return {
+            "style": self.scale_bar_style,
+            "face": self.scale_bar_face,
+            "corner": self.scale_bar_corner,
+            "size": self.scale_bar_size,
+            "label_at": self.scale_bar_label,
+            "plain_units": self.scale_bar_plain_units,
+            "opacity": (self.scale_bar_live_opacity if live
+                        else self.scale_bar_opacity),
+        }
     #: Draw the bar over the live view as well, so what is on screen is
     #: what the photograph will carry.
     scale_bar_live: bool = False

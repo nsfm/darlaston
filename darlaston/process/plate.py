@@ -80,7 +80,7 @@ def _source_image(path: Path) -> tuple[np.ndarray, float | None, str]:
 
 
 def _scale_bar(cell: np.ndarray, um_per_px: float | None,
-               source_w: int) -> None:
+               source_w: int, style: dict | None = None) -> None:
     """Draw a bar into the bottom-right of `cell`, in place.
 
     The drawing moved to `process/scalebar.py` when the photograph wanted
@@ -94,11 +94,16 @@ def _scale_bar(cell: np.ndarray, um_per_px: float | None,
     if not um_per_px or um_per_px <= 0 or cell.shape[1] <= 0:
         return
     drawn = um_per_px * source_w / cell.shape[1]
-    scalebar.draw(cell, drawn, margin=0.028)
+    # The operator's own settings, so a plate and the photographs on it
+    # are the same object. They were not: the plate drew the default in
+    # whatever the module shipped with, silently ignoring every choice
+    # made next door.
+    scalebar.draw(cell, drawn, margin=0.028, **(style or {}))
 
 
 def plate(sources, target: Path | str, columns: int = 3,
-          cell: int = 560, title: str = "", footer: str = "") -> Path:
+          cell: int = 560, title: str = "", footer: str = "",
+          bar_style: dict | None = None) -> Path:
     """Arrange `sources` into one printable plate. Returns the path."""
     sources = [Path(s) for s in sources]
     if not sources:
@@ -129,7 +134,7 @@ def plate(sources, target: Path | str, columns: int = 3,
         tile = cv2.resize(img, (max(1, round(sw * scale)),
                                 max(1, round(sh * scale))),
                           interpolation=cv2.INTER_AREA)
-        _scale_bar(tile, um_per_px, sw)
+        _scale_bar(tile, um_per_px, sw, bar_style)
         th, tw = tile.shape[:2]
         ox, oy = x + (cell - tw) // 2, y + (cell_h - th) // 2
         sheet[oy:oy + th, ox:ox + tw] = tile

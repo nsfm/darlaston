@@ -123,6 +123,14 @@
       swap). Real darkfield tiles are the acid test. Undo does not yet
       re-anchor if tile 1 is undone (edge case: undoing the origin tile).
 
+- [ ] **A 12 fps preview drags the whole interface to 12 fps.** Nate's
+      camera starts in its full 5440-wide mode, which reads out at 12 fps,
+      and every control in the window then responds at that rate. Drawing
+      the preview and handling interaction are on the same thread and the
+      same clock. Decoupling them is the fix, and the preview-resolution
+      item below is a mitigation rather than an answer: a faster mode
+      makes the symptom smaller and leaves the coupling in place.
+
 ## Capture features
 
 - [ ] **Inverted brightfield** native in the live view. Display and export

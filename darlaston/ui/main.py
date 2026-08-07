@@ -1795,6 +1795,7 @@ class MainWindow(QtWidgets.QMainWindow):
             from ..process.plate import plate
             try:
                 path = plate(sources, target, columns=columns,
+                             bar_style=self.settings.bar_style(),
                              title=title, footer=footer)
                 self.bridge.wiggle.emit((f"plate → {path.name}", True))
             except Exception as exc:
@@ -2474,15 +2475,8 @@ class MainWindow(QtWidgets.QMainWindow):
             um = self._preview_um_per_px(s.preview.shape[1])
             if um:
                 shown = s.preview.copy()
-                scalebar.draw(
-                    shown, um,
-                    style=self.settings.scale_bar_style,
-                    face=self.settings.scale_bar_face,
-                    corner=self.settings.scale_bar_corner,
-                    size=self.settings.scale_bar_size,
-                    label_at=self.settings.scale_bar_label,
-                    plain_units=self.settings.scale_bar_plain_units,
-                    opacity=self.settings.scale_bar_opacity)
+                scalebar.draw(shown, um,
+                              **self.settings.bar_style(live=True))
         self.view.set_frame(shown, s.peaking)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture

@@ -260,6 +260,15 @@ msgid "capture.bar.opacity.label"
 msgstr "Opacity"
 
 msgid "capture.bar.opacity.tooltip"
+msgstr "How solid the bar is on the photograph."
+
+#. Separate from the one above because it is a different job. On the
+#. photograph the bar is part of the finished thing; on screen it sits
+#. over the subject being examined.
+msgid "capture.bar.live_opacity.label"
+msgstr "On the live view"
+
+msgid "capture.bar.live_opacity.tooltip"
 msgstr ""
-"Applies wherever the bar is drawn, on the photograph and on the live "
-"view alike."
+"How solid the bar is over the preview. The photograph is unaffected by "
+"this one."
