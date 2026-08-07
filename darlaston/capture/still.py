@@ -150,8 +150,12 @@ class StillCapture:
             acc: np.ndarray | None = None
             exposure_us = gain_pct = 0
             for i in range(frames):
+                # A state, not a sentence. The window turns it into words
+                # -- this layer has no business writing English, and the
+                # string it used to build was assembled past the
+                # catalogue and so was never translated and never checked.
                 self._on_state("exposing" if frames == 1
-                               else f"exposing {i + 1}/{frames}")
+                               else f"exposing:{i + 1}:{frames}")
                 frame = backend.grab_raw()
                 with frame:
                     if acc is None:

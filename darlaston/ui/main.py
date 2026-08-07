@@ -65,6 +65,29 @@ from .widgets import FocusGroup, Histogram, LiveView, ValueBar
 _log = logging.getLogger(__name__)
 
 
+def _exposing_notice(state: str) -> str | None:
+    """The words over the live view while the shutter is open, or None.
+
+    The state arrives as an identifier -- "exposing", or
+    "exposing:3:16" for the third of sixteen averaged frames -- and the
+    words are made here. It used to be an f-string in the slot, which
+    meant the one message shown over the operator's own live view was the
+    one message that never reached the catalogue: untranslated, and
+    invisible to the check that every displayed string exists.
+    """
+    if state in ("calibrating", "writing"):
+        # Motion is harmless by now, so this does not ask for stillness --
+        # it exists because writing a 40 MB frame takes a few seconds, and
+        # during a stack that silence reads as "why has nothing happened".
+        return _("note.writing")
+    if not state.startswith("exposing"):
+        return None
+    bits = state.split(":")
+    if len(bits) == 3:
+        return _("note.exposing.counted", n=bits[1], total=bits[2])
+    return _("note.exposing")
+
+
 class Bridge(QtCore.QObject):
     """Thread hop. Qt's queued connection is the marshalling."""
 
@@ -1111,11 +1134,12 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(str)
     def _on_capture_state(self, state: str) -> None:
         self.shutter.set_state(state)
-        # The notice spans exactly the window where motion does damage. Once
-        # the frame is pulled, cranking is harmless and the message would be
-        # a lie that teaches people to ignore it.
-        self.view.set_notice(f"hold still -- {state}"
-                             if state.startswith("exposing") else None)
+        # Two different notices, because they say different things. While
+        # the shutter is open, movement spoils the frame. After it closes
+        # the frame is still being calibrated and written, which takes a
+        # few seconds on a 40 MB capture -- harmless to move during, but
+        # silence there reads as the program having stopped.
+        self.view.set_notice(_exposing_notice(state))
         if state == "idle":
             self.shutter.set_available(self.session.status.is_live)
 
@@ -1722,7 +1746,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
         if box.clickedButton() is retry:
             result.path.unlink(missing_ok=True)
-            self.shutter.set_result("discarded -- hold still this time")
+            self.shutter.set_result(_("note.moved.discarded"))
             self._on_capture()
             return True
         return False
