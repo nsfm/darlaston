@@ -1098,3 +1098,47 @@ def test_quitting_waits_for_frames_that_exist_nowhere_but_in_memory(tmp_path):
     assert q.depth, "the premise: work is outstanding"
     assert q.drain(timeout=20.0), "gave up on frames it had accepted"
     assert landed == [0, 1, 2], "quit with captures still unwritten"
+
+
+def test_the_picked_balance_trims_the_measured_one_instead_of_erasing_it():
+    """Nate's slices came out visibly green beside a preview that looked
+    white, and this is why.
+
+    The flat-measured balance is absolute and lives in the raw's domain:
+    sensor, optics and lamp, measured off a blank field of Bayer data. The
+    picked one is a small residual trim, taken off the preview -- which on
+    a ToupTek has already been through the camera's ISP, and `grab_raw`
+    turns the ISP off. Letting the pick replace the flat threw away the
+    entire raw-domain correction and kept only the trim.
+
+    Real numbers from his calibration store and settings.
+    """
+    from darlaston.live import balance
+
+    measured = (1.3487, 1.0, 3.3238)      # from the flat, raw domain
+    picked = (1.2145, 1.0, 0.9051)        # off the preview, a trim
+
+    composed = balance.sane((measured[0] * picked[0], 1.0,
+                             measured[2] * picked[2]))
+    assert composed == pytest.approx((1.638, 1.0, 3.008), abs=0.01)
+
+    # What actually went into his files, and how far off it was.
+    assert picked[2] / composed[2] < 0.35, \
+        "blue was applied at about a third of what the sensor needed"
+
+    # The composed answer belongs in the same world as an independent
+    # estimate of what that raw needs; the pick alone does not.
+    grey_world_says = (1.545, 1.0, 2.314)
+    assert 0.5 < composed[2] / grey_world_says[2] < 2.0
+    assert picked[2] / grey_world_says[2] < 0.5, "the defect this replaces"
+
+
+def test_a_pick_with_no_flat_behind_it_still_stands_on_its_own():
+    """Composition must not require a calibration that may not exist. With
+    no measured balance the pick is the whole answer, as before."""
+    from darlaston.live import balance
+
+    picked = (1.2145, 1.0, 0.9051)
+    composed = balance.sane((balance.UNITY[0] * picked[0], 1.0,
+                             balance.UNITY[2] * picked[2]))
+    assert composed == pytest.approx(picked, abs=1e-6)

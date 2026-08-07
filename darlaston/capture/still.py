@@ -502,22 +502,39 @@ class StillCapture:
                 neutral = (1.0 / max(gr, 1e-6), 1.0, 1.0 / max(gb, 1e-6))
                 applied.append("wb")
 
-        # A balance picked off the screen beats one measured from a flat,
-        # and has to. Colour temperature moves every time the lamp is
-        # turned, and nobody is going to reshoot four blank fields because
-        # they dimmed a halogen -- so the measured one is often the older
-        # statement about a light that has since changed. The picked one is
-        # also the more specific thing the operator said, which is the same
-        # precedence a remembered camera choice has over the ignore list.
+        # The picked balance used to *replace* the measured one, on the
+        # reasoning that the more specific thing the operator said should
+        # win. They are not the same kind of statement, so neither wins:
+        # they multiply.
         #
-        # Recorded distinctly, because a file should say which of the two
-        # it carries. "wb" and "wb(picked)" are not the same provenance.
+        # The flat-measured balance is absolute and lives in the raw's own
+        # domain -- sensor, optics and lamp, measured off a blank field of
+        # actual Bayer data. The picked one is a small residual trim, and
+        # it is picked off the *preview*, which on a ToupTek has been
+        # through the camera's ISP: white balance, colour matrix, tone
+        # curve. `grab_raw` turns all of that off. So a pick describes
+        # what the ISP's output still had wrong, not what the sensor did.
+        #
+        # Replacing threw away the whole raw-domain correction and kept
+        # only the trim. Measured on Nate's stack: the flat said R x1.35,
+        # B x3.32; the pick said R x1.21, B x0.91; and the files went out
+        # with the pick alone -- three and a third times too little blue,
+        # which is a green cast you can see across the room. The preview
+        # beside it looked white, because the ISP had already done the
+        # part the files were missing.
         picked = balance.sane(getattr(self._settings,
                                       "white_balance_gains", balance.UNITY))
         if picked != balance.UNITY:
-            gr, _gg, gb = picked
-            neutral = (1.0 / max(gr, 1e-6), 1.0, 1.0 / max(gb, 1e-6))
-            applied = [a for a in applied if a != "wb"] + ["wb(picked)"]
+            base = ((1.0 / neutral[0], 1.0, 1.0 / neutral[2])
+                    if neutral else balance.UNITY)
+            gains = balance.sane((base[0] * picked[0], 1.0,
+                                  base[2] * picked[2]))
+            neutral = (1.0 / max(gains[0], 1e-6), 1.0,
+                       1.0 / max(gains[2], 1e-6))
+            # Both named, because a file whose provenance has to be
+            # inferred is one that will eventually be trusted wrongly.
+            applied = [a for a in applied if a != "wb"] + (
+                ["wb+picked"] if base != balance.UNITY else ["wb(picked)"])
 
         if dark is None and flat is None and defects is None:
             return raw, applied, neutral, black
