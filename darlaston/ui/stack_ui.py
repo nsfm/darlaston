@@ -280,28 +280,26 @@ class _AssemblyCanvas(QtWidgets.QWidget):
 
     def paintEvent(self, _event) -> None:
         o = self._owner
-        p = QtGui.QPainter(self)
-        p.fillRect(self.rect(), QtGui.QColor(theme.SUNK))
-        if o._image is None:
-            p.setPen(QtGui.QColor(theme.DIM))
-            p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
-                       _("stack.canvas.detail.empty"))
-            p.end()
-            return
-        scaled = o._image.size().scaled(
-            self.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
-        x = (self.width() - scaled.width()) // 2
-        y = (self.height() - scaled.height()) // 2
-        p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(QtCore.QRect(x, y, scaled.width(), scaled.height()),
-                    o._image)
-        p.setPen(QtGui.QColor(theme.INK))
-        f = p.font()
-        f.setPointSizeF(8.5)
-        p.setFont(f)
-        p.fillRect(QtCore.QRect(x + 6, y + 6, 72, 18),
-                   QtGui.QColor(0, 0, 0, 150))
-        p.drawText(QtCore.QRect(x + 10, y + 6, 68, 18),
-                   QtCore.Qt.AlignmentFlag.AlignVCenter,
-                   n_("stack.canvas.detail.slices", o._count))
-        p.end()
+        with QtGui.QPainter(self) as p:
+            p.fillRect(self.rect(), QtGui.QColor(theme.SUNK))
+            if o._image is None:
+                p.setPen(QtGui.QColor(theme.DIM))
+                p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
+                           _("stack.canvas.detail.empty"))
+                return
+            scaled = o._image.size().scaled(
+                self.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+            x = (self.width() - scaled.width()) // 2
+            y = (self.height() - scaled.height()) // 2
+            p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+            p.drawImage(QtCore.QRect(x, y, scaled.width(), scaled.height()),
+                        o._image)
+            p.setPen(QtGui.QColor(theme.INK))
+            f = p.font()
+            f.setPointSizeF(8.5)
+            p.setFont(f)
+            p.fillRect(QtCore.QRect(x + 6, y + 6, 72, 18),
+                       QtGui.QColor(0, 0, 0, 150))
+            p.drawText(QtCore.QRect(x + 10, y + 6, 68, 18),
+                       QtCore.Qt.AlignmentFlag.AlignVCenter,
+                       n_("stack.canvas.detail.slices", o._count))

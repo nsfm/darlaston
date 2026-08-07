@@ -290,54 +290,54 @@ class LiveView(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.fillRect(self.rect(), QtGui.QColor("#111110"))
-        if self._image is None:
-            p.setPen(DIM)
-            p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
-                       "no signal")
-            return
-        # No SmoothPixmapTransform: the image already arrives at widget size,
-        # so this is a blit rather than a resample.
-        target = getattr(self, "_image_at", None) or self._fit(self._image.size())
-        p.drawImage(target.topLeft(), self._image)
-        if self._peaking is not None:
-            p.drawImage(target.topLeft(), self._peaking)
+        with QtGui.QPainter(self) as p:
+            p.fillRect(self.rect(), QtGui.QColor("#111110"))
+            if self._image is None:
+                p.setPen(DIM)
+                p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
+                           "no signal")
+                return
+            # No SmoothPixmapTransform: the image already arrives at widget size,
+            # so this is a blit rather than a resample.
+            target = getattr(self, "_image_at", None) or self._fit(self._image.size())
+            p.drawImage(target.topLeft(), self._image)
+            if self._peaking is not None:
+                p.drawImage(target.topLeft(), self._peaking)
 
-        self._draw_guides(p, target)
+            self._draw_guides(p, target)
 
-        # The measured region, drawn so it is never a mystery what the focus
-        # number refers to.
-        if self._focus_rect is not None:
-            x, y, w, h = self._focus_rect
-            box = QtCore.QRectF(target.x() + x * target.width(),
-                                target.y() + y * target.height(),
-                                w * target.width(), h * target.height())
-            if self._remaining is not None:
-                p.drawImage(box, self._remaining)
-            pen = QtGui.QPen(BRASS, 1)
-            pen.setStyle(QtCore.Qt.PenStyle.DashLine)
-            p.setPen(pen)
-            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            p.drawRect(box)
-            self._label_box(p, box, "focus assist")
+            # The measured region, drawn so it is never a mystery what the focus
+            # number refers to.
+            if self._focus_rect is not None:
+                x, y, w, h = self._focus_rect
+                box = QtCore.QRectF(target.x() + x * target.width(),
+                                    target.y() + y * target.height(),
+                                    w * target.width(), h * target.height())
+                if self._remaining is not None:
+                    p.drawImage(box, self._remaining)
+                pen = QtGui.QPen(BRASS, 1)
+                pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+                p.setPen(pen)
+                p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                p.drawRect(box)
+                self._label_box(p, box, "focus assist")
 
-        if self._drag_from is not None and self._drag_to is not None:
-            p.setPen(QtGui.QPen(BRASS, 1))
-            p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
+            if self._drag_from is not None and self._drag_to is not None:
+                p.setPen(QtGui.QPen(BRASS, 1))
+                p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
 
-        notice = getattr(self, "_notice", None)
-        if notice:
-            band = QtCore.QRect(0, self.height() // 2 - 34,
-                                self.width(), 68)
-            p.fillRect(band, QtGui.QColor(0, 0, 0, 170))
-            f = p.font()
-            f.setPointSizeF(17.0)
-            f.setBold(True)
-            f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.5)
-            p.setFont(f)
-            p.setPen(WARN)
-            p.drawText(band, QtCore.Qt.AlignmentFlag.AlignCenter, notice)
+            notice = getattr(self, "_notice", None)
+            if notice:
+                band = QtCore.QRect(0, self.height() // 2 - 34,
+                                    self.width(), 68)
+                p.fillRect(band, QtGui.QColor(0, 0, 0, 170))
+                f = p.font()
+                f.setPointSizeF(17.0)
+                f.setBold(True)
+                f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.5)
+                p.setFont(f)
+                p.setPen(WARN)
+                p.drawText(band, QtCore.Qt.AlignmentFlag.AlignCenter, notice)
 
     # ---- drawing a region ------------------------------------------------
 
@@ -563,33 +563,33 @@ class Histogram(QtWidgets.QWidget):
         return self._image
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.fillRect(self.rect(), PANEL)
-        h, w = self.height(), self.width()
-        plot = h - self.CAPTION
+        with QtGui.QPainter(self) as p:
+            p.fillRect(self.rect(), PANEL)
+            h, w = self.height(), self.width()
+            plot = h - self.CAPTION
 
-        # Quarter-tone rules, behind the plot: a histogram with no marks on
-        # it says "there is a hump somewhere", and the question is always
-        # where the hump is.
-        p.setPen(QtGui.QPen(LINE, 1))
-        for q in (1, 2, 3):
-            x = int(w * q / 4)
-            p.drawLine(x, 0, x, plot)
+            # Quarter-tone rules, behind the plot: a histogram with no marks on
+            # it says "there is a hump somewhere", and the question is always
+            # where the hump is.
+            p.setPen(QtGui.QPen(LINE, 1))
+            for q in (1, 2, 3):
+                x = int(w * q / 4)
+                p.drawLine(x, 0, x, plot)
 
-        if w > 0 and plot > 0:
-            p.drawImage(0, 0, self._plot(w, plot))
+            if w > 0 and plot > 0:
+                p.drawImage(0, 0, self._plot(w, plot))
 
-        p.setPen(DIM)
-        f = p.font()
-        f.setPointSizeF(7.5)
-        p.setFont(f)
-        msg = f"clipped {self._clipped * 100:.2f}%"
-        per = self._per
-        if per and max(per) > 0.0005:
-            msg += " (green)   " + "".join(
-                n for n, v in zip("RGB", per) if v > 0.0005) + " hot"
-        p.drawText(QtCore.QRect(0, plot, w, self.CAPTION),
-                   QtCore.Qt.AlignmentFlag.AlignCenter, msg)
+            p.setPen(DIM)
+            f = p.font()
+            f.setPointSizeF(7.5)
+            p.setFont(f)
+            msg = f"clipped {self._clipped * 100:.2f}%"
+            per = self._per
+            if per and max(per) > 0.0005:
+                msg += " (green)   " + "".join(
+                    n for n, v in zip("RGB", per) if v > 0.0005) + " hot"
+            p.drawText(QtCore.QRect(0, plot, w, self.CAPTION),
+                       QtCore.Qt.AlignmentFlag.AlignCenter, msg)
 
 
 class FocusTraceView(QtWidgets.QWidget):
@@ -607,32 +607,32 @@ class FocusTraceView(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.fillRect(self.rect(), PANEL)
-        h, w = self.height(), self.width()
-        p.setPen(QtGui.QPen(DIM, 1, QtCore.Qt.PenStyle.DashLine))
-        p.drawLine(0, 6, w, 6)
+        with QtGui.QPainter(self) as p:
+            p.fillRect(self.rect(), PANEL)
+            h, w = self.height(), self.width()
+            p.setPen(QtGui.QPen(DIM, 1, QtCore.Qt.PenStyle.DashLine))
+            p.drawLine(0, 6, w, 6)
 
-        v = self._values
-        if v.size > 1:
-            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-            colour = (GOOD if self._fraction > 0.95
-                      else WARN if self._fraction > 0.75 else BAD)
-            p.setPen(QtGui.QPen(colour, 1.6))
-            path = QtGui.QPainterPath()
-            for i, val in enumerate(v):
-                x = i * w / max(len(v) - 1, 1)
-                y = 6 + (1.0 - float(val)) * (h - 24)
-                path.lineTo(x, y) if i else path.moveTo(x, y)
-            p.drawPath(path)
+            v = self._values
+            if v.size > 1:
+                p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+                colour = (GOOD if self._fraction > 0.95
+                          else WARN if self._fraction > 0.75 else BAD)
+                p.setPen(QtGui.QPen(colour, 1.6))
+                path = QtGui.QPainterPath()
+                for i, val in enumerate(v):
+                    x = i * w / max(len(v) - 1, 1)
+                    y = 6 + (1.0 - float(val)) * (h - 24)
+                    path.lineTo(x, y) if i else path.moveTo(x, y)
+                p.drawPath(path)
 
-        p.setPen(DIM)
-        f = p.font()
-        f.setPointSizeF(7.5)
-        p.setFont(f)
-        p.drawText(QtCore.QRect(0, h - 14, w, 14),
-                   QtCore.Qt.AlignmentFlag.AlignCenter,
-                   f"{self._fraction * 100:.0f}% of peak sharpness")
+            p.setPen(DIM)
+            f = p.font()
+            f.setPointSizeF(7.5)
+            p.setFont(f)
+            p.drawText(QtCore.QRect(0, h - 14, w, 14),
+                       QtCore.Qt.AlignmentFlag.AlignCenter,
+                       f"{self._fraction * 100:.0f}% of peak sharpness")
 
 
 class FocusGroup(QtWidgets.QWidget):
@@ -744,36 +744,36 @@ class CoverageMeter(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        h, w = self.height(), self.width()
-        p.fillRect(QtCore.QRect(0, 10, w, 6), PANEL)
+        with QtGui.QPainter(self) as p:
+            h, w = self.height(), self.width()
+            p.fillRect(QtCore.QRect(0, 10, w, 6), PANEL)
 
-        f = p.font()
-        f.setPointSizeF(7.5)
-        p.setFont(f)
-        if self._value is None:
-            # The meter is only shown while sweeping now, so an empty one
-            # means the sweep has started and nothing has come through focus
-            # yet -- which is a real state and worth naming truthfully.
+            f = p.font()
+            f.setPointSizeF(7.5)
+            p.setFont(f)
+            if self._value is None:
+                # The meter is only shown while sweeping now, so an empty one
+                # means the sweep has started and nothing has come through focus
+                # yet -- which is a real state and worth naming truthfully.
+                p.setPen(DIM)
+                p.drawText(QtCore.QRect(0, 18, w, 16),
+                           QtCore.Qt.AlignmentFlag.AlignCenter,
+                           "rack through focus to begin")
+                return
+
+            # Complete is not the same as 100%: the structured area must also
+            # have stopped growing, or a frame that has only shown half of itself
+            # would read as finished.
+            done = getattr(self, "_complete", False)
+            colour = GOOD if done else BRASS
+            p.fillRect(QtCore.QRect(0, 10, int(w * self._value), 6), colour)
             p.setPen(DIM)
             p.drawText(QtCore.QRect(0, 18, w, 16),
                        QtCore.Qt.AlignmentFlag.AlignCenter,
-                       "rack through focus to begin")
-            return
-
-        # Complete is not the same as 100%: the structured area must also
-        # have stopped growing, or a frame that has only shown half of itself
-        # would read as finished.
-        done = getattr(self, "_complete", False)
-        colour = GOOD if done else BRASS
-        p.fillRect(QtCore.QRect(0, 10, int(w * self._value), 6), colour)
-        p.setPen(DIM)
-        p.drawText(QtCore.QRect(0, 18, w, 16),
-                   QtCore.Qt.AlignmentFlag.AlignCenter,
-                   "covered -- sweep complete" if done
-                   else f"{self._value * 100:.0f}% through focus"
-                   + ("  still finding structure"
-                      if self._value >= 0.999 else ""))
+                       "covered -- sweep complete" if done
+                       else f"{self._value * 100:.0f}% through focus"
+                       + ("  still finding structure"
+                          if self._value >= 0.999 else ""))
 
 
 #: Ordered dither, the 8x8 Bayer matrix, normalised to 0..1. Ordered
@@ -883,56 +883,56 @@ class ValueBar(QtWidgets.QWidget):
         return 1 + usable * (self._value - self._min) / span
 
     def paintEvent(self, _event) -> None:
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        rect = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
-        radius = 3.0
-        on = self.isEnabled()
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            rect = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+            radius = 3.0
+            on = self.isEnabled()
 
-        path = QtGui.QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
-        p.setClipPath(path)
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(rect, radius, radius)
+            p.setClipPath(path)
 
-        p.fillRect(self.rect(), PANEL if on else QtGui.QColor("#141614"))
+            p.fillRect(self.rect(), PANEL if on else QtGui.QColor("#141614"))
 
-        edge = self._fill_x()
-        amber = BRASS if on else QtGui.QColor("#3a3a35")
-        # The dissolve narrows away over the last quarter of the travel.
-        # A bar at maximum has nothing left to fade into, and a pattern
-        # running off the end of the track reads as an unfinished edge
-        # rather than as a full one.
-        span = max(self._max - self._min, 1)
-        t = (self._value - self._min) / span
-        taper = 1.0 if t < 0.75 else max(0.0, (1.0 - t) / 0.25)
-        solid = max(0.0, edge - self.DITHER * taper)
-        p.fillRect(QtCore.QRectF(0, 0, solid, self.height()), amber)
-        # The dissolve yields to the type. Half amber and half ground is
-        # the one background no colour of text can be read against, so the
-        # cells that would fall behind a word are simply not drawn, and
-        # the word sits on clean ground instead of on noise.
-        self._dither(p, solid, edge, amber, halo=self._text_halo())
+            edge = self._fill_x()
+            amber = BRASS if on else QtGui.QColor("#3a3a35")
+            # The dissolve narrows away over the last quarter of the travel.
+            # A bar at maximum has nothing left to fade into, and a pattern
+            # running off the end of the track reads as an unfinished edge
+            # rather than as a full one.
+            span = max(self._max - self._min, 1)
+            t = (self._value - self._min) / span
+            taper = 1.0 if t < 0.75 else max(0.0, (1.0 - t) / 0.25)
+            solid = max(0.0, edge - self.DITHER * taper)
+            p.fillRect(QtCore.QRectF(0, 0, solid, self.height()), amber)
+            # The dissolve yields to the type. Half amber and half ground is
+            # the one background no colour of text can be read against, so the
+            # cells that would fall behind a word are simply not drawn, and
+            # the word sits on clean ground instead of on noise.
+            self._dither(p, solid, edge, amber, halo=self._text_halo())
 
-        # The handle: a full-height rule, because a knob on a bar this
-        # short would be larger than the bar and would hide the dissolve
-        # it is supposed to terminate.
-        if on:
-            p.fillRect(QtCore.QRectF(edge - 1.5, 0, 3.0, self.height()), INK)
+            # The handle: a full-height rule, because a knob on a bar this
+            # short would be larger than the bar and would hide the dissolve
+            # it is supposed to terminate.
+            if on:
+                p.fillRect(QtCore.QRectF(edge - 1.5, 0, 3.0, self.height()), INK)
 
-        # Where the amber actually wins, not where the fill nominally
-        # ends. Coverage falls as (1-t)^2, so it passes half at t = 1 -
-        # sqrt(0.5); left of that the dither is mostly ink and dark type
-        # reads, right of it mostly ground and light type reads. Splitting
-        # at the handle instead drew dark letters onto a region that had
-        # already dissolved, and the start of the word disappeared.
-        # Split at the solid edge, now that nothing is dithered behind the
-        # words: left of it the ground really is amber, right of it it
-        # really is not, and there is no in-between left to guess about.
-        self._labels(p, solid)
+            # Where the amber actually wins, not where the fill nominally
+            # ends. Coverage falls as (1-t)^2, so it passes half at t = 1 -
+            # sqrt(0.5); left of that the dither is mostly ink and dark type
+            # reads, right of it mostly ground and light type reads. Splitting
+            # at the handle instead drew dark letters onto a region that had
+            # already dissolved, and the start of the word disappeared.
+            # Split at the solid edge, now that nothing is dithered behind the
+            # words: left of it the ground really is amber, right of it it
+            # really is not, and there is no in-between left to guess about.
+            self._labels(p, solid)
 
-        p.setClipping(False)
-        p.setPen(QtGui.QPen(LINE, 1))
-        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, radius, radius)
+            p.setClipping(False)
+            p.setPen(QtGui.QPen(LINE, 1))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(rect, radius, radius)
 
     #: How far the dissolve keeps clear of a letter. Two pixels of air is
     #: enough to read against and tight enough that the pattern still
