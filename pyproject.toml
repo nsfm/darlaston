@@ -40,7 +40,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+dev = ["pytest>=7.4", "pytest-xdist>=3.5"]
 # Building the double-clickable artifacts. Not needed to run
 # darlaston, and deliberately not a runtime dependency.
 package = ["pytest>=7.4", "pyinstaller>=6.10"]
@@ -95,3 +95,19 @@ fallback_version = "0.1.0.dev0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Two phases, because a handful of tests make claims about *time* and
+# those claims are the first thing a loaded machine breaks -- a timeout
+# that must be waited out, a rate limit that must not fire twice, a frame
+# rate that must be met. They are not fragile tests; they are correct
+# tests about timing code, and timing code is exactly what contention
+# distorts. So they are marked and run on their own, after the rest.
+#
+#     pytest -n auto -m "not serial"     # the other ~490, in parallel
+#     pytest -m serial                   # these, alone, on a quiet machine
+#
+# `make test` does both. Running plain `pytest` still runs everything in
+# one serial pass, which is slower but always correct -- nobody should
+# have to know about this to get a true answer.
+markers = [
+    "serial: asserts something about elapsed time; must not run in parallel",
+]

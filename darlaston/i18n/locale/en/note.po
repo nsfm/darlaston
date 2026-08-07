@@ -110,3 +110,7 @@ msgstr "discarded, the stage moved"
 #. the pause between slices is explained rather than mysterious.
 msgid "note.writing"
 msgstr "saving"
+
+#. While waiting for the operator to point at a neutral patch.
+msgid "note.wb.point"
+msgstr "point at something grey"

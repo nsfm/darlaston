@@ -519,6 +519,16 @@ def stylesheet() -> str:
     QPushButton[role="seg"]:checked {{
         border-color: {BRASS}; color: {INK}; background: {BRASS};
     }}
+    /* A segment that wants pressing, as opposed to one that merely can
+       be. Brass lettering on the panel reads as an invitation where the
+       usual dim grey reads as furniture -- and the checked state above
+       already says "this is on" in the other direction, brass behind
+       ink. So one control tells the whole story: dim when there is
+       nothing to do, brass when there is, filled while it is doing it. */
+    QPushButton[role="seg"][invite="true"] {{ color: {BRASS}; }}
+    QPushButton[role="seg"][invite="true"]:hover {{
+        color: {BRASS_LIT}; border-color: {BRASS_LIT};
+    }}
     QPushButton[role="seg"]:checked:hover {{ background: {BRASS_LIT}; }}
     QPushButton[role="step"] {{
         padding: 2px 9px; font-size: 13px; min-width: 0;

@@ -140,10 +140,22 @@ class Opportunist:
             if self.bank.offer(raw):
                 self._on_banked(self.bank.count, self.bank.wanted)
                 if not self._blank_enough(raw):
-                    _log.warning(
-                        "banked a flat field that does not look blank "
-                        "(%d of %d)", self.bank.count, self.bank.wanted)
-                    self._on_warn(N_("calib.flat.warn.not_blank"))
+                    # The log, not the interface. On Nate's first real
+                    # session this fired on all four of four perfectly good
+                    # flats -- the threshold behind it was calibrated
+                    # against synthetic fields at preview scale and has
+                    # never been checked against a 20 MP raw frame with
+                    # real dust and vignetting on it.
+                    #
+                    # A warning that is wrong every time is worse than no
+                    # warning: it teaches people to ignore the place
+                    # warnings appear. It stays in the log, where it is
+                    # evidence for recalibrating rather than an accusation
+                    # aimed at somebody who did nothing wrong.
+                    _log.info("blank check disagreed with a banked flat "
+                              "(%d of %d) -- the threshold is unverified "
+                              "against real raw frames",
+                              self.bank.count, self.bank.wanted)
                 elif same:
                     _log.info("banked a flat field the stage had not left")
                     self._on_warn(N_("calib.flat.warn.same_patch"))

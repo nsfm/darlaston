@@ -141,6 +141,19 @@ class Settings:
     #: *different* device that later appears at the same port. A port is a
     #: socket; ignoring a socket is not what anybody meant.
     ignored_cameras: dict[str, str] = field(default_factory=dict)
+    #: The working white balance. Kept between sessions on purpose:
+    #: somebody who looks at the same kind of specimen under the same lamp
+    #: starts nearer where they want to be, and undoing it is one click.
+    #: Gains are R, G, B with green at one.
+    #:
+    #: No separate on/off. Unity *is* off, so there is one thing to store
+    #: and no way for a flag and a value to disagree about whether a
+    #: correction is in force.
+    #:
+    #: Distinct from the flat's measured balance, which lives in the
+    #: calibration store keyed to the optical configuration. This one is
+    #: per bench and per habit; that one is per objective and per lamp.
+    white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
     keep_slices: bool = False        # Z-stack slices after the EDF is built

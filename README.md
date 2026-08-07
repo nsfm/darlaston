@@ -19,6 +19,12 @@ _*darlaston*_ is compatible with most USB microscope cameras and offers a full s
 - **Takes timelapses**, so you can see how your specimen changes over time.
 - **Lets you have fun with depth maps** from focus stacks, converting them into wigglegrams, focus pulls, turntables, stereo pairs, red/cyan anaglyphs, autostereograms, printable meshes, and more.
 
+## Installation
+
+[Grab the latest release from here](https://github.com/nsfm/darlaston/releases) and follow the provided installation instructions.
+
+To install from source for development, clone the repo and run `make install` followed by `make run`.
+
 ## License
 
 This software is provided freely to use, share, and modify under the GPLv3. See [LICENSE](LICENSE).

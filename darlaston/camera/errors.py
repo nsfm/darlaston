@@ -16,7 +16,7 @@ words a person reads at midnight with a diatom under the objective.
 """
 from __future__ import annotations
 
-from ..i18n import N_, _
+from ..i18n import N_, _, n_
 
 #: HRESULT -> (short name, what to do about it). Codes from the SDK header.
 _CODES: dict[int, str] = {
@@ -165,6 +165,27 @@ class NoCameraFound(CameraProblem):
             (_("error.no_camera.step.plugged"),
              _("error.no_camera.step.cable"),
              _("error.no_camera.step.wait")))
+
+
+class EveryCameraPassedOver(CameraProblem):
+    """Cameras are attached, and all of them are marked not-the-microscope.
+
+    Distinct from `NoCameraFound`, and the distinction is the point: this
+    screen is reachable only by a preference somebody set on purpose, so
+    "check the cable" is exactly the wrong advice. The way out is the
+    camera list, and it says so.
+    """
+
+    kind = "passed-over"
+
+    def __init__(self, count: int = 1) -> None:
+        super().__init__(
+            _("error.passed_over.heading"),
+            n_("error.passed_over.detail", count),
+            (_("error.passed_over.step.open"),
+             _("error.passed_over.step.untick",
+               label=_("setup.cameras.ignore.label")),
+             _("error.passed_over.step.plug")))
 
 
 class CameraBusy(CameraProblem):

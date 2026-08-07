@@ -38,6 +38,40 @@ def binary() -> Path:
     return DIST / "darlaston" / name
 
 
+def _this_version(pattern: str) -> Path:
+    """The artifact for the version in this checkout. Never another one.
+
+    This used to take `sorted(glob(...))[0]`, which is the alphabetically
+    first file rather than the one just built. On a CI runner that is
+    harmless, because the machine starts empty and there is only ever one.
+    On anybody's own machine it is not: build twice, and it verifies the
+    older artifact and reports success -- so a broken build passes its own
+    smoke test while an unrelated file sitting in `dist/release` takes the
+    exam for it. Found by running the packaging chain locally for the
+    first time, which is what `make package` exists for.
+
+    Matching the version rather than taking the newest, because "newest"
+    is still a guess and a mtime can be anything. If the artifact for this
+    version is not there, that is worth saying out loud rather than
+    quietly examining a neighbour.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from bundle import version           # the same spelling bundle writes
+
+    want = version()
+    found = [p for p in sorted(OUT.glob(pattern)) if want in p.name]
+    if not found:
+        others = ", ".join(p.name for p in sorted(OUT.glob(pattern))) or "nothing"
+        raise SystemExit(
+            f"no {pattern} for version {want} in {OUT} -- found {others}. "
+            f"Build it first, or clear out what is stale.")
+    if len(found) > 1:
+        raise SystemExit(
+            f"{len(found)} artifacts claim version {want}: "
+            + ", ".join(p.name for p in found))
+    return found[0]
+
+
 def packaged() -> Path:
     """The executable inside the artifact a person would actually download.
 
@@ -48,29 +82,23 @@ def packaged() -> Path:
     directory build perfectly intact.
     """
     if sys.platform.startswith("linux"):
-        found = sorted(OUT.glob("*.AppImage"))
-        if not found:
-            raise SystemExit(f"no AppImage in {OUT}")
-        found[0].chmod(0o755)
-        return found[0]
+        found = _this_version("*.AppImage")
+        found.chmod(0o755)
+        return found
 
     if sys.platform == "darwin":
-        found = sorted(OUT.glob("*.dmg"))
-        if not found:
-            raise SystemExit(f"no disk image in {OUT}")
+        found = _this_version("*.dmg")
         mount = ROOT / "build" / "mnt"
         mount.mkdir(parents=True, exist_ok=True)
-        subprocess.run(("hdiutil", "attach", str(found[0]), "-mountpoint",
+        subprocess.run(("hdiutil", "attach", str(found), "-mountpoint",
                         str(mount), "-nobrowse", "-quiet"), check=True)
         return mount / "darlaston.app" / "Contents" / "MacOS" / "darlaston"
 
-    found = sorted(OUT.glob("*.zip"))
-    if not found:
-        raise SystemExit(f"no zip in {OUT}")
+    found = _this_version("*.zip")
     unpacked = ROOT / "build" / "unzipped"
     if unpacked.exists():
         shutil.rmtree(unpacked)
-    with zipfile.ZipFile(found[0]) as z:
+    with zipfile.ZipFile(found) as z:
         z.extractall(unpacked)
     return unpacked / "darlaston" / "darlaston.exe"
 

@@ -67,6 +67,29 @@ def _render_scene(w: int, h: int, seed: int = 7) -> np.ndarray:
     return np.clip(canvas * 255.0, 0, 255).astype(np.uint8)
 
 
+#: Rendered scenes, keyed by (w, h, seed). The render is a pure function of
+#: those three -- the generator is seeded and nothing else is consulted -- so
+#: two cameras asking for the same one may share it. That matters because it
+#: is not cheap: a 31 MP canvas and 120 rotated patches, about 0.35 s, paid
+#: once per `open()`. The suite opens the synthetic camera dozens of times.
+#:
+#: Shared arrays are handed back read-only. Every reader here already copies
+#: (`astype`, `cv2.resize`), so nothing needs to write to one -- and if
+#: something starts to, numpy raises rather than quietly corrupting the scene
+#: every other camera is looking at.
+_SCENES: dict[tuple[int, int, int], np.ndarray] = {}
+
+
+def _scene_for(w: int, h: int, seed: int) -> np.ndarray:
+    key = (w, h, seed)
+    scene = _SCENES.get(key)
+    if scene is None:
+        scene = _render_scene(w, h, seed)
+        scene.flags.writeable = False
+        _SCENES[key] = scene
+    return scene
+
+
 class MockCamera(CameraBackend):
     """Synthetic backend. Same contract as the real one, no hardware."""
 
@@ -127,8 +150,8 @@ class MockCamera(CameraBackend):
         )
         # Canvas sized past the sensor so the stage has somewhere to travel.
         full = _RESOLUTIONS[0]
-        self._scene = _render_scene(int(full.width * 1.25),
-                                    int(full.height * 1.25), self._seed)
+        self._scene = _scene_for(int(full.width * 1.25),
+                                 int(full.height * 1.25), self._seed)
         return self._info
 
     def close(self) -> None:

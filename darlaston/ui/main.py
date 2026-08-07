@@ -16,6 +16,7 @@ import shutil
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -32,6 +33,7 @@ from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
 from .. import __version__, log
 from ..live.focus import Illumination, Region
+from ..live import balance
 from ..live.cell import Newest
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
@@ -60,7 +62,8 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .widgets import FocusGroup, Histogram, LiveView, ValueBar
+from .widgets import (BalanceSwatch, FocusGroup, Histogram, LiveView,
+                      ValueBar)
 
 _log = logging.getLogger(__name__)
 
@@ -181,6 +184,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # After the widgets exist and before the first frame arrives, so the
         # preview is never briefly drawn at a quality nobody chose.
         self._apply_performance()
+        # The balance the operator left in force last time. Persisted on
+        # purpose: somebody looking at the same kind of specimen under the
+        # same lamp starts nearer where they want to be, and undoing it is
+        # one click. Applied before the first frame, so the preview is
+        # never briefly the wrong colour.
+        self.pipeline.set_white_balance(self.settings.white_balance_gains)
+        self.pipeline.set_balance_rect(self.DEFAULT_WB_RECT)
+        self._refresh_wb()
         self._refresh_disk()
         self._disk_timer = QtCore.QTimer(self)
         self._disk_timer.timeout.connect(self._refresh_disk)
@@ -319,6 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.view = LiveView()
         self.view.region_drawn.connect(self._on_custom_region)
+        self.view.balance_region_drawn.connect(self._on_balance_region)
         self.histogram = Histogram()
         self.focus = FocusGroup()
         self.focus.peaking_toggled.connect(self._on_peaking)
@@ -459,9 +471,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text("1.0×")
         self.gain.valueChanged.connect(self._on_gain)
 
-        exposure = _group("exposure", self.histogram)
+        exposure = _group(_("shell.group.exposure"), self.histogram)
         exposure.addWidget(self.exposure)
         exposure.addWidget(self.gain)
+
+        # A row inside exposure rather than a group of its own. It is one
+        # control, and a heading over one control spends a line of rail to
+        # repeat what the button already says.
+        self.wb_pick = QtWidgets.QPushButton(_("shell.wb.pick.label"))
+        self.wb_pick.setProperty("role", "seg")
+        self.wb_pick.setCheckable(True)          # stays lit while armed
+        self.wb_pick.setToolTip(_("shell.wb.pick.tooltip"))
+        self.wb_pick.clicked.connect(self._arm_white_balance)
+        self.wb_reset = QtWidgets.QPushButton(_("shell.wb.reset.label"))
+        self.wb_reset.setProperty("role", "seg")
+        self.wb_reset.setToolTip(_("shell.wb.reset.tooltip"))
+        self.wb_reset.clicked.connect(self._reset_white_balance)
+        self.wb_swatch = BalanceSwatch()
+
+        wb_row = QtWidgets.QHBoxLayout()
+        wb_row.setSpacing(4)
+        # Half, a quarter, a quarter. Fixed proportions rather than sized
+        # to their contents: a button that changes width when its label
+        # changes makes the whole rail twitch.
+        wb_row.addWidget(self.wb_pick, 2)
+        wb_row.addWidget(self.wb_reset, 1)
+        wb_row.addWidget(self.wb_swatch, 1)
+        exposure.addLayout(wb_row)
+
         col.addLayout(exposure)
         col.addWidget(self.focus)
 
@@ -493,7 +530,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # and the box it draws is labelled on the image itself, so the
         # line telling people a box could be dragged is one they will find
         # by dragging.
-        measure = _group("measure from", row)
+        measure = _group(_("shell.group.measure_from"), row)
         col.addLayout(measure)
 
         col.addStretch(1)
@@ -502,7 +539,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # particular shot is *of*, and they change more often than anything
         # above them. Everything higher up is instrument state.
         self.subject = SubjectField()
-        col.addLayout(_group("subject", self.subject, self.subject.toolTip()))
+        col.addLayout(_group(_("shell.group.subject"), self.subject, self.subject.toolTip()))
 
         self.objective = ObjectiveStepper()
         self.objective.changed.connect(self._on_objective_stepped)
@@ -523,7 +560,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for mode in BUILTIN_ILLUMINATION:
             self.illumination.addItem(mode.display, mode)
         self.illumination.currentIndexChanged.connect(self._on_illumination)
-        optics = _group("optics", self.objective)
+        optics = _group(_("shell.group.optics"), self.objective)
         optics.addWidget(self.optovar)
         optics.addWidget(self.illumination)
         col.addLayout(optics)
@@ -601,6 +638,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.shutter.set_available(status.is_live and not self.capture.busy)
         self._set_shooting_enabled(status.is_live)
+        # Including the balance controls, which need a camera to point at.
+        # This was missing: they were disabled once at startup, before the
+        # session had come up, and nothing ever enabled them again -- so
+        # the button could not be pressed at all. The per-frame refresh
+        # that used to hide the omission went with the numeric readout.
+        self._refresh_wb()
         if self.setup is not None:
             self.opportunist.set_key(flat_key(self.setup,
                                               self.subject.slide_note))
@@ -1053,6 +1096,94 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.set_focus_region(region)
         for r, b in self._region_buttons.items():
             b.setChecked(r is region)
+
+    #: Where a balance is taken from until somebody points somewhere. The
+    #: middle fifth: big enough to average sensor noise away, small enough
+    #: to sit on a patch of mountant between subjects.
+    DEFAULT_WB_RECT = (0.40, 0.40, 0.20, 0.20)
+
+    def _arm_white_balance(self) -> None:
+        """Point at something that should be grey. One click or one drag."""
+        self.view.arm_balance(True)
+        self.strip.set_note(_("note.wb.point"))
+        self._refresh_wb()
+
+    def _on_balance_region(self, rect: tuple) -> None:
+        """Where they pointed. Sample there, and take the balance."""
+        # The pipeline owns where the balance comes from -- it is the
+        # thing that samples there. A second copy here would only be a
+        # fact in two places waiting to disagree.
+        self.pipeline.set_balance_rect(rect)
+        self.strip.set_note("")
+        self._refresh_wb()               # the view disarmed itself
+        # Show where it was taken, briefly. A rectangle that stays is
+        # clutter over the specimen the moment it has nothing left to say.
+        self.view.show_balance_rect(rect)
+        # The pipeline samples on the way past, so the rect has to be in
+        # force for a frame before there is anything to read. One frame at
+        # the slowest rate anybody runs at.
+        QtCore.QTimer.singleShot(80, self._take_white_balance)
+
+    def _take_white_balance(self) -> None:
+        """Make the sampled patch neutral, in one step.
+
+        Read from the *uncorrected* frame, which is why this waits for the
+        pipeline to sample rather than reading the displayed preview. Doing
+        the latter measured an image that already carried the last
+        correction, so a press could only remove part of what was left and
+        the balance crept toward neutral over several clicks instead of
+        arriving in one.
+        """
+        sample = self.pipeline.balance_sample
+        if sample is None:
+            return
+        b, g, r = sample
+        gains = balance.sane((g / r, 1.0, g / b) if min(r, g, b) > 0
+                             else balance.UNITY)
+        self.settings.white_balance_gains = list(gains)
+        self.settings.save()
+        self.pipeline.set_white_balance(gains)
+        self._refresh_wb()
+
+    def _reset_white_balance(self) -> None:
+        """Back to the sensor's own colour, which is worth being able to
+        see: an uncorrected preview says something about the lamp that a
+        corrected one hides."""
+        self.view.arm_balance(False)
+        self.strip.set_note("")
+        self.settings.white_balance_gains = list(balance.UNITY)
+        self.settings.save()
+        self.pipeline.set_white_balance(balance.UNITY)
+        self._refresh_wb()
+
+    def _refresh_wb(self) -> None:
+        gains = balance.sane(self.settings.white_balance_gains)
+        live = self.session.status.is_live
+        armed = self.view.armed_for_balance
+        if armed and not live:
+            # The camera left while somebody was choosing where to point.
+            # Left alone this strands them: the cursor stays a crosshair,
+            # there is nothing to sample, and the button that would let
+            # them out is the one greyed out for having no camera.
+            self.view.arm_balance(False)
+            self.strip.set_note("")
+            armed = False
+        self.wb_pick.setEnabled(live)
+        self.wb_pick.setChecked(armed)
+        self.wb_reset.setEnabled(gains != balance.UNITY)
+        # Brass lettering where there is something to do, filled while it
+        # is being done. A control that looks the same whether or not it
+        # can be pressed is one people stop trying.
+        _invite(self.wb_pick, live and not armed)
+        _invite(self.wb_reset, gains != balance.UNITY)
+        self.wb_swatch.set_gains(gains)
+        # The numbers are still here, for whoever wants them, where they
+        # cost no space: nobody reads "R 1.33 B 0.60" and pictures a warm
+        # lamp, but the swatch beside it is the lamp.
+        self.wb_swatch.setToolTip(
+            _("shell.wb.swatch.tooltip", r=f"{gains[0]:.2f}",
+              b=f"{gains[2]:.2f}") if gains != balance.UNITY
+            else _("shell.wb.swatch.tooltip.off"))
 
     def _on_custom_region(self, rect: tuple) -> None:
         """A box dragged on the image wins over any preset."""
@@ -2318,6 +2449,20 @@ def _fill(panel, widget) -> None:
     lay.addWidget(widget)
 
 
+def _invite(button, on: bool) -> None:
+    """Mark a segment as wanting a press, and make the style notice.
+
+    Qt caches the stylesheet match, so changing a property it selects on
+    does nothing visible until the widget is repolished. Without this the
+    rule is correct and the button never changes.
+    """
+    if button.property("invite") == ("true" if on else "false"):
+        return
+    button.setProperty("invite", "true" if on else "false")
+    button.style().unpolish(button)
+    button.style().polish(button)
+
+
 def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout,
            hint: str | None = None):
     col = QtWidgets.QVBoxLayout()
@@ -2393,6 +2538,25 @@ def _list_cameras() -> int:
     return 0
 
 
+#: How long a camera enumeration stays good for. `make` below is called
+#: on every connect retry, a few seconds apart and for as long as the
+#: window is open, and enumerating means opening each device to ask what
+#: it can do -- far too much to repeat on that cadence. Short enough that
+#: plugging a camera in is still noticed while the hand is still on it.
+_LOOK_TTL = 4.0
+_looked: tuple[float, list] | None = None
+
+
+def _look_now() -> list:
+    """`look()`, throttled. Same answer, asked at a sane rate."""
+    global _looked
+    now = time.monotonic()
+    if _looked is None or now - _looked[0] > _LOOK_TTL:
+        from ..camera.discovery import look
+        _looked = (now, look())
+    return _looked[1]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     # Kept, and kept out of --help. The synthetic camera is how this gets
@@ -2453,6 +2617,7 @@ def main() -> int:
         # one of the things `look()` can find.
         from ..camera.discovery import (backend_for, choose, look,
                                         offerable, presence_for)
+        from ..camera.errors import EveryCameraPassedOver
 
         seen = look()
         _kept = Settings.load()
@@ -2470,13 +2635,42 @@ def main() -> int:
             # "Likeliest" is sensor size, which on a laptop with nothing
             # else attached is the laptop's own webcam. That is the right
             # answer to the question the ranking asks and the wrong answer
-            # to the operator's, so anything they have marked as not the
-            # microscope steps aside here.
-            picked = offerable(seen, _kept.ignored_cameras)[0]
+            # to the operator's, so anything they have marked ignored
+            # steps aside here.
+            #
+            # And if that leaves nothing, nothing is the answer. Falling
+            # back to the full list opened the very camera somebody had
+            # just ticked "Ignore this camera" on.
+            offered = offerable(seen, _kept.ignored_cameras)
+            picked = offered[0] if offered else None
 
         if picked is not None:
             make: callable = lambda: backend_for(picked)
             presence = presence_for(picked)
+        elif seen:
+            # Attached, and every one of them ignored. Neither of the other
+            # two branches tells the truth here: opening one overrides the
+            # preference, and the no-camera screen says "check the cable"
+            # about a camera that is plugged in and working perfectly.
+            _log.info("all %d attached cameras are ignored; opening none",
+                      len(seen))
+
+            def make() -> CameraBackend:
+                # Re-run discovery rather than close over `seen`, so that
+                # plugging in the camera somebody actually meant opens it
+                # without a restart, and so that un-ticking the box in the
+                # camera list takes effect on the next retry.
+                found = _look_now()
+                now = offerable(found, Settings.load().ignored_cameras)
+                if not now:
+                    raise EveryCameraPassedOver(len(found) or 1)
+                return backend_for(now[0])
+
+            # Always: the session shows its generic "waiting for a camera"
+            # screen whenever presence is false, which is the one screen
+            # this state must not show. `make` is the thing that knows,
+            # and `_look_now` keeps asking it cheap.
+            presence = lambda: True
         else:
             # Nothing found at all. The ToupTek path is still the right
             # thing to try: its own errors explain a missing SDK or an

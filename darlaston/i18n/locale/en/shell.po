@@ -152,3 +152,45 @@ msgstr "rendering a mosaic"
 
 msgid "shell.quit.job.timelapse"
 msgstr "running a timelapse"
+
+#. The headings above each group of controls in the rail. Shown upper
+#. case by the widget, so they are written here as they read.
+msgid "shell.group.exposure"
+msgstr "exposure"
+
+msgid "shell.group.measure_from"
+msgstr "measure from"
+
+msgid "shell.group.subject"
+msgstr "subject"
+
+msgid "shell.group.optics"
+msgstr "optics"
+
+#. The white balance controls: one row inside the exposure group, since
+#. it is a single control and a heading over one control repeats the
+#. button. Half width, a quarter, a quarter -- fixed, so nothing twitches
+#. when a label changes.
+msgid "shell.wb.pick.label"
+msgstr "white balance"
+
+msgid "shell.wb.pick.tooltip"
+msgstr ""
+"Press, then click on an empty spot in the preview to adjust\n"
+"white balance. You can also drag over a particular area."
+
+msgid "shell.wb.reset.label"
+msgstr "reset"
+
+msgid "shell.wb.reset.tooltip"
+msgstr ""
+"Disable white balance correction"
+
+#. The colour patch beside the buttons. It shows the *light*, not the
+#. correction: a lamp turned down reads orange, and turning it up walks
+#. the patch toward white while you watch.
+msgid "shell.wb.swatch.tooltip"
+msgstr "White balance applied: gains R {r}  B {b}"
+
+msgid "shell.wb.swatch.tooltip.off"
+msgstr "No white balance applied"

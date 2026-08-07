@@ -263,8 +263,7 @@ msgstr "CALIBRATION KEY"
 
 msgid "setup.scopes.key.tooltip"
 msgstr ""
-"What a flat field is filed under. Change any of it and the existing flat "
-"no longer applies."
+"Modifying a microscope will reset calibration."
 
 #. The little window that asks for the name of a new stand.
 msgid "setup.scopes.new.title"
@@ -285,8 +284,7 @@ msgstr "Remove microscope"
 #. sentence says so: it is what makes this safe to answer yes to.
 msgid "setup.scopes.remove.detail"
 msgstr ""
-"Remove {name}? Flat fields filed under it stay on disk but will no longer "
-"be found."
+"Remove {name}?"
 
 #. ---- the Cameras window -------------------------------------------------
 #. There is no picker here on purpose. Which camera is in front of you is
@@ -314,10 +312,7 @@ msgstr ""
 #. filed, so there is nothing to do here until something has appeared.
 msgid "setup.cameras.empty.detail"
 msgstr ""
-"No camera has been seen yet.\n"
-"\n"
-"One is added the first time it is plugged in, recognised by its serial, "
-"so there is nothing to describe until then."
+"No camera has been seen yet. Plug one in to get started."
 
 #. {name} is the stand this camera was last used on.
 msgid "setup.cameras.bound.detail"
@@ -330,26 +325,23 @@ msgstr "Not yet used on a microscope."
 #. holds every camera ever seen, so saying which are present is the
 #. difference between a catalogue and a choice.
 msgid "setup.cameras.attached.tooltip"
-msgstr "Plugged in now. Everything else here is described but absent."
+msgstr "This camera is currently available."
 
 msgid "setup.cameras.action.use"
 msgstr "Use this camera"
 
 msgid "setup.cameras.use.tooltip"
 msgstr ""
-"Switch the live view to this camera. Only for one that is plugged in; "
-"the rest are here so they can be described while they sit on the bench."
+"Switch the live view to this camera."
 
 #. A checkbox under the camera list. Ticking it stops a camera being
 #. opened by default; it is never hidden from the list.
 msgid "setup.cameras.ignore.label"
-msgstr "Not the microscope"
+msgstr "Ignore this camera"
 
 msgid "setup.cameras.ignore.tooltip"
 msgstr ""
-"Stop opening this camera on startup. It stays in the list and can still be "
-"chosen with Use -- a laptop's own webcam is worth passing over, not "
-"forgetting."
+"Stop opening this camera on startup."
 
 #. Shown beside a camera in the list that has been passed over.
 msgid "setup.cameras.ignored.tooltip"

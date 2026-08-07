@@ -24,7 +24,82 @@ if not os.environ.get("QT_QPA_PLATFORM"):
 # them, so it was reachable here purely by accident of setuptools version.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# One thread per worker when the suite is forked across processes.
+#
+# OpenCV and the BLAS underneath numpy each default to one thread per
+# core. Sixteen pytest workers on a sixteen-core machine therefore ask
+# for two hundred and fifty-six, and the machine spends its time
+# switching between them: measured, the load average went to 16.5 and
+# tests that wait on real work -- a capture completing, a frame arriving
+# -- began timing out at random. The failures looked like flaky tests
+# and were not; they were starvation.
+#
+# This is the same reasoning as `cpu.apply_thread_budget`, which the
+# application does to itself for the same reason. Set before anything
+# imports numpy or cv2, because both read it once at import.
+if os.environ.get("PYTEST_XDIST_WORKER"):
+    for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                 "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS",
+                 "VECLIB_MAXIMUM_THREADS"):
+        os.environ.setdefault(_var, "1")
+    import cv2
+
+    cv2.setNumThreads(1)
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _own_config(tmp_path_factory, monkeypatch):
+    """No test reads or writes the developer's real configuration.
+
+    Several tests build a `MainWindow`, which constructs a `Library` and
+    a `Settings` from `config_dir()` -- and that is a real directory on a
+    real person's machine holding every objective they have entered. The
+    tests that knew this redirected `XDG_CONFIG_HOME` and said why; the
+    others inherited whatever was there.
+
+    Nothing was being written, so this was latent rather than live. It
+    stopped being latent the moment somebody drove a window from a
+    throwaway script and left white balance switched on with absurd gains
+    in the author's settings, which is exactly the shape of accident this
+    prevents. Autouse, because the ones that need it most are the ones
+    that never thought about it.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME",
+                       str(tmp_path_factory.mktemp("config")))
+
+
+@pytest.fixture
+def window(qapp):
+    """A `MainWindow` on the synthetic camera, shut down whatever happens.
+
+    Several tests built one and called `shutdown()` after their
+    assertions. On the passing path that is fine; on the failing path the
+    call is never reached, and the window is left driving a synthetic
+    camera at thirty frames a second for the rest of the run -- so a
+    single failure quietly loads the machine underneath every test after
+    it, which is a superb way to turn one red test into three.
+
+    Hands back a factory rather than a window, because a couple of tests
+    need two, or need one built with particular arguments.
+    """
+    from darlaston.camera.mock import MockCamera
+
+    made = []
+
+    def build(make_backend=None, **kw):
+        from darlaston.ui.main import MainWindow
+
+        win = MainWindow(make_backend or (lambda: MockCamera(fps=30.0)), **kw)
+        made.append(win)
+        return win
+
+    try:
+        yield build
+    finally:
+        for win in made:
+            win.shutdown()
 
 
 @pytest.fixture(scope="session")

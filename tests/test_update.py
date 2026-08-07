@@ -151,26 +151,25 @@ def test_a_window_built_by_a_test_never_reaches_the_network(qapp):
     assert "watch_for_updates" not in source
 
 
-def test_the_setting_is_obeyed(qapp):
+def test_the_setting_is_obeyed(qapp, window):
     from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
 
-    win = MainWindow(lambda: MockCamera(fps=30.0))
+    win = window()
     win.settings.check_for_updates = False
     win.watch_for_updates()
     assert not hasattr(win, "_update_watch"), \
         "looked anyway, with the setting off"
-    win.shutdown()
 
 
-def test_the_menu_entry_appears_only_when_there_is_something_to_say(qapp):
+def test_the_menu_entry_appears_only_when_there_is_something_to_say(qapp, window):
     """Not a dialog on arrival: it would land seconds after launch, over
     whatever somebody had already started doing, for news that keeps."""
     from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
     from darlaston.update import Release, Version
 
-    win = MainWindow(lambda: MockCamera(fps=30.0))
+    win = window()
     assert not win.update_action.isVisible(), "there before there was news"
 
     win._update_found(Release(version=Version(9, 9, 9), tag="v9.9.9",
@@ -179,7 +178,6 @@ def test_the_menu_entry_appears_only_when_there_is_something_to_say(qapp):
     assert win.update_action.isVisible()
     assert not win.update_action.icon().isNull(), "nothing to catch the eye"
     assert win.update_action.font().bold()
-    win.shutdown()
 
 
 def test_the_dialog_says_what_it_will_actually_do(qapp):

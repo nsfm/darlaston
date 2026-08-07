@@ -86,6 +86,7 @@ def test_map_ignores_untracked_frames():
     assert len(m.snapshots) == 0
 
 
+@pytest.mark.serial
 def test_revisit_refreshes_in_place():
     """Coming back to mapped ground updates it rather than duplicating it,
     and not thirty times a second."""
@@ -194,6 +195,7 @@ def test_guard_reports_unmeasurable_as_infinite():
     cam.close()
 
 
+@pytest.mark.serial
 def test_guard_times_out_to_none_when_no_frames_arrive():
     import time as _t
 

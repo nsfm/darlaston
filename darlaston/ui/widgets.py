@@ -31,12 +31,27 @@ class LiveView(QtWidgets.QWidget):
 
     #: Normalised (x, y, w, h) the operator dragged out on the image.
     region_drawn = QtCore.Signal(tuple)
+    #: A box dragged while the white balance is armed. Separate from
+    #: `region_drawn` because they mean opposite things: focus assist is
+    #: aimed at the subject, and a balance has to be taken off something
+    #: that ought to be neutral -- which is by definition not the subject.
+    balance_region_drawn = QtCore.Signal(tuple)
 
     def __init__(self) -> None:
         super().__init__()
         self._image: QtGui.QImage | None = None
         self._peaking: QtGui.QImage | None = None
         self._focus_rect: tuple[float, float, float, float] | None = None
+        self._balance_rect: tuple[float, float, float, float] | None = None
+        self._balancing = False
+        #: The balance box is shown while it is being placed and for a
+        #: moment afterwards, then fades. It has nothing to say once the
+        #: balance is taken -- a permanent rectangle over the specimen is
+        #: clutter earning its keep for about one second.
+        self._balance_alpha = 0.0
+        self._balance_fade = QtCore.QTimer(self)
+        self._balance_fade.setInterval(40)
+        self._balance_fade.timeout.connect(self._fade_balance)
         self._remaining: QtGui.QImage | None = None
         self._drag_from: QtCore.QPointF | None = None
         self._drag_to: QtCore.QPointF | None = None
@@ -254,6 +269,36 @@ class LiveView(QtWidgets.QWidget):
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect
 
+    def show_balance_rect(self, rect, hold: float = 1.0) -> None:
+        """Show where the balance was taken, then let it fade."""
+        self._balance_rect = rect
+        self._balance_alpha = 1.0 + max(0.0, hold)     # the hold, then a fade
+        self._balance_fade.start()
+        self.update()
+
+    def _fade_balance(self) -> None:
+        self._balance_alpha -= 0.04 / 0.5              # half a second of fade
+        if self._balance_alpha <= 0.0:
+            self._balance_alpha = 0.0
+            self._balance_rect = None
+            self._balance_fade.stop()
+        self.update()
+
+    @property
+    def armed_for_balance(self) -> bool:
+        return self._balancing
+
+    def arm_balance(self, on: bool = True) -> None:
+        """Take the next click or drag as the balance region, once.
+
+        One shot rather than a mode. The button that arms it is the whole
+        prompt -- press, point, done -- so there is no state to be left in
+        and nothing to turn off afterwards.
+        """
+        self._balancing = bool(on)
+        self.setCursor(QtCore.Qt.CursorShape.CrossCursor if on
+                       else QtCore.Qt.CursorShape.ArrowCursor)
+
     def set_remaining(self, mask, rect) -> None:
         """Regions that still need to go through focus.
 
@@ -322,6 +367,22 @@ class LiveView(QtWidgets.QWidget):
                 p.drawRect(box)
                 self._label_box(p, box, "focus assist")
 
+            # Drawn second, so it sits above the focus box where the two
+            # overlap. A different colour and a solid line: they are not the
+            # same kind of thing and must not read as one.
+            if self._balance_rect is not None and self._balance_alpha > 0:
+                x, y, w, h = self._balance_rect
+                box = QtCore.QRectF(target.x() + x * target.width(),
+                                    target.y() + y * target.height(),
+                                    w * target.width(), h * target.height())
+                ink = QtGui.QColor(GOOD)
+                ink.setAlphaF(min(1.0, self._balance_alpha))
+                p.setPen(QtGui.QPen(ink, 1))
+                p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                p.drawRect(box)
+                if self._balance_alpha >= 1.0:
+                    self._label_box(p, box, "white balance")
+
             if self._drag_from is not None and self._drag_to is not None:
                 p.setPen(QtGui.QPen(BRASS, 1))
                 p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
@@ -352,13 +413,33 @@ class LiveView(QtWidgets.QWidget):
             self._drag_to = e.position()
             self.update()
 
+    #: A click, rather than a drag, means "balance from about here". As a
+    #: fraction of the frame: big enough to average the sensor's noise
+    #: away, small enough to sit between two subjects.
+    CLICK_REGION = 0.12
+
     def mouseReleaseEvent(self, e) -> None:
         if self._drag_from is None or self._image is None:
             return
         box = QtCore.QRectF(self._drag_from, e.position()).normalized()
         self._drag_from = self._drag_to = None
         target = self._fit(self._image.size())
-        if box.width() < 12 or box.height() < 12 or target.width() == 0:
+        if target.width() == 0:
+            self.update()
+            return
+        if self._balancing and (box.width() < 12 or box.height() < 12):
+            # Pointed at, not dragged out. Take a patch around the click.
+            side = self.CLICK_REGION
+            cx = (e.position().x() - target.x()) / target.width()
+            cy = (e.position().y() - target.y()) / target.height()
+            nx = min(max(cx - side / 2, 0.0), 1.0 - side)
+            ny = min(max(cy - side / 2, 0.0), 1.0 - side)
+            self._balancing = False
+            self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+            self.balance_region_drawn.emit((nx, ny, side, side))
+            self.update()
+            return
+        if box.width() < 12 or box.height() < 12:
             self.update()
             return
         # Widget coordinates back to image-normalised, clamped to the frame.
@@ -368,7 +449,12 @@ class LiveView(QtWidgets.QWidget):
         nx, ny = max(0.0, min(1.0, nx)), max(0.0, min(1.0, ny))
         nw, nh = min(nw, 1.0 - nx), min(nh, 1.0 - ny)
         if nw > 0.02 and nh > 0.02:
-            self.region_drawn.emit((nx, ny, nw, nh))
+            if self._balancing:
+                self._balancing = False          # one shot
+                self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                self.balance_region_drawn.emit((nx, ny, nw, nh))
+            else:
+                self.region_drawn.emit((nx, ny, nw, nh))
         self.update()
 
     def _fit(self, size: QtCore.QSize) -> QtCore.QRect:
@@ -1045,3 +1131,43 @@ class ValueBar(QtWidgets.QWidget):
         step = max(1, (self._max - self._min) // 100)
         self.setValue(self._value
                       + (step if event.angleDelta().y() > 0 else -step))
+
+
+class BalanceSwatch(QtWidgets.QWidget):
+    """The colour of the light being corrected for.
+
+    Two gains are a true description of a white balance and a poor one to
+    read: nobody looks at "R 1.33 B 0.60" and pictures a warm lamp. So the
+    swatch shows the *illuminant* -- what the balance has decided white
+    looks like -- which is the reciprocal of the gains. A halogen lamp
+    turned down reads visibly orange, and turning it up walks the patch
+    toward neutral in front of you. The numbers stay, in the tooltip, for
+    when somebody wants them.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedHeight(20)
+        self._gains = (1.0, 1.0, 1.0)
+
+    def set_gains(self, gains) -> None:
+        self._gains = tuple(float(v) for v in gains)
+        self.update()
+
+    def colour(self) -> QtGui.QColor:
+        """The illuminant, scaled so its brightest channel is full."""
+        r, g, b = self._gains
+        # Inverse of the correction: if red is being boosted, the light was
+        # short of red. Guarded because these arrive from a settings file.
+        lit = [1.0 / v if v > 1e-6 else 1.0 for v in (r, g, b)]
+        peak = max(lit) or 1.0
+        return QtGui.QColor(*[int(min(255, round(255 * v / peak)))
+                              for v in lit])
+
+    def paintEvent(self, _event) -> None:
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            box = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            p.setBrush(self.colour())
+            p.setPen(QtGui.QPen(QtGui.QColor(LINE), 1))
+            p.drawRoundedRect(box, 3, 3)
