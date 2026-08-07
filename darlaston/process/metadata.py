@@ -177,8 +177,22 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
                app_version: str = "", pixel_um: float | None = None,
                sequence: int | None = None, when=None,
                artist: str = "", copyright: str = "",
-               unique_id: str = "") -> CaptureMetadata:
-    """Build metadata from the live setup."""
+               unique_id: str = "",
+               objective_confirmed: bool = True,
+               context: dict | None = None) -> CaptureMetadata:
+    """Build metadata from the live setup.
+
+    `objective_confirmed` is false when a turret rotation was detected and
+    the proposal was never answered. The belief is then stale rather than
+    wrong -- it is still the best guess and still what every calibration
+    lookup is keyed on -- but writing it as a plain number makes the file
+    claim something nobody confirmed.
+
+    Every tile of Nate's 260729 mosaic says 16x/0.4 and was shot at
+    25x/0.65. The software recorded the belief faithfully; the belief was
+    old. The scale bar now depends on that number too, so a file that
+    cannot say "this part is a guess" is a file that will be measured off.
+    """
     cam, scope = setup.camera, setup.scope
     obj = scope.turret.objective
     total = setup.total_magnification
@@ -198,6 +212,9 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
     fields = {
         "scope": scope.name,
         "objective": obj.label if obj else "",
+        # Present only when it is bad news. A field that says "confirmed"
+        # on every ordinary file trains the eye to skip it.
+        "objective_belief": "" if objective_confirmed else "unconfirmed",
         # Empty rather than "1" when there is no changer fitted: a stand
         # without one has no such setting, and recording a value implies it
         # was looked at and found to be at unity.
@@ -218,6 +235,16 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         "slide": slide,
         "calibration": calibration,
     }
+    # Where this frame sat in a larger piece of work. The manifest already
+    # says all of it, and the manifest is one file in one folder: move the
+    # slices somewhere else and they become twenty photographs of the same
+    # thing in no particular order. A frame that carries its own index,
+    # its session and its place on the slide can be re-assembled from a
+    # pile, which is the difference between an archive and a heap.
+    #
+    # Last, so a key here can never quietly overwrite an optics field.
+    for key, value in (context or {}).items():
+        fields.setdefault(str(key), str(value))
     comment = " ".join(f"{k}={v}" for k, v in fields.items() if v)
 
     # Optics, in the fields a photographer reads. Both are derived rather
@@ -247,8 +274,14 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         model=cam.model or cam.name,
         unique_camera_model=cam.model,
         serial=cam.serial,
-        # The objective, in the field a photographer reads as "lens".
-        lens_model=obj.label if obj else "",
+        # The objective, in the field a photographer reads as "lens", and
+        # therefore the one field that would otherwise state a stale belief
+        # as a plain fact. Marked rather than blanked: the label is still
+        # the best guess, and a reader who sees "40x/0.75 (unconfirmed)"
+        # knows both what we thought and how much to trust it. A blank
+        # would throw away the guess and tell them nothing.
+        lens_model=(("" if not obj else obj.label if objective_confirmed
+                     else f"{obj.label} (unconfirmed)")),
         lens_make=obj.maker if obj else "",
         lens_serial=obj.serial if obj else "",
         subject_distance_m=((obj.working_distance_mm / 1000.0)

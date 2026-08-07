@@ -123,6 +123,15 @@ class StillCapture:
         #: polarised-light interference colours, fluorescence, stained
         #: sections -- where any estimate is a guess dressed as a measurement.
         self.white_balance = True
+        #: False while a detected turret rotation sits unanswered. The
+        #: belief is stale rather than wrong, and the file should say so
+        #: instead of stating it as a fact.
+        self.objective_confirmed = True
+        #: Where the next capture sits in a larger piece of work: which
+        #: stack, which slice of it, which tile and where that tile is.
+        #: Set by the window before it pulls the trigger, because only the
+        #: window knows what is going on around a capture.
+        self.context: dict = {}
         #: Set while a mosaic or stack session is open. Those captures are
         #: ingredients rather than photographs -- the stitcher and the merge
         #: read the raws back -- so a "JPEG only" preference must not apply
@@ -261,8 +270,11 @@ class StillCapture:
             # file writing, and none of it needs a hand held still on a
             # focus knob. Measured on an 18-slice stack: 5.4 s per slice,
             # of which this half is most.
+            context = dict(self.context)
+
             def persist() -> None:
                 self._persist(
+                    context=context,
                     raw=raw, setup=setup, subject=subject, slide=slide,
                     exposure_us=exposure_us, gain_pct=gain_pct, depth=depth,
                     sensor_white=sensor_white, info=info, frames=frames,
@@ -291,6 +303,7 @@ class StillCapture:
 
 
     def _persist(self, *, raw, setup, subject: str, slide: str,
+                 context: dict | None = None,
                  exposure_us: int, gain_pct: int, depth: int,
                  sensor_white: int, info, frames: int,
                  moved, moved_px, position, started: float) -> None:
@@ -350,7 +363,9 @@ class StillCapture:
                                   when=when,
                                   artist=self._settings.artist,
                                   copyright=self._settings.copyright,
-                                  unique_id=_fingerprint(corrected))
+                                  unique_id=_fingerprint(corrected),
+                                  objective_confirmed=self.objective_confirmed,
+                                  context=context)
 
             if frames > 1:
                 # The mean carries real precision below one 12-bit LSB.

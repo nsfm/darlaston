@@ -947,15 +947,19 @@ class MainWindow(QtWidgets.QMainWindow):
         a guess -- mark it, because it keys every calibration lookup and
         goes into every file.
         """
-        if self.proposal.answered_explicitly:
-            self.objective.set_uncertain(False)
-        else:
-            self.objective.set_uncertain(True)
+        confirmed = self.proposal.answered_explicitly
+        self.objective.set_uncertain(not confirmed)
+        # And into the files, not only the rail. The little "?" beside the
+        # objective was the only trace an unanswered proposal ever left,
+        # so a capture taken in that state recorded the stale belief as
+        # plain fact -- which is how a whole mosaic came to say 16x/0.4.
+        self.capture.objective_confirmed = confirmed
 
     def _accept_turret(self, payload) -> None:
         if self.setup is None:
             return
         self.objective.set_uncertain(False)
+        self.capture.objective_confirmed = True
         index, level = payload
         self._learn_rotation_sign(int(index))
         # A confirmation is the only trustworthy label we ever get, so it is
@@ -2096,6 +2100,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.capture.raw_required = (self.mosaic is not None
                                      or self.stack_session is not None
                                      or self.focus.stack.isChecked())
+        self.capture.context = self._capture_context()
+
+    def _capture_context(self) -> dict:
+        """Where the frame about to be taken sits in the larger work.
+
+        The manifests already record all of this, and a manifest is one
+        file in one folder. Move the slices somewhere else, or hand three
+        stacks to somebody, and they become sixty photographs of similar
+        things in no particular order. A frame that carries its own
+        session, its index and its place on the slide can be sorted back
+        out of a pile.
+
+        Read at each shutter press rather than tracked, for the same
+        reason `raw_required` is: a session can open or close between any
+        two of them.
+        """
+        context: dict = {}
+        if self.stack_session is not None:
+            context["stack"] = self.stack_session.dir.name
+            # The index this frame is about to take, which is what the
+            # adoption will give it. Counted here because by the time the
+            # file is written several more may be in the air.
+            context["slice"] = len(self.stack_session.slices) + 1
+        if self.mosaic is not None:
+            context["mosaic"] = self.mosaic.dir.name
+            context["tile"] = len(self.mosaic.tiles) + 1
+            anchor = self._tile_anchor
+            if anchor is not None:
+                # Tracker frame, preview pixels: not micrometres, and
+                # labelled so nobody mistakes it for a measurement. It is
+                # dead reckoning off phase correlation and it drifts.
+                context["tile_px"] = f"{anchor[0]:.0f},{anchor[1]:.0f}"
+        return context
 
     def _set_framing(self, grid: str | None = None,
                      cross: bool | None = None) -> None:
