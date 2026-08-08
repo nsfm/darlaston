@@ -109,6 +109,50 @@ class StackSession:
         self._save()
         return piece
 
+    def release_slices(self, merged: Path) -> tuple[int, int]:
+        """Delete the slice files a verified merge has consumed.
+
+        Returns (files removed, bytes freed). The setting behind this says
+        "keep individual Z-stack slices after stacking", and a 40-tile
+        mosaic at 30 slices each is about 47 GB of raw frames, so there is
+        a real reason somebody would turn it off.
+
+        Verified means the thing that replaces them exists and is not a
+        stub: every slice is checked off against the manifest, the merged
+        file has to be there, and it has to be at least as large as a
+        single slice -- a merge that wrote a 4 kB header before failing
+        must never be grounds for deleting its inputs.
+
+        The manifest stays, and so does the folder. What was shot, in what
+        order, at what focus, is the record of the session and it costs
+        nothing to keep. Only the pixels go.
+        """
+        if not self.slices or not merged.exists():
+            return (0, 0)
+        files = [self.dir / s.filename for s in self.slices]
+        present = [f for f in files if f.exists()]
+        if len(present) != len(files):
+            # Somebody has been in here. Deleting the rest of a set that is
+            # already incomplete is the wrong response to a surprise.
+            return (0, 0)
+        smallest = min(f.stat().st_size for f in present)
+        if merged.stat().st_size < smallest:
+            return (0, 0)
+
+        freed = removed = 0
+        for path in present:
+            for target in (path, path.with_suffix(".jpg")):
+                if not target.exists():
+                    continue
+                size = target.stat().st_size
+                try:
+                    target.unlink()
+                except OSError:
+                    continue
+                removed += 1
+                freed += size
+        return (removed, freed)
+
     @property
     def manifest_path(self) -> Path:
         return self.dir / "manifest.json"

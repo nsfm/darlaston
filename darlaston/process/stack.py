@@ -47,7 +47,7 @@ import cv2
 import numpy as np
 
 from ..capture.stack import StackSession
-from . import develop, dng
+from . import depthmap, develop, dng
 from .stitch import read_bayer_dng, read_metadata, read_white_level
 
 _log = logging.getLogger(__name__)
@@ -348,7 +348,10 @@ def _register(lumas: list[np.ndarray]) -> list[tuple[float, float]]:
 
 def merge(directory: Path | str, progress=None, output: str = "bayer",
           smoothing: str = "normal",
-          feather: float = FEATHER_SIGMA) -> tuple[Path, dict]:
+          feather: float = FEATHER_SIGMA,
+          mask_background: bool = True,
+          clamp_slope: float = 0.0,
+          choose_slope=None) -> tuple[Path, dict]:
     """The whole run: load, align, map depth, blend, write. (path, report).
 
     `output` is "bayer" or "linear", and bayer is the default because of an
@@ -409,7 +412,43 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     depth, width = _depth_map(aligned, progress=progress, total=n,
                               diffuse=gate, wide=wide, dilate=dil,
                               power=power)
+
+    # The depth map and the composite want different corrections, and
+    # giving both the same one measured actively harmful in each
+    # direction. Where nothing was ever in focus the depth map wants the
+    # background flattened, so a coin toss between identical-looking
+    # slices stops being geometry; the composite does not, because
+    # flattening it there erases material lying outside the captured z
+    # range, which on a diatom mount is other specimens. Conversely the
+    # composite wants the slope bound that removes the halo, and the mesh
+    # does not, because that bound smooths real relief along with the
+    # artifact. So they part company here and never share a map again.
+    # Imported here rather than at module scope: mask reads this module's
+    # focus measure, so a top-level import back would close the loop.
+    from . import mask, slope
+
+    solid = mask.body(aligned) if mask_background else None
+
+    # The one moment worth asking the operator anything. Depth and mask
+    # exist, the blend has not started, and a settings variant on a crop
+    # costs milliseconds against minutes for the merge -- so the choice is
+    # cheap here and expensive anywhere else. `choose_slope` is handed the
+    # aligned lumas, the depth map and the subject mask, and returns the
+    # bound it wants; returning None keeps the caller's. Nothing in this
+    # module knows or cares whether a human was involved.
+    if choose_slope is not None:
+        picked = choose_slope(aligned, depth,
+                              solid if solid is not None
+                              else mask.body(aligned), n,
+                              width, feather)
+        if picked is not None:
+            clamp_slope = float(picked)
+
     del aligned
+    blend_depth = depth if not clamp_slope else slope.clamp(depth,
+                                                            clamp_slope)
+    stored_depth = depth if solid is None else mask.flatten(depth, solid)
+    del depth
 
     # Blend at full resolution, one slice at a time: demosaic, align, add.
     # Weights follow the *refined* depth, not the raw sharpness fields, or
@@ -422,14 +461,15 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     # at partial opacity). Variable width means the hats no longer sum to
     # one on their own, so normalise -- once, up front, at half res.
     h, w = raws[0].shape
-    norm = np.zeros_like(depth)
+    norm = np.zeros_like(blend_depth)
     for i in range(n):
-        norm += np.clip(1.0 - np.abs(depth - i) / width, 0.0, 1.0)
+        norm += np.clip(1.0 - np.abs(blend_depth - i) / width, 0.0, 1.0)
     np.maximum(norm, 1e-6, out=norm)
 
     acc = np.zeros((h, w, 3), np.float32)
     for i, (raw, (sx, sy)) in enumerate(zip(raws, shifts)):
-        hat = np.clip(1.0 - np.abs(depth - i) / width, 0.0, 1.0) / norm
+        hat = np.clip(1.0 - np.abs(blend_depth - i) / width,
+                      0.0, 1.0) / norm
         if not (hat > 1e-4).any():
             if progress:
                 progress("blending", i + 1, n)
@@ -546,10 +586,9 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     # depth-consuming tool expects -- this is what a stereo pair or a
     # wigglegram will be synthesised from. depth_view.png is the same map
     # dressed for looking at, and stays because it earned it.
-    dmap = np.clip(depth / max(n - 1, 1) * 255, 0, 255).astype(np.uint8)
-    cv2.imwrite(str(session.dir / "depth.png"), dmap)
+    depthmap.write(session.dir / "depth.png", stored_depth, n)
     cv2.imwrite(str(session.dir / "depth_view.png"),
-                cv2.applyColorMap(dmap, cv2.COLORMAP_VIRIDIS))
+                depthmap.view(stored_depth, n))
 
     report = {
         "output": output,
@@ -557,7 +596,7 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
         "width": w, "height": h,
         "max_breathing_px": round(max(abs(v) for s in shifts for v in s) * 2,
                                   1),
-        "depth_levels": int(len(np.unique(np.round(depth)))),
+        "depth_levels": int(len(np.unique(np.round(stored_depth)))),
     }
     return written, report
 

@@ -22,6 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from . import depthmap
 from .stitch import _read_ifd, _values, read_bayer_dng, read_white_level
 
 #: Peak parallax as a fraction of image width. Beyond ~1.5% the backward
@@ -119,7 +120,10 @@ def load_pair(directory: Path | str, width: int = WIGGLE_W,
             "stack's merge, or stitch the mosaic, first")
     rgb, white = _read_composite(dng)
     img = _develop(rgb, white)
-    depth = cv2.imread(str(dmap), cv2.IMREAD_GRAYSCALE)
+    # Through `depthmap`, because IMREAD_GRAYSCALE downconverts a 16-bit
+    # file to 8 without saying so, which would have quietly undone the
+    # whole point of writing it wider.
+    depth = depthmap.read(dmap)
     h, w = img.shape[:2]
     scale = min(1.0, width / w)
     if scale < 1.0:

@@ -82,6 +82,12 @@ class StackAssembly(QtWidgets.QWidget):
         self.progress = QtWidgets.QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(3)
+        # Keep its three pixels reserved while it is hidden. Without this
+        # the whole panel jumps taller the moment a merge starts, which is
+        # exactly when the operator is watching it.
+        policy = self.progress.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.progress.setSizePolicy(policy)
         self.progress.hide()
         self.progress.setStyleSheet(
             f"QProgressBar {{ border: 0; background: {theme.SUNK}; }}"
@@ -154,6 +160,26 @@ class StackAssembly(QtWidgets.QWidget):
               [(N_("stack.feather.subtle.label"), 1.0),
                (N_("stack.feather.normal.label"), 2.0),
                (N_("stack.feather.wide.label"), 4.0)])
+        # The two halves of the halo work, and they are separate entries
+        # on purpose: one acts on the geometry and one on the photograph,
+        # and giving both the same treatment measured harmful each way.
+        group(N_("stack.background.heading"), "stack_mask_background",
+              [(N_("stack.background.flatten.label"), True),
+               (N_("stack.background.keep.label"), False)])
+        # How the bound gets chosen, then what it is. The presets stay
+        # for the operator who knows their subject; "help me choose" is
+        # for the one who does not, which on a new mount is everyone.
+        group(N_("stack.halo.heading"), "stack_halo_mode",
+              [(N_("stack.halo.mode.off"), "off"),
+               (N_("stack.halo.mode.last"), "last"),
+               (N_("stack.halo.mode.choose"), "choose")])
+        # The values are the measured range: 0.20 suited a smooth
+        # carapace, 0.60 a mount of crossing diatoms, and 0.35 is what the
+        # optics imply for both.
+        group(N_("stack.halo.strength.heading"), "stack_clamp_slope",
+              [(N_("stack.halo.strong.label"), 0.20),
+               (N_("stack.halo.balanced.label"), 0.35),
+               (N_("stack.halo.gentle.label"), 0.60)])
         group(N_("stack.output.heading"), "stack_output",
               [(N_("stack.output.bayer.label"), "bayer"),
                (N_("stack.output.linear.label"), "linear")])
