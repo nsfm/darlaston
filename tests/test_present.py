@@ -113,7 +113,7 @@ def test_magnification_sits_bottom_right(qapp):
     view.resize(600, 400)
     view.set_frame(_frame(240))
     before = _pixels(view)
-    view.set_magnification("250×", "25×/0.65")
+    view.set_magnification("250×")
     after = _pixels(view)
     changed = np.any(before != after, axis=2)
     assert changed.sum() > 50
@@ -198,7 +198,7 @@ def test_the_magnification_aligns_to_the_bars_rule(qapp):
     mark = view._bar.mark_rect()
     assert mark is not None
     before = _pixels(view)
-    view.set_magnification("250×", "25×/0.65")
+    view.set_magnification("250×")
     after = _pixels(view)
     changed = np.any(before != after, axis=2)
     ys, xs = np.nonzero(changed)
@@ -215,7 +215,7 @@ def test_the_screen_measurement_changes_the_headline(qapp):
     view.resize(600, 400)
     view.set_frame(_frame(240))
     view.set_scale(2.0)
-    view.set_magnification("160×", "16×/0.4")
+    view.set_magnification("160×")
     plain = _pixels(view)
     view.set_screen_scale(0.5)                 # mm per displayed pixel
     measured = _pixels(view)
@@ -293,10 +293,10 @@ def test_space_toggles_the_hold_and_says_so(qapp):
     assert not w.held and told == [True, False]
 
 
-def test_a_held_picture_reads_held_not_live(qapp):
-    """Both truths at once resolve in favour of the deliberate one: the
-    audience is told the picture is held, and the red dot -- the claim
-    that what they see is happening now -- comes down."""
+def test_a_held_picture_drops_the_live_claim_quietly(qapp):
+    """The claim that what they see is happening now comes down, and
+    nothing replaces it: a deliberate freeze needs no apology, so a held
+    view is indistinguishable from one that never claimed live."""
     w = PresentWindow()
     w.view.resize(600, 400)
     w.set_frame(_frame(120))
@@ -308,7 +308,34 @@ def test_a_held_picture_reads_held_not_live(qapp):
     held = _pixels(w.view)
     reds = (held[..., 0].astype(int) - held[..., 1].astype(int)) > 20
     assert reds.sum() == 0, "the dot outlived the hold"
-    assert np.any(lit != held), "nothing says the picture is held"
+    w.set_held(False)
+    w.view.set_live(False)
+    assert np.array_equal(held, _pixels(w.view)), (
+        "a held corner should say nothing at all")
+
+
+def test_a_hold_freezes_the_captions_too(qapp):
+    """The operator retypes the subject boxes for the next slide during
+    exactly the hold, and the audience must not watch the old picture
+    get relabelled letter by letter."""
+    w = PresentWindow()
+    w.set_frame(_frame(120))
+    w.view.set_subject("Pseudoscorpion", "Mounted by H.W.H. Darlaston")
+    w.view.set_magnification("160×")
+    w.view.set_scale(2.0)
+    w.set_held(True)
+    w.view.set_subject("W", "")
+    w.view.set_magnification("400×")
+    w.view.set_scale(0.8)
+    w.view.set_header("San Francisco Microscopical Society", "")
+    assert w.view._subject == ("Pseudoscorpion",
+                               "Mounted by H.W.H. Darlaston")
+    assert w.view._magnification == "160×"
+    assert w.view._um == 2.0
+    assert w.view._header == ("", "")
+    w.set_held(False)
+    w.view.set_subject("Waterbears", "Found in moss outside")
+    assert w.view._subject == ("Waterbears", "Found in moss outside")
 
 
 def test_a_hold_does_not_survive_the_window_closing(qapp):
@@ -356,23 +383,32 @@ def test_the_header_dialog_decides_whether_there_is_a_header(qapp):
     assert not s.present_header, "an empty header stayed switched on"
 
 
-def test_the_screen_dialog_takes_a_measurement(qapp):
+def test_the_screen_dialog_takes_a_measurement_in_its_own_unit(qapp):
+    from darlaston.ui.present import screen_width_cm
+
     s = Settings()
     d = ScreenDialog(s)
-    d.width_cm.setText("120")
+    d.width_field.setText("100")
+    d.unit.setCurrentIndex(d.unit.findData("in"))
     d.accept()
-    assert s.present_screen_width_cm == 120.0
+    assert s.present_screen_width == 100.0
+    assert s.present_screen_unit == "in"
+    assert screen_width_cm(s) == pytest.approx(254.0)
 
-    # Cleared means unmeasured, and a decimal comma is a measurement
-    # too -- most tape measures this program will meet are metric.
+    # A decimal comma is a measurement too, and feet reach projector
+    # screens the way centimetres never will.
     d = ScreenDialog(s)
-    d.width_cm.setText("58,4")
+    d.width_field.setText("6,5")
+    d.unit.setCurrentIndex(d.unit.findData("ft"))
     d.accept()
-    assert s.present_screen_width_cm == pytest.approx(58.4)
+    assert screen_width_cm(s) == pytest.approx(6.5 * 30.48)
+
+    # Cleared means unmeasured, whatever the unit says.
     d = ScreenDialog(s)
-    d.width_cm.setText("")
+    d.width_field.setText("")
     d.accept()
-    assert s.present_screen_width_cm == 0.0
+    assert s.present_screen_width == 0.0
+    assert screen_width_cm(s) == 0.0
 
 
 # ---- the window in the application ------------------------------------------
@@ -405,7 +441,7 @@ def test_the_frame_and_the_captions_reach_the_window(window):
     assert view._live is True
     # No configured optics on the synthetic bench, so the window says
     # nothing about magnification rather than guessing.
-    assert view._magnification == ("", "")
+    assert view._magnification == ""
 
 
 def test_a_present_fault_never_reaches_the_viewfinder(window, monkeypatch):
@@ -438,4 +474,23 @@ def test_subject_off_means_the_words_come_down(window):
 
 def test_magnification_is_empty_without_a_described_setup(window):
     win = window()
-    assert win._present_magnification() == ("", "")
+    assert win._present_magnification() == ""
+
+
+def test_hold_is_reachable_from_the_working_window(window):
+    """The operator's hands live on the main window, so the hold rides
+    an application wide chord -- a chord rather than a bare key, because
+    plain space in the subject boxes has to keep meaning a space."""
+    win = window()
+    act = win.present_hold_action
+    assert act.shortcut().toString() == "Ctrl+Space"
+    assert act.shortcutContext() == \
+        QtCore.Qt.ShortcutContext.ApplicationShortcut
+    win.present_action.setChecked(True)
+    act.trigger()
+    assert win.present_window.held
+    act.trigger()
+    assert not win.present_window.held
+    # And the window's own space bar reports back to the menu.
+    win.present_window.set_held(True)
+    assert act.isChecked()

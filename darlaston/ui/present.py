@@ -14,14 +14,51 @@ from __future__ import annotations
 
 import math
 import time
+from functools import lru_cache
 
 import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import _
-from . import theme
+from . import icons, theme
 from .widgets import BAD, UI_METER, ScaleBarOverlay
+
+#: Centimetres per unit the screen may be measured in. Projector
+#: screens are quoted in feet or metres and desktop displays in inches
+#: or centimetres, and a measurement is only welcome in the unit the
+#: tape in hand actually shows.
+CM_PER = {"cm": 1.0, "m": 100.0, "in": 2.54, "ft": 30.48}
+
+
+def screen_width_cm(settings) -> float:
+    """The measured screen width in centimetres, whatever unit it was
+    taken in. Zero means unmeasured."""
+    return (settings.present_screen_width
+            * CM_PER.get(settings.present_screen_unit, 1.0))
+
+
+@lru_cache(maxsize=32)
+def _glyph(name: str, colour: str, px: int) -> QtGui.QPixmap:
+    """One of the marks, rasterised for the captions.
+
+    Not through `icons._render`, on purpose: that pins the stroke at
+    hairline device width because the interface's marks sit beside
+    hairline furniture. These sit beside demibold projection type, so
+    the stroke scales with the size like the letters do.
+    """
+    from PySide6 import QtSvg
+
+    image = QtGui.QImage(px, px, QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(QtCore.Qt.GlobalColor.transparent)
+    renderer = QtSvg.QSvgRenderer(
+        QtCore.QByteArray(icons.tinted(name, colour)))
+    if renderer.isValid():
+        painter = QtGui.QPainter(image)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        renderer.render(painter)
+        painter.end()
+    return QtGui.QPixmap.fromImage(image)
 
 
 class PresentView(QtWidgets.QWidget):
@@ -89,7 +126,7 @@ class PresentView(QtWidgets.QWidget):
         self._screen_mm_per_px: float | None = None
         self._header = ("", "")
         self._subject = ("", "")
-        self._magnification = ("", "")
+        self._magnification = ""
         self._live = False
         #: Whether frames are actually arriving. The window turns this
         #: off when the feed goes quiet, because a live marker over a
@@ -158,7 +195,11 @@ class PresentView(QtWidgets.QWidget):
 
     def set_scale(self, um_per_px) -> None:
         """Micrometres per pixel of the frame as fed, bar or no bar: the
-        screen magnification reads it too."""
+        screen magnification reads it too. Frozen while held, like every
+        setter that describes the slide rather than the screen -- a held
+        picture keeps the words that were true of it."""
+        if self._held:
+            return
         um = float(um_per_px) if um_per_px else None
         if um != self._um:
             self._um = um
@@ -191,18 +232,27 @@ class PresentView(QtWidgets.QWidget):
             self.update()
 
     def set_header(self, title: str, subtitle: str) -> None:
+        if self._held:
+            return
         if (title, subtitle) != self._header:
             self._header = (title, subtitle)
             self.update()
 
     def set_subject(self, subject: str, note: str) -> None:
+        # Frozen while held: the operator retypes the subject boxes for
+        # the next slide during exactly this window, and the audience
+        # must not watch the old picture get relabelled letter by letter.
+        if self._held:
+            return
         if (subject, note) != self._subject:
             self._subject = (subject, note)
             self.update()
 
-    def set_magnification(self, primary: str, secondary: str) -> None:
-        if (primary, secondary) != self._magnification:
-            self._magnification = (primary, secondary)
+    def set_magnification(self, optical: str) -> None:
+        if self._held:
+            return
+        if optical != self._magnification:
+            self._magnification = optical
             self.update()
 
     def set_live(self, on: bool) -> None:
@@ -273,30 +323,30 @@ class PresentView(QtWidgets.QWidget):
                     mark if corner == "bl" else None)
         # The magnification is set in the mono face on purpose: it is a
         # reading, like the scale bar's label, not a caption.
-        primary, secondary = self._screen_magnification(target)
-        self._block(p, target, "br", margin,
-                    [(primary, font(fams["mono"], mag_px, demi), 0.92),
-                     (secondary, font(fams["mono"], sub_px), 0.70)],
-                    mark if corner == "br" else None)
-        if self._held or (self._live and self._live_lit):
+        self._magnification_line(p, target, margin,
+                                 font(fams["mono"], mag_px, demi),
+                                 mark if corner == "br" else None)
+        if self._live and self._live_lit and not self._held:
             self._marker(p, target, margin,
                          font(fams["sans"], sub_px, demi),
                          mark if corner == "tr" else None)
 
-    def _screen_magnification(self, target: QtCore.QRect) -> tuple[str, str]:
-        """What the magnification block says, given what is known.
+    def _mag_segments(self, target: QtCore.QRect) -> list[tuple[str, str]]:
+        """(mark, reading) pairs for the magnification line.
 
-        With the audience's screen measured, the headline is how large
-        things really appear *there* -- the honest answer to "what
-        magnification is this", and the number that changes when the
-        window is resized, which is the explanation working by itself.
-        Rounded to two figures: a screen measured with a tape does not
-        support 1,937x and printing it would claim it does.
+        The microscope's own figure first, and beside it -- once the
+        audience's screen has been measured -- how large things really
+        appear *there*: the honest answer to "what magnification is
+        this", and the number that changes when the window is resized,
+        which is the explanation working by itself. Rounded to two
+        figures: a screen measured with a tape does not support 1,937x
+        and printing it would claim it does.
         """
-        primary, secondary = self._magnification
+        if not self._magnification:
+            return []
+        segments = [("microscope", self._magnification)]
         mm = self._screen_mm_per_px
-        if (primary and mm and self._um and self._src_width
-                and target.width() >= 8):
+        if mm and self._um and self._src_width and target.width() >= 8:
             per_target = self._um * (self._src_width / float(target.width()))
             mag = mm * 1000.0 / per_target
             if mag >= 10:
@@ -304,8 +354,47 @@ class PresentView(QtWidgets.QWidget):
                 shown = f"{int(round(mag / step) * step):,}×"
             else:
                 shown = f"{mag:.1f}×"
-            primary = _("present.mag.screen", mag=shown)
-        return primary, secondary
+            segments.append(("display", shown))
+        return segments
+
+    def _magnification_line(self, p: QtGui.QPainter, target: QtCore.QRect,
+                            margin: int, f: QtGui.QFont,
+                            mark: QtCore.QRect | None) -> None:
+        """One line, each reading behind its mark: the microscope's
+        figure, then the measured screen's. The marks carry what "on
+        this screen" was spelling out, in no language at all."""
+        segments = self._mag_segments(target)
+        if not segments:
+            return
+        m = QtGui.QFontMetrics(f)
+        side = m.ascent()
+        pad = max(3, side // 4)          # mark to its own reading
+        space = max(8, side // 2)        # between the two readings
+        width = sum(side + pad + m.horizontalAdvance(t)
+                    for _n, t in segments) + space * (len(segments) - 1)
+        edge = (mark.right() + 1) if mark is not None \
+            else target.right() + 1 - margin
+        h = m.height()
+        y = target.bottom() + 1 - margin - h
+        if mark is not None:
+            y = min(y, mark.top() - max(2, h // 6) - h)
+        light = self._corner_light("br")
+        base = QtGui.QColor("#101210") if light else QtGui.QColor("#e4e7e0")
+        dim = self.OPACITIES[self._caption_opacity]
+        ink = QtGui.QColor(base)
+        ink.setAlphaF(0.92 * dim)
+        p.setFont(f)
+        x = edge - width
+        for name, text in segments:
+            glyph = _glyph(name, base.name(), side)
+            p.save()
+            p.setOpacity(0.92 * dim)
+            p.drawPixmap(int(x), int(y + m.ascent() - side), glyph)
+            p.restore()
+            x += side + pad
+            p.setPen(ink)
+            p.drawText(QtCore.QPointF(x, y + m.ascent()), text)
+            x += m.horizontalAdvance(text) + space
 
     def _block(self, p: QtGui.QPainter, target: QtCore.QRect, corner: str,
                margin: int, lines, mark: QtCore.QRect | None) -> None:
@@ -348,13 +437,13 @@ class PresentView(QtWidgets.QWidget):
     def _marker(self, p: QtGui.QPainter, target: QtCore.QRect,
                 margin: int, f: QtGui.QFont,
                 mark: QtCore.QRect | None) -> None:
-        """The top right word: "held" while the operator holds the
-        picture, else a breathing dot and "live". The breath is the
-        point -- a static badge could be part of a recording, and the
-        slow pulse is the one thing a loop of frames cannot fake
-        cheaply."""
+        """The top right word: a breathing dot and "live". The breath is
+        the point -- a static badge could be part of a recording, and
+        the slow pulse is the one thing a loop of frames cannot fake
+        cheaply. While held the corner simply goes quiet: the claim
+        comes down, and a deliberate freeze needs no apology."""
         m = QtGui.QFontMetrics(f)
-        text = _("present.held") if self._held else _("present.live")
+        text = _("present.live")
         tw = m.horizontalAdvance(text)
         gap = max(4, int(m.ascent() * 0.3))
         y = target.top() + margin
@@ -367,8 +456,6 @@ class PresentView(QtWidgets.QWidget):
         p.setFont(f)
         p.setPen(ink)
         p.drawText(QtCore.QPointF(x, y + m.ascent()), text)
-        if self._held:
-            return
         dot = QtGui.QColor(BAD)
         # The breath never takes the dot below legible: at the bottom of
         # a 0.2 floor it disappeared into a brightfield ground entirely,
@@ -569,10 +656,12 @@ class HeaderDialog(QtWidgets.QDialog):
 class ScreenDialog(QtWidgets.QDialog):
     """How wide the audience's picture really is.
 
-    One measured number, and it buys the one magnification figure an
-    audience can actually stand next to: how large things appear on
-    *that* screen. Empty means unmeasured, and unmeasured claims
-    nothing.
+    One measured number, in whatever unit the tape in hand shows --
+    projector screens are quoted in feet or metres and desktop displays
+    in inches or centimetres, and asking somebody to convert is asking
+    for a wrong magnification. It buys the one figure an audience can
+    actually stand next to: how large things appear on *that* screen.
+    Empty means unmeasured, and unmeasured claims nothing.
     """
 
     def __init__(self, settings, parent=None) -> None:
@@ -581,10 +670,22 @@ class ScreenDialog(QtWidgets.QDialog):
         self.setWindowTitle(_("present.screen.title"))
         explain = QtWidgets.QLabel(_("present.screen.explain"))
         explain.setWordWrap(True)
-        self.width_cm = QtWidgets.QLineEdit(
-            f"{settings.present_screen_width_cm:g}"
-            if settings.present_screen_width_cm else "")
-        self.width_cm.setPlaceholderText(_("present.screen.width"))
+        self.width_field = QtWidgets.QLineEdit(
+            f"{settings.present_screen_width:g}"
+            if settings.present_screen_width else "")
+        self.width_field.setPlaceholderText(_("present.screen.width"))
+        self.unit = QtWidgets.QComboBox()
+        for value, label in (("cm", _("present.screen.unit.cm")),
+                             ("in", _("present.screen.unit.in")),
+                             ("m", _("present.screen.unit.m")),
+                             ("ft", _("present.screen.unit.ft"))):
+            self.unit.addItem(label, value)
+        at = self.unit.findData(settings.present_screen_unit)
+        if at >= 0:
+            self.unit.setCurrentIndex(at)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.width_field, 1)
+        row.addWidget(self.unit)
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok
             | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
@@ -592,15 +693,16 @@ class ScreenDialog(QtWidgets.QDialog):
         buttons.rejected.connect(self.reject)
         col = QtWidgets.QVBoxLayout(self)
         col.addWidget(explain)
-        col.addWidget(self.width_cm)
+        col.addLayout(row)
         col.addWidget(buttons)
         self.setMinimumWidth(420)
 
     def accept(self) -> None:
         try:
-            width = float(self.width_cm.text().replace(",", "."))
+            width = float(self.width_field.text().replace(",", "."))
         except ValueError:
             width = 0.0
-        self._settings.present_screen_width_cm = max(0.0, width)
+        self._settings.present_screen_width = max(0.0, width)
+        self._settings.present_screen_unit = self.unit.currentData()
         self._settings.save()
         super().accept()

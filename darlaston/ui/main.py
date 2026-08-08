@@ -68,7 +68,8 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .present import HeaderDialog, PresentWindow, ScreenDialog
+from .present import (HeaderDialog, PresentWindow, ScreenDialog,
+                      screen_width_cm)
 from .widgets import (UI_METER, BalanceSwatch, FocusGroup, Histogram,
                       LiveView, SaveGauge, ValueBar)
 
@@ -395,6 +396,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.present_hold_action.setToolTip(_("menu.present.hold.tooltip"))
         self.present_hold_action.setCheckable(True)
         self.present_hold_action.setEnabled(False)
+        # Application-wide, because the operator's hands live on *this*
+        # window and the swap is exactly when they cannot go clicking
+        # through a menu. A chord rather than a bare key: plain space in
+        # the subject boxes has to keep meaning a space.
+        self.present_hold_action.setShortcut(QtGui.QKeySequence("Ctrl+Space"))
+        self.present_hold_action.setShortcutContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut)
         self.present_hold_action.toggled.connect(self._hold_present)
         present.addSeparator()
         self.present_bar_action = present.addAction(
@@ -2822,7 +2830,7 @@ class MainWindow(QtWidgets.QMainWindow):
             w.view.set_fill(st.present_fill)
             w.view.set_caption_size(st.present_caption_size)
             w.view.set_caption_opacity(st.present_caption_opacity)
-            w.view.set_magnification(*self._present_magnification())
+            w.view.set_magnification(self._present_magnification())
             subject = (self.subject.subject, self.subject.slide_note) \
                 if st.present_subject else ("", "")
             w.view.set_subject(*subject)
@@ -2840,28 +2848,28 @@ class MainWindow(QtWidgets.QMainWindow):
         the screen it is actually on, from the operator's measurement.
         Asked per frame because the window can be dragged between
         screens with different geometries mid-session."""
-        width_cm = self.settings.present_screen_width_cm
+        width_cm = screen_width_cm(self.settings)
         screen = w.screen() if width_cm > 0 else None
         if screen is None:
             return None
         px = screen.geometry().width() * screen.devicePixelRatio()
         return (width_cm * 10.0 / px) if px else None
 
-    def _present_magnification(self) -> tuple[str, str]:
-        """What the audience is told: the total onto the sensor, with
-        the objective under it -- and the same doubt marker the rail
-        carries, because a doubted number must not grow more confident
-        by being projected."""
+    def _present_magnification(self) -> str:
+        """What the audience is told: one optical figure, carrying the
+        same doubt marker the rail does, because a doubted number must
+        not grow more confident by being projected. The numerical
+        aperture stays on the operator's side of the table."""
         if not self.settings.present_magnification or self.setup is None:
-            return "", ""
-        obj = self.setup.scope.turret.objective
+            return ""
         suffix = _("objective.uncertain") if self.objective.uncertain else ""
         total = self.setup.total_magnification
         if total:
-            return f"{total:g}×", (obj.label + suffix) if obj else ""
+            return f"{total:g}×{suffix}"
+        obj = self.setup.scope.turret.objective
         if obj:
-            return obj.label + suffix, ""
-        return "", ""
+            return f"{obj.magnification:g}×{suffix}"
+        return ""
 
     def _preview_um_per_px(self, preview_width: int) -> float | None:
         """Micrometres per pixel *of the preview*, not of a capture.

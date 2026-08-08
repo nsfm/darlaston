@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- A compound microscope for the presentation's magnification
+       reading: eyepiece and tube down to the stage, the arm curving to
+       the base. Drawn at the family's weight; it is read beside a
+       number, not instead of one. -->
+  <g fill="none" stroke="currentColor" stroke-width="1.2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6.1 1.8 L9.1 1.8"/>
+    <path d="M7.6 1.8 L7.6 7.9"/>
+    <path d="M6.5 7.9 L8.7 7.9"/>
+    <path d="M4.6 10.6 L10.4 10.6"/>
+    <path d="M10.8 5.2 C13.1 7.2 12.9 10.6 10.6 13.4"/>
+    <path d="M3.4 13.6 L12.6 13.6"/>
+  </g>
+</svg>
