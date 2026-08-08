@@ -22,6 +22,11 @@ BG = "#101210"        # ground, green-grey biased: the inside of an instrument
 PANEL = "#191c19"
 SUNK = "#0b0d0b"
 LINE = "#2a2e29"
+#: Lettering that sits *on* the accent rather than beside it. Brass is a
+#: light colour, so INK over it is two light tones and reads as a smudge
+#: at eleven pixels. The slider already draws its label this way where the
+#: fill passes under it, and a filled segment is the same idea.
+ON_BRASS = "#101210"
 INK = "#e4e7e0"
 DIM = "#757a72"
 BRASS = "#c89b4a"     # accent, and active state
@@ -516,8 +521,11 @@ def stylesheet() -> str:
     QPushButton[role="seg"] {{
         padding: 3px 0; font-size: 11px; color: {DIM};
     }}
+    /* Dark lettering on the fill, as the sliders do. This was {INK},
+       which is a near-white on an amber ground: legible in a screenshot
+       and a smudge at the size these are actually drawn. */
     QPushButton[role="seg"]:checked {{
-        border-color: {BRASS}; color: {INK}; background: {BRASS};
+        border-color: {BRASS}; color: {ON_BRASS}; background: {BRASS};
     }}
     /* A segment that wants pressing, as opposed to one that merely can
        be. Brass lettering on the panel reads as an invitation where the
@@ -528,6 +536,17 @@ def stylesheet() -> str:
     QPushButton[role="seg"][invite="true"] {{ color: {BRASS}; }}
     QPushButton[role="seg"][invite="true"]:hover {{
         color: {BRASS_LIT}; border-color: {BRASS_LIT};
+    }}
+    /* An inviting segment that is also on. Without this the invitation
+       wins on specificity, being one selector longer, and a switch that
+       is doing its job goes back to looking like one asking to be
+       pressed. */
+    QPushButton[role="seg"][invite="true"]:checked {{
+        border-color: {BRASS}; color: {ON_BRASS}; background: {BRASS};
+    }}
+    QPushButton[role="seg"][invite="true"]:checked:hover {{
+        background: {BRASS_LIT}; border-color: {BRASS_LIT};
+        color: {ON_BRASS};
     }}
     QPushButton[role="seg"]:checked:hover {{ background: {BRASS_LIT}; }}
     QPushButton[role="step"] {{

@@ -1,10 +1,5 @@
 # Next up
 
-- [ ] **A scale bar on the photograph.** Drawn on the printed plate
-      already, and nowhere else. Not a measurement tool: we already compute
-      the number from pixel pitch and total magnification, and putting it on
-      the picture costs almost nothing. Nice to have rather than urgent --
-      see the note on what this program is for.
 - [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`,
       deliberately not started. A stacked mosaic is a four-dimensional
       recording - x, y, zoom and focal plane - and every move through it
@@ -18,23 +13,6 @@
       coverage and an honest size estimate, then shoot it - which turns a
       rendering feature into a capture feature. Order and reasoning in the
       doc.
-- [x] **Auto-exposure.** Done, and not through the SDK's own, which this
-      entry assumed. Ours works on any backend, can be locked to gain
-      alone for a camera whose exposure steps are uneven, and meters
-      something the SDK's target percentile cannot: the *subject*, found
-      by splitting the histogram into a dark and a bright population,
-      rather than a fixed point in the distribution. That last part is
-      why it holds on darkfield, where a subject covering two percent of
-      the frame defeats any fixed percentile.
-
-      Left open on purpose: the exposure ceiling is the asked-for frame
-      rate and nothing raises it. A measurement was allowed to, once, so
-      that a mode reading out at 12 fps could use the 83 ms it had going
-      spare, and it cost two bugs and gained nothing anyone wanted. Nate,
-      on why the case does not exist: an operator who needs a long
-      exposure cranks gain, focuses at a frame rate that makes focusing
-      possible, then trades the gain back for exposure by hand. The long
-      exposure comes *after* auto-exposure has done its job, not from it.
 - [ ] **The tracker must not run at a divisor**, recorded so it is not
       re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
       0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
@@ -232,13 +210,33 @@
       fell" are different claims and only the second is defensible. The
       bench already has a synthetic glow case to measure against.
 
-- [ ] **A 12 fps preview drags the whole interface to 12 fps.** Nate's
-      camera starts in its full 5440-wide mode, which reads out at 12 fps,
-      and every control in the window then responds at that rate. Drawing
-      the preview and handling interaction are on the same thread and the
-      same clock. Decoupling them is the fix, and the preview-resolution
-      item below is a mitigation rather than an answer: a faster mode
-      makes the symptom smaller and leaves the coupling in place.
+- [x] **A 12 fps preview drags the whole interface to 12 fps.** The
+      diagnosis in this entry was wrong, and worth recording as such: it
+      blamed the preview and the interface sharing a thread and a clock,
+      and proposed decoupling them. Drawing was never the cost. Measured
+      on the GUI thread at 5440 wide, `set_frame` is 1.7 ms at the default
+      preview quality.
+
+      The cost is the pipeline's analysis, which scales with preview
+      pixels: 143.9 ms a frame at 5440 against an 83 ms frame period, so
+      it cannot keep up, saturates the workers and starves everything
+      behind it. At 2736 it is 28.0 ms against 33 ms, which is why
+      changing the default mode felt like such a large improvement: it
+      moved from 1.7x over budget to just inside it.
+
+      Two fixes, both about not doing work that buys nothing. The default
+      preview mode is now the largest at or under 6 MP rather than
+      whichever the camera lists first. And the stage tracker correlates
+      at a fixed 684 px wide instead of the preview divided by four, which
+      was handing phase correlation four times the pixels at 5440 for no
+      gain: 38.0 ms of that frame. The 2736 grid is unchanged, because it
+      is the one the tracker's own measurements were taken on.
+
+      Now 23.5 ms at 2736 and 92.1 ms at 5440. The large mode still does
+      not quite make its 83 ms period, and is left there deliberately: the
+      remaining weight is a full-frame copy, a channel split and a median
+      blur, all of which want the whole picture for reasons of their own,
+      and nobody has to use that mode any more to get a preview.
 
 ## Capture features
 

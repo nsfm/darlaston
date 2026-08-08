@@ -362,6 +362,11 @@ class StatusBar(QtWidgets.QFrame):
     sits together rather than being split across the window.
     """
 
+    #: Emitted once, when the camera has told us what modes it offers.
+    #: The window then decides which to open in, which it cannot do any
+    #: earlier because the list is the camera's answer rather than ours.
+    resolutions_ready = QtCore.Signal(object)
+
     def __init__(self) -> None:
         super().__init__()
         self.setFixedHeight(28)
@@ -531,6 +536,7 @@ class StatusBar(QtWidgets.QFrame):
                       mp=f"{mp:.1f}"),
                                      r.index)
             self.preview.blockSignals(False)
+            self.resolutions_ready.emit(list(info.resolutions))
 
         tail: list[str] = []
         link = status.link

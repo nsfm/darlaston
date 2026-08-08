@@ -124,6 +124,12 @@ BRANDS = [
 #: AttributeError deep inside a capture.
 REQUIRED = ("PullImageV4", "TriggerSync", "get_Model")
 
+#: TOUPCAM_OPTION_BYTEORDER. Hard-coded rather than read off the binding
+#: because older bindings do not define it while the firmware still honours
+#: it, and an option this codebase depends on should not silently become a
+#: no-op because a name was missing. The value is fixed ABI.
+_BYTEORDER_BGR = 0x2a
+
 _vendor = None
 
 
@@ -391,7 +397,22 @@ class ToupcamBackend(CameraBackend):
         # the colour matrix; restoring only what we happened to remember left
         # the colour matrix off and the preview came back magenta. Declaring
         # every flag means no capture path can leave this half-configured.
+        #
+        # Byte order is on that list for the same reason and was missing.
+        # The SDK header: "0 => RGB, 1 => BGR, default value: 1(Win),
+        # 0(macOS, Linux, Android)". Everything downstream of here reads
+        # BGR -- the QImage the live view builds is Format_BGR888, and
+        # every comment in this codebase says BGR -- so on Linux and macOS
+        # the ISP was handing us RGB and red and blue arrived swapped.
+        # Nate's amber pseudoscorpion previewed blue while its captures
+        # came out correct, because captures go through grab_raw and our
+        # own demosaic rather than the ISP.
+        #
+        # Stated rather than compensated for downstream: a swap undone in
+        # the view would be a second assumption to keep in step with this
+        # one, and would be wrong on Windows.
         for option, value in (
+                (_BYTEORDER_BGR, 1),
                 (t.TOUPCAM_OPTION_RAW, 0),
                 (t.TOUPCAM_OPTION_BITDEPTH, 0),
                 (t.TOUPCAM_OPTION_TRIGGER, 0),        # free-running video
@@ -474,6 +495,14 @@ class ToupcamBackend(CameraBackend):
 
         cam.put_eSize(0)
         w, h = cam.get_Size()
+        # Same order as the live path, for the same reason: this exists to
+        # be compared against grab_raw, and a channel swap between them
+        # would read as the ISP doing something to the colour that it is
+        # not doing.
+        try:
+            cam.put_Option(_BYTEORDER_BGR, 1)
+        except Exception:
+            pass
         cam.put_Option(t.TOUPCAM_OPTION_RAW, 0)
         cam.put_Option(t.TOUPCAM_OPTION_BITDEPTH, 0)
         cam.put_Option(t.TOUPCAM_OPTION_TRIGGER, 1)

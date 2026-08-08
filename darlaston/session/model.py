@@ -273,6 +273,13 @@ class CameraProfile:
     geometry: list = field(default_factory=list)
     response: list = field(default_factory=list)
     relay: str = ""              # travels with the camera, not the scope
+    #: Which preview mode this camera was last opened in, by width. Kept
+    #: per camera rather than in settings because the modes are the
+    #: camera's own: a width remembered from one is meaningless on
+    #: another. Zero until somebody chooses, and a width that no longer
+    #: exists is ignored rather than repaired, since a camera that has
+    #: changed its mode list has changed more than its mode list.
+    preview_width: int = 0
     #: What the relay actually multiplies by. It sits between the objective
     #: and the sensor, so it belongs in the magnification chain like the
     #: Optovar does -- and leaving it out understated total magnification by
