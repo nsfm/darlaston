@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import snapshot from "./release-snapshot.json";
 
 const REPO = "nsfm/darlaston";
@@ -17,6 +16,12 @@ interface Release {
   assets: ReleaseAsset[];
 }
 
+/* Baked by CI at build time, and the site redeploys when the artifacts
+   workflow completes (see site.yml), so this tracks releases by itself:
+   no client-side API call, nothing for a visitor to be rate-limited
+   against. Null means no release exists yet, or a local build. */
+const RELEASE = snapshot as unknown as Release | null;
+
 /* Artifact filenames carry a platform label from packaging/bundle.py;
    match on it rather than parsing the whole name. */
 const PLATFORMS = [
@@ -30,25 +35,8 @@ function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
-/* Baked by CI before the build (see site.yml), so the section renders
-   instantly with real data and survives the visitor being API
-   rate-limited. On the release-cutting push it is one release behind,
-   because the site deploys before the platform builds finish; the live
-   fetch below closes that gap at page load. */
-const BAKED = snapshot as unknown as Release | null;
-
 export default function Downloads() {
-  const [release, setRelease] = useState<Release | null>(BAKED);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((data: Release) => setRelease(data))
-      .catch(() => setFailed(true)); // the baked release, if any, stands
-  }, []);
-
-  if ((failed && !release) || (release && release.assets.length === 0)) {
+  if (!RELEASE || RELEASE.assets.length === 0) {
     return (
       <p className="dl-meta">
         Grab the latest build from the{" "}
@@ -58,12 +46,8 @@ export default function Downloads() {
     );
   }
 
-  if (!release) {
-    return <p className="dl-meta">Checking the latest release…</p>;
-  }
-
   const cards = PLATFORMS.flatMap((p) => {
-    const asset = release.assets.find((a) => a.name.includes(p.label));
+    const asset = RELEASE.assets.find((a) => a.name.includes(p.label));
     return asset ? [{ ...p, asset }] : [];
   });
 
@@ -80,13 +64,13 @@ export default function Downloads() {
         ))}
       </div>
       <p className="dl-meta">
-        {release.tag_name} · built{" "}
-        {new Date(release.published_at).toLocaleDateString("en-US", {
+        {RELEASE.tag_name} · built{" "}
+        {new Date(RELEASE.published_at).toLocaleDateString("en-US", {
           year: "numeric",
           month: "long",
           day: "numeric",
         })}{" "}
-        · <a href={release.html_url}>release notes</a> ·{" "}
+        · <a href={RELEASE.html_url}>release notes</a> ·{" "}
         <a href={RELEASES}>all releases</a>
       </p>
     </>

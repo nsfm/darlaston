@@ -1,10 +1,14 @@
 name: site
 
-# The shopfront rides the same rhythm as the release workflow: every push
-# to main deploys. The downloads section asks the GitHub API for the
-# latest release at page load, so the site never goes stale between
-# deploys -- rebuilding on every push is about keeping the copy and
-# screenshots current, not the version numbers.
+# Two deploys per release, each for its own reason. The push deploy gets
+# site changes live in minutes, ungated by the artifact matrix. The
+# workflow_run deploy fires when the artifacts workflow completes, which
+# is the earliest moment the new release exists to be baked in -- it
+# cannot be `on: release: published`, because releases created with the
+# workflow GITHUB_TOKEN never trigger other workflows. Between the two,
+# the baked release tracks reality by itself and the page needs no
+# client-side API call. In the gap before the re-bake, the links name
+# the previous release, which still exists: stale for minutes, never 404.
 #
 # Pull requests only build when they touch the site, and never deploy:
 # an app PR has no business ringing this bell, and a site PR proves it
@@ -15,6 +19,10 @@ on:
     branches: [main]
   pull_request:
     paths: ["site/**", ".github/workflows/site.yml"]
+  workflow_run:
+    workflows: [artifacts]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -42,13 +50,11 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci
-      # Baked into the bundle so the downloads section renders instantly
-      # and survives visitors hitting the unauthenticated API rate limit.
-      # On a release-cutting push this is one release behind (the site
-      # deploys before the platform builds finish); the client-side fetch
-      # closes the gap. The committed placeholder is `null`, which the
-      # component treats as "fetch live, show a loading line meanwhile".
-      - name: Snapshot the latest release
+      # The whole downloads section renders from this file; there is no
+      # client-side API call. The committed placeholder is `null`, which
+      # renders as a link to the releases page -- the truth until the
+      # first release ever, and for local builds.
+      - name: Bake the latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -56,13 +62,13 @@ jobs:
             > src/release-snapshot.json || echo 'null' > src/release-snapshot.json
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         with:
           path: site/dist
 
   deploy:
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
