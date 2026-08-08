@@ -32,8 +32,7 @@ def _with_camera(win, monkeypatch, gain=(100, 4000)):
     That is the behaviour under test elsewhere; here it is in the way.
     """
     monkeypatch.setattr(win, "_auto_exposure_limits", lambda: E.Limits(
-        exposure_us=(300, 2_000_000), gain_pct=gain,
-        readout_us=8000, target_fps=30.0))
+        exposure_us=(300, 2_000_000), gain_pct=gain, target_fps=30.0))
 
 
 # ---- the interlocks ---------------------------------------------------------
@@ -135,7 +134,7 @@ def test_a_camera_with_neither_control_is_left_alone(window, monkeypatch):
     the ladder simply never spends anything there."""
     win = window()
     monkeypatch.setattr(win, "_auto_exposure_limits", lambda: E.Limits(
-        exposure_us=(8330, 8330), gain_pct=(100, 100), readout_us=8000))
+        exposure_us=(8330, 8330), gain_pct=(100, 100)))
     win.settings.auto_exposure = True
     win._ae_hurry = True
     before = _at(win)
@@ -147,7 +146,7 @@ def test_gain_alone_still_works_when_exposure_is_fixed(window, monkeypatch):
     """A camera offering only gain is not a camera with no auto-exposure."""
     win = window()
     monkeypatch.setattr(win, "_auto_exposure_limits", lambda: E.Limits(
-        exposure_us=(8330, 8330), gain_pct=(100, 4000), readout_us=8000))
+        exposure_us=(8330, 8330), gain_pct=(100, 4000)))
     win.settings.auto_exposure = True
     win._ae_hurry = True
     # Start where that camera can actually be: a slider outside the
@@ -162,48 +161,9 @@ def test_gain_alone_still_works_when_exposure_is_fixed(window, monkeypatch):
 
 # ---- the frame rate it meters against ---------------------------------------
 
-def test_frame_rate_comes_from_sequence_numbers_not_arrivals(window):
-    """Signals are coalesced, so counting arrivals here measures how busy
-    the window is rather than how fast the sensor reads out."""
-    win = window()
-    win._ae_fps = 0.0
-    win._ae_rate_mark = None
-    win._note_frame_rate(_signals(win, seq=100, when=10.0))
-    win._note_frame_rate(_signals(win, seq=130, when=11.0))   # 30 frames, 1 s
-    assert win._ae_fps == pytest.approx(30.0, rel=0.05)
 
 
-def test_a_gap_does_not_count_as_a_slow_frame(window):
-    """A capture freezes the preview for over a second. Reading that as a
-    frame rate would convince the loop it has headroom it does not."""
-    win = window()
-    win._ae_fps = 0.0
-    win._ae_rate_mark = None
-    win._note_frame_rate(_signals(win, seq=1, when=0.0))
-    win._note_frame_rate(_signals(win, seq=2, when=9.0))      # a long gap
-    assert win._ae_fps == 0.0
 
-
-def test_an_unlearned_readout_reads_zero(window):
-    """Subtracting the exposure from the measured period was the first
-    answer here and it is what produced the light show. There is nothing
-    to report until a frame arrives that exposure was not holding up."""
-    win = window()
-    win._ae_fps = 10.0
-    assert win._measured_frame_period_us() == 0.0
-
-
-def test_an_unmeasured_rate_lets_the_target_govern(window):
-    win = window()
-    win._ae_fps = 0.0
-    assert win._measured_frame_period_us() == 0.0
-    lim = win._auto_exposure_limits()
-    if lim is not None:
-        assert lim.exposure_ceiling_us == pytest.approx(
-            1e6 / win.settings.auto_exposure_target_fps, rel=0.01)
-
-
-# ---- it must never take the picture down ------------------------------------
 
 def test_a_fault_stands_down_rather_than_stopping_the_preview(window,
                                                               monkeypatch):
@@ -225,65 +185,8 @@ def test_a_fault_stands_down_rather_than_stopping_the_preview(window,
 
 # ---- the readout figure, across a mode change -------------------------------
 
-def test_the_readout_is_learned_from_quiet_frames_only(window):
-    """The 5 k preview reads out at 12 fps whatever the exposure, so a
-    long exposure there must not be read as a slow sensor."""
-    win = window()
-    win._ae_fps = 0.0
-    win._ae_rate_mark = None
-    win.exposure.setValue(win._us_to_slider(8_000))
-    win._note_frame_rate(_signals(win, seq=0, when=0.0))
-    win._note_frame_rate(_signals(win, seq=12, when=1.0))       # 12 fps
-    assert win._measured_frame_period_us() == pytest.approx(83_000, rel=0.05)
-
-    # Now a long exposure, which is itself why the frames are slow.
-    win.exposure.setValue(win._us_to_slider(400_000))
-    win._note_frame_rate(_signals(win, seq=14, when=1.8))
-    win._note_frame_rate(_signals(win, seq=16, when=2.6))
-    assert win._measured_frame_period_us() == pytest.approx(83_000, rel=0.05)
 
 
-def test_the_ceiling_holds_still_as_exposure_rises(window, monkeypatch):
-    """The light show: a ceiling that falls as exposure rises has an
-    unstable crossing at half the frame period, and the loop chatters over
-    it swinging gain in and out."""
-    win = window()
-    win._ae_fps = 0.0
-    win._ae_rate_mark = None
-    win.exposure.setValue(win._us_to_slider(8_000))
-    win._note_frame_rate(_signals(win, seq=0, when=0.0))
-    win._note_frame_rate(_signals(win, seq=12, when=1.0))
-
-    # Hold the camera at 12 fps throughout and vary only the exposure,
-    # which is the situation on the 5 k preview: the readout is what makes
-    # the frames slow, and a longer exposure under it changes nothing.
-    seen = set()
-    seq, when = 12, 1.0
-    for us in (8_000, 20_000, 40_000, 43_000, 60_000, 82_000):
-        win.exposure.setValue(win._us_to_slider(us))
-        seq, when = seq + 12, when + 1.0
-        win._note_frame_rate(_signals(win, seq=seq, when=when))
-        seen.add(int(win._measured_frame_period_us()))
-    assert len(seen) == 1, f"the readout figure moved: {sorted(seen)}"
-
-
-def test_changing_preview_mode_forgets_the_old_readout(window):
-    """The two modes here differ by seven times, so a stale figure would
-    hold the ceiling badly wrong until it was relearned."""
-    win = window()
-    win._ae_fps = 0.0
-    win._ae_rate_mark = None
-    win.exposure.setValue(win._us_to_slider(8_000))
-    win._note_frame_rate(_signals(win, seq=0, when=0.0))
-    win._note_frame_rate(_signals(win, seq=12, when=1.0))
-    assert win._measured_frame_period_us() > 0
-
-    win.strip.preview.setCurrentIndex(0)
-    if win.session.status.is_live:
-        assert win._measured_frame_period_us() == 0.0
-
-
-# ---- one step per observation ----------------------------------------------
 
 def _levelled(win, level=0.02, seq=1, when=0.0, levels_seq=1):
     s = _signals(win, level, seq, when)
@@ -327,3 +230,49 @@ def test_signals_without_a_levels_count_still_work(window, monkeypatch):
     before = _at(win)
     win._auto_expose(_signals(win, 0.02))          # no levels_seq at all
     assert _at(win) != before
+
+
+# ---- the switch says which of its three states it is in ---------------------
+
+def test_the_switch_greys_while_something_else_owns_the_light(window,
+                                                              monkeypatch):
+    """Three states, in the rail's own vocabulary: dim is off and yours to
+    press, brass filled is on and working, greyed is on but held. A
+    control that looks live while it is doing nothing is worse than one
+    that says so."""
+    win = window()
+    win.settings.auto_exposure = True
+    win._refresh_auto_exposure_hold()
+    assert win.auto_exposure.isEnabled()
+
+    win.stack_session = object()
+    win._refresh_auto_exposure_hold()
+    assert not win.auto_exposure.isEnabled()
+    assert win.auto_exposure.toolTip()
+
+    win.stack_session = None
+    win._refresh_auto_exposure_hold()
+    assert win.auto_exposure.isEnabled()
+
+
+def test_the_lock_is_offered_only_while_the_loop_is_running(window):
+    win = window()
+    win.settings.auto_exposure = False
+    win._ae_held_shown = None
+    win._refresh_auto_exposure_hold()
+    assert not win.auto_exposure_lock.isEnabled()
+
+    win.settings.auto_exposure = True
+    win._ae_held_shown = None
+    win._refresh_auto_exposure_hold()
+    assert win.auto_exposure_lock.isEnabled()
+
+
+def test_the_switches_are_segments_like_the_rest_of_the_rail(window):
+    """Not checkboxes. They were, and the wrapper widget they sat in
+    painted itself with the panel background, which read as a black box
+    behind the row."""
+    win = window()
+    for button in (win.auto_exposure, win.auto_exposure_lock):
+        assert button.property("role") == "seg"
+        assert button.isCheckable()

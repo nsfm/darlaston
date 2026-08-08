@@ -31,13 +31,25 @@ no information in it and no exposure adjustment afterwards will invent
 any, while a dark frame merely has a poor signal to noise ratio. So the
 loop comes down fast and goes up slowly.
 
-**Why exposure is spent before gain.** Gain amplifies read noise along
-with signal. Exposure costs frame rate instead, and only past the point
-where the sensor could actually have delivered a faster frame: at full
-resolution this sensor reads out at 12 fps whatever the exposure, so
-anything up to an 83 ms exposure there is free. Hence a ceiling that is
-the slower of the frame rate the operator wants and the rate the mode can
-actually sustain, rather than a fixed fraction of a second.
+**Why exposure is spent before gain, and only so far.** Gain amplifies
+read noise along with signal, so exposure goes first. It stops at the
+frame period the operator asked for, and nothing raises that.
+
+An earlier version let the ceiling follow the frame rate the mode was
+actually managing, on the reasoning that a sensor reading out at 12 fps
+loses nothing to an 83 ms exposure. True, and not worth what it cost: the
+measurement is unbounded, and any slow interval with a short exposure --
+a stall, a busy frame, the first second after opening -- teaches it a long
+period. One reading at 1.3 fps yields a 750 ms ceiling, the loop spends
+it, and every subsequent measurement then takes that long, so recovering
+from a bright scene crawls. Nate found it at over a second.
+
+The asymmetry decides it. Too high costs an unusable preview and a
+recovery that cannot go faster than the exposure it is trying to shorten;
+too low costs some gain. And the slow-camera case has a better answer
+already: `auto_exposure_target_fps` is a setting, so somebody who wants a
+200 ms ceiling asks for 5 fps and gets exactly that, rather than having it
+inferred from a number a stutter can corrupt.
 """
 from __future__ import annotations
 
@@ -104,70 +116,22 @@ class Limits:
 
     exposure_us: tuple[int, int]
     gain_pct: tuple[int, int]
-    #: How long a frame takes to read out in the current mode. Exposure
-    #: below this is free: the sensor could not have gone faster anyway.
-    readout_us: int = 0
+    #: The frame rate the live view is expected to hold. This is the only
+    #: thing that sets the exposure ceiling, deliberately: see the module
+    #: docstring for what happened when a measurement was allowed to raise
+    #: it too.
     target_fps: float = 30.0
 
     @property
     def exposure_ceiling_us(self) -> int:
         """Longest exposure that does not cost the operator frame rate."""
         wanted = 1e6 / max(self.target_fps, 1e-6)
-        return int(min(self.exposure_us[1], max(wanted, self.readout_us)))
+        return int(min(self.exposure_us[1], wanted))
 
     @property
     def supported(self) -> bool:
         return self.exposure_us[1] > self.exposure_us[0] or \
             self.gain_pct[1] > self.gain_pct[0]
-
-
-class Readout:
-    """How long a frame takes when the exposure is not what is holding it.
-
-    A frame costs max(readout, exposure), so a measured period reports the
-    readout only while exposure is the shorter of the two. That sounds
-    like a detail and is the difference between a stable ceiling and a
-    light show.
-
-    Subtracting the exposure from the measured period instead -- which is
-    the obvious way to answer "how much of this frame was readout" --
-    makes the ceiling a *falling* function of exposure, and that has an
-    unstable fixed point at half the period. On a 5440 wide preview
-    reading out at 12 fps: at a 40 ms exposure the ceiling computes to 43
-    and invites a longer one, at 43 ms it computes to 40 and forbids it.
-    The loop chatters across the crossing and swings gain in and out to
-    compensate, which is what Nate saw. None of it appears at 30 fps,
-    where the target governs the ceiling and the measurement never gets a
-    say.
-
-    So: learn only from frames where exposure was not binding, and
-    otherwise keep what was learned. A mode change is adopted at once in
-    either direction, because a binned preview genuinely is faster and
-    waiting for an average to concede it would hold the ceiling too high.
-    """
-
-    #: Exposure must be under this share of the frame period before the
-    #: period is taken to be measuring readout rather than exposure.
-    QUIET = 0.9
-
-    def __init__(self) -> None:
-        self._us = 0.0
-
-    @property
-    def us(self) -> float:
-        return self._us
-
-    def observe(self, period_us: float, exposure_us: float) -> None:
-        if period_us <= 0:
-            return
-        if exposure_us >= period_us * self.QUIET:
-            return                       # exposure is what made it slow
-        self._us = float(period_us)
-
-    def reset(self) -> None:
-        """After a resolution change, when the old figure is about a mode
-        that is no longer running."""
-        self._us = 0.0
 
 
 @dataclass(frozen=True)

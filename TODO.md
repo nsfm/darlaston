@@ -18,8 +18,23 @@
       coverage and an honest size estimate, then shoot it - which turns a
       rendering feature into a capture feature. Order and reasoning in the
       doc.
-- [ ] **Auto-exposure.** The SDK has policy (exposure or gain preferred),
-      a target percentile and damping coefficients
+- [x] **Auto-exposure.** Done, and not through the SDK's own, which this
+      entry assumed. Ours works on any backend, can be locked to gain
+      alone for a camera whose exposure steps are uneven, and meters
+      something the SDK's target percentile cannot: the *subject*, found
+      by splitting the histogram into a dark and a bright population,
+      rather than a fixed point in the distribution. That last part is
+      why it holds on darkfield, where a subject covering two percent of
+      the frame defeats any fixed percentile.
+
+      Left open on purpose: the exposure ceiling is the asked-for frame
+      rate and nothing raises it. A measurement was allowed to, once, so
+      that a mode reading out at 12 fps could use the 83 ms it had going
+      spare, and it cost two bugs and gained nothing anyone wanted. Nate,
+      on why the case does not exist: an operator who needs a long
+      exposure cranks gain, focuses at a frame rate that makes focusing
+      possible, then trades the gain back for exposure by hand. The long
+      exposure comes *after* auto-exposure has done its job, not from it.
 - [ ] **The tracker must not run at a divisor**, recorded so it is not
       re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
       0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of

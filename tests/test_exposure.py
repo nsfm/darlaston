@@ -38,9 +38,9 @@ class _Sensor:
         return np.clip(img, 0, FULL)
 
 
-def _limits(readout_us=8000, target_fps=30.0, gain=(100, 4000)):
+def _limits(target_fps=30.0, gain=(100, 4000)):
     return E.Limits(exposure_us=(100, 2_000_000), gain_pct=gain,
-                    readout_us=readout_us, target_fps=target_fps)
+                    target_fps=target_fps)
 
 
 def _settle(sensor, state, limits, rounds=200, **kw):
@@ -61,22 +61,39 @@ def _hist(img):
 # ---- the ceiling ------------------------------------------------------------
 
 def test_ceiling_is_the_frame_rate_the_operator_asked_for():
-    lim = _limits(readout_us=8000, target_fps=30.0)
+    lim = _limits()
     assert lim.exposure_ceiling_us == pytest.approx(33333, abs=2)
 
 
-def test_a_slow_mode_may_expose_for_its_whole_frame_period():
-    """At full resolution this sensor reads out at 12 fps whatever the
-    exposure, so 83 ms there costs the operator nothing and capping at
-    1/30 s would spend gain to buy frame rate the mode cannot deliver."""
-    lim = _limits(readout_us=83_000, target_fps=30.0)
-    assert lim.exposure_ceiling_us == 83_000
+def test_nothing_raises_the_ceiling_above_the_asked_for_frame_rate():
+    """A measured frame period used to be allowed to raise it, on the
+    reasoning that a mode reading out at 12 fps loses nothing to an 83 ms
+    exposure. True, and it cost more than it was worth: the measurement is
+    unbounded, one stalled interval taught it a second, and recovering
+    from a bright scene then cannot go faster than the exposure it is
+    trying to shorten. A slow camera asks for a lower target instead.
+    """
+    assert _limits(target_fps=30.0).exposure_ceiling_us == \
+        pytest.approx(33_333, abs=2)
+    assert _limits(target_fps=5.0).exposure_ceiling_us == \
+        pytest.approx(200_000, abs=2)
 
 
 def test_the_ceiling_never_exceeds_what_the_camera_offers():
     lim = E.Limits(exposure_us=(100, 20_000), gain_pct=(100, 4000),
-                   readout_us=83_000, target_fps=30.0)
+                   target_fps=30.0)
     assert lim.exposure_ceiling_us == 20_000
+
+
+def test_the_loop_never_walks_exposure_past_the_ceiling():
+    """The symptom Nate saw: over a second of exposure, and every
+    correction after it as slow as the exposure itself."""
+    lim = _limits()
+    state = E.State(exposure_us=1_000, gain_pct=100)
+    for _ in range(200):
+        state = E.step(state, lim, 0.001, hurry=True)     # relentlessly dark
+        assert state.exposure_us <= lim.exposure_ceiling_us + 1
+    assert state.gain_pct > 100          # it went to gain instead
 
 
 def test_a_camera_with_neither_control_is_left_alone():
@@ -163,7 +180,7 @@ def test_a_bright_scene_is_pulled_down_faster_than_a_dark_one_is_raised():
 # ---- the ladder -------------------------------------------------------------
 
 def test_exposure_is_spent_before_gain():
-    lim = _limits(readout_us=8000)
+    lim = _limits()
     state = E.State(exposure_us=1_000, gain_pct=100)
     out = E.step(state, lim, 0.45, hurry=True)
     assert out.exposure_us > 1_000
@@ -171,7 +188,7 @@ def test_exposure_is_spent_before_gain():
 
 
 def test_gain_takes_over_once_exposure_reaches_the_ceiling():
-    lim = _limits(readout_us=8000)                  # ceiling 33.3 ms
+    lim = _limits()                  # ceiling 33.3 ms
     state = E.State(exposure_us=lim.exposure_ceiling_us, gain_pct=100)
     out = E.step(state, lim, 0.45, hurry=True)
     assert out.exposure_us <= lim.exposure_ceiling_us + 1
@@ -246,8 +263,7 @@ def test_it_recovers_from_a_lamp_turned_up_mid_run():
 
 
 def test_it_never_leaves_the_camera_out_of_range():
-    lim = E.Limits(exposure_us=(500, 30_000), gain_pct=(100, 200),
-                   readout_us=8000)
+    lim = E.Limits(exposure_us=(500, 30_000), gain_pct=(100, 200))
     for scene in (1e-9, 1e-7, 1e-2, 1.0):
         sensor = _Sensor(scene)
         state, _ = _settle(sensor, E.State(10_000, 100), lim, rounds=80)
@@ -481,56 +497,7 @@ def test_the_guard_does_not_depend_on_how_much_frame_the_subject_fills(
 
 # ---- the readout estimate, which is where the light show came from ---------
 
-def test_readout_is_learned_only_when_exposure_is_not_the_limit():
-    """Nate, on the 5k preview at 12 fps: quite the light show. Steady at
-    the 30 fps mode.
 
-    A frame takes max(readout, exposure), so a measured period tells you
-    the readout only while exposure is the shorter of the two. Subtracting
-    exposure from the period instead makes the ceiling a falling function
-    of exposure, and that has an unstable fixed point at half the period:
-    at 40 ms the ceiling reads 43 and invites a longer exposure, at 43 ms
-    it reads 40 and forbids one. The loop chatters across it and swings
-    gain in and out to compensate.
-
-    At 30 fps none of this shows, because the target governs the ceiling
-    and the measurement never gets a say.
-    """
-    r = E.Readout()
-    assert r.us == 0                                    # nothing learned yet
-
-    r.observe(period_us=83_000, exposure_us=8_000)      # exposure not binding
-    assert r.us == pytest.approx(83_000, rel=0.01)
-
-    # Now a long exposure. The period grows because of the exposure, and
-    # the estimate must not follow it in either direction.
-    r.observe(period_us=200_000, exposure_us=200_000)
-    assert r.us == pytest.approx(83_000, rel=0.01)
-    r.observe(period_us=90_000, exposure_us=88_000)
-    assert r.us == pytest.approx(83_000, rel=0.01)
-
-
-def test_a_faster_mode_is_learned_promptly():
-    """Switching to a binned preview really is faster, and waiting for a
-    slow average to admit it would hold the ceiling too high."""
-    r = E.Readout()
-    r.observe(83_000, 8_000)
-    r.observe(33_000, 8_000)
-    assert r.us == pytest.approx(33_000, rel=0.05)
-
-
-def test_the_ceiling_stops_moving_once_the_readout_is_known():
-    """The property that was missing: for a given mode the ceiling is a
-    constant, so raising exposure cannot lower the roof over it."""
-    r = E.Readout()
-    r.observe(83_000, 8_000)
-    seen = set()
-    for exposure in (8_000, 20_000, 40_000, 43_000, 60_000, 82_000):
-        r.observe(max(83_000, exposure), exposure)
-        seen.add(E.Limits(exposure_us=(100, 2_000_000), gain_pct=(100, 4000),
-                          readout_us=int(r.us),
-                          target_fps=30.0).exposure_ceiling_us)
-    assert len(seen) == 1, f"the ceiling moved: {sorted(seen)}"
 
 
 def test_a_lamp_thrown_to_full_on_darkfield_settles_without_pumping():
@@ -550,7 +517,7 @@ def test_a_lamp_thrown_to_full_on_darkfield_settles_without_pumping():
     clipping and the share stays at zero.
     """
     sensor = _Darkfield(scene=1.2e-4, coverage=0.02)
-    lim = _limits(readout_us=83_000)                # the 12 fps preview
+    lim = _limits()                # the 12 fps preview
     state, _ = _run(sensor, E.State(8_330, 100), lim, rounds=80)
 
     sensor.scene *= 120.0                           # the lamp, thrown to full

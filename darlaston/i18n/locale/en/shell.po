@@ -227,6 +227,13 @@ msgstr "Automatic exposure stopped. The sliders are yours again."
 msgid "shell.auto_exposure"
 msgstr "Automatic"
 
+#. Shown while a capture, a stack, a mosaic or a calibration has the
+#. light. Says whose turn it is rather than that the control is broken.
+msgid "shell.auto_exposure.held"
+msgstr ""
+"Paused while this capture finishes. Exposure has to hold still for it,\n"
+"or the frames would not match each other."
+
 msgid "shell.auto_exposure.tooltip"
 msgstr ""
 "Hold the picture at a sensible brightness. Time is spent first, then\n"

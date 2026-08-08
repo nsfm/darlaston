@@ -191,9 +191,6 @@ class MainWindow(QtWidgets.QMainWindow):
         #: changed it: swapping objective loses four to sixteen times the
         #: light, and the selector knows before the histogram does.
         self._ae_hurry = True
-        self._ae_fps = 0.0
-        self._ae_rate_mark: tuple[int, float] | None = None
-        self._ae_readout = exposure_ctl.Readout()
         #: The levels reading this loop last acted on. It must never act
         #: twice on one measurement: the histogram is recomputed every few
         #: frames and reused in between, so acting per frame applies the
@@ -536,29 +533,35 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gain.set_value_text("1.0×")
         self.gain.valueChanged.connect(self._on_gain)
 
-        # Auto-exposure sits with the two bars it drives, not in a
-        # settings window: it moves them in front of the operator, so its
-        # switch belongs where the movement is visible.
-        self.auto_exposure = QtWidgets.QCheckBox(_("shell.auto_exposure"))
-        self.auto_exposure.setToolTip(_("shell.auto_exposure.tooltip"))
-        self.auto_exposure.toggled.connect(self._on_auto_exposure)
-        self.auto_exposure_lock = QtWidgets.QCheckBox(
-            _("shell.auto_exposure.lock"))
-        self.auto_exposure_lock.setToolTip(
-            _("shell.auto_exposure.lock.tooltip"))
-        self.auto_exposure_lock.toggled.connect(self._on_auto_exposure_lock)
-        auto_row = QtWidgets.QHBoxLayout()
-        auto_row.setContentsMargins(0, 0, 0, 0)
-        auto_row.addWidget(self.auto_exposure)
-        auto_row.addStretch(1)
-        auto_row.addWidget(self.auto_exposure_lock)
-        self.auto_exposure_row = QtWidgets.QWidget()
-        self.auto_exposure_row.setLayout(auto_row)
-
         exposure = _group(_("shell.group.exposure"), self.histogram)
         exposure.addWidget(self.exposure)
         exposure.addWidget(self.gain)
-        exposure.addWidget(self.auto_exposure_row)
+
+        # Auto-exposure sits with the two bars it drives rather than in a
+        # settings window: it moves them in front of the operator, so its
+        # switch belongs where the movement is.
+        #
+        # Segments, and the same three states the rail already speaks in:
+        # dim is off and yours to press, brass filled is on and working,
+        # and greyed is on but held by something that owns the light for
+        # the moment. In a bare layout rather than a wrapper widget, which
+        # paints itself with the panel background and reads as a black box
+        # behind the row.
+        self.auto_exposure = QtWidgets.QPushButton(_("shell.auto_exposure"))
+        self.auto_exposure.setCheckable(True)
+        self.auto_exposure.setProperty("role", "seg")
+        self.auto_exposure.toggled.connect(self._on_auto_exposure)
+        self.auto_exposure_lock = QtWidgets.QPushButton(
+            _("shell.auto_exposure.lock"))
+        self.auto_exposure_lock.setCheckable(True)
+        self.auto_exposure_lock.setProperty("role", "seg")
+        self.auto_exposure_lock.toggled.connect(self._on_auto_exposure_lock)
+        auto_row = QtWidgets.QHBoxLayout()
+        auto_row.setContentsMargins(0, 0, 0, 0)
+        auto_row.setSpacing(4)
+        auto_row.addWidget(self.auto_exposure)
+        auto_row.addWidget(self.auto_exposure_lock)
+        exposure.addLayout(auto_row)
 
         # A row inside exposure rather than a group of its own. It is one
         # control, and a heading over one control spends a line of rail to
@@ -923,7 +926,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_auto_exposure(self, on: bool) -> None:
         self.settings.auto_exposure = bool(on)
         self.settings.save()
-        self.auto_exposure_lock.setEnabled(bool(on))
+        self._ae_held_shown = None            # force the row to restyle
+        self._refresh_auto_exposure_hold()
         # Coming back on after the scene has moved, so take the first step
         # at full stride rather than crawling from wherever it was left.
         self._ae_hurry = True
@@ -949,14 +953,36 @@ class MainWindow(QtWidgets.QMainWindow):
         info = self.session.status.info
         has_time = bool(info and info.exposure_range_us)
         has_gain = bool(info and info.gain_range_pct)
-        self.auto_exposure_row.setVisible(has_time or has_gain)
+        self.auto_exposure.setVisible(has_time or has_gain)
         self.auto_exposure_lock.setVisible(has_time and has_gain)
         with QtCore.QSignalBlocker(self.auto_exposure):
             self.auto_exposure.setChecked(bool(self.settings.auto_exposure))
         with QtCore.QSignalBlocker(self.auto_exposure_lock):
             self.auto_exposure_lock.setChecked(
                 bool(self.settings.auto_exposure_lock_time))
-        self.auto_exposure_lock.setEnabled(bool(self.settings.auto_exposure))
+        self._refresh_auto_exposure_hold()
+
+    def _refresh_auto_exposure_hold(self) -> None:
+        """Grey the switch while something else owns the light.
+
+        The interlocks are not a detail the operator should have to infer
+        from the picture sitting still. A capture, a stack, a mosaic and a
+        calibration all stop the loop for reasons that are theirs rather
+        than ours, and a control that looks live while it is doing nothing
+        is worse than one that says so.
+        """
+        held = not self._auto_exposure_allowed()
+        on = bool(self.settings.auto_exposure)
+        if getattr(self, "_ae_held_shown", None) == (held, on):
+            return
+        self._ae_held_shown = (held, on)
+        self.auto_exposure.setEnabled(not held)
+        self.auto_exposure.setToolTip(
+            _("shell.auto_exposure.held") if held
+            else _("shell.auto_exposure.tooltip"))
+        self.auto_exposure_lock.setEnabled(on and not held)
+        self.auto_exposure_lock.setToolTip(
+            _("shell.auto_exposure.lock.tooltip"))
 
     def _auto_exposure_allowed(self) -> bool:
         """Whether the loop may move anything right now.
@@ -997,42 +1023,10 @@ class MainWindow(QtWidgets.QMainWindow):
         gain = gain or (self.gain.value(), self.gain.value())
         return exposure_ctl.Limits(
             exposure_us=span, gain_pct=gain,
-            readout_us=int(self._measured_frame_period_us()),
             target_fps=float(self.settings.auto_exposure_target_fps))
 
-    def _note_frame_rate(self, signals) -> None:
-        """Track what the camera is actually delivering, per frame.
-
-        From sequence numbers rather than from how often this handler
-        runs: signals are coalesced, so counting arrivals here measures
-        how busy the window is and not how fast the sensor reads out.
-        Sequence numbers count every frame the camera produced, including
-        the ones the display never saw.
-        """
-        prev = self._ae_rate_mark
-        self._ae_rate_mark = (signals.seq, signals.timestamp)
-        if prev is None:
-            return
-        frames = signals.seq - prev[0]
-        span = signals.timestamp - prev[1]
-        if frames <= 0 or span <= 0 or span > 2.0:
-            return                      # a gap: a capture, or a mode change
-        rate = frames / span
-        # Slow to rise and quick to fall, so a stutter does not convince
-        # the loop it has headroom it will not get back.
-        self._ae_fps = rate if self._ae_fps <= 0 else (
-            min(self._ae_fps, rate) if rate < self._ae_fps
-            else self._ae_fps * 0.8 + rate * 0.2)
-        self._ae_readout.observe(1e6 / self._ae_fps,
-                                 self._slider_to_us(self.exposure.value()))
-
-    def _measured_frame_period_us(self) -> float:
-        """How long this mode takes per frame when exposure is not the
-        limit. See `exposure.Readout`, which explains why that
-        qualification is the whole thing rather than a nicety."""
-        return self._ae_readout.us
-
     def _auto_expose_guarded(self, signals) -> None:
+        self._refresh_auto_exposure_hold()
         """Never at the cost of the picture.
 
         This runs inside the handler that draws every frame, so a fault in
@@ -1051,7 +1045,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.strip.set_note(_("note.auto_exposure_failed"))
 
     def _auto_expose(self, signals) -> None:
-        self._note_frame_rate(signals)
         if not self.settings.auto_exposure:
             return
         if not self._auto_exposure_allowed():
@@ -1106,12 +1099,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
-        # The readout figure describes a mode that is no longer running,
-        # and the two here differ by seven times: a stale one would hold
-        # the ceiling far too high or far too low until it was relearned.
-        self._ae_readout.reset()
-        self._ae_fps = 0.0
-        self._ae_rate_mark = None
         self._ae_hurry = True
 
     def _push_turret(self) -> None:
