@@ -26,6 +26,127 @@ BG_TEXT = QtGui.QColor("#101210")
 UI_METER = Meter()
 
 
+class ScaleBarOverlay(QtWidgets.QWidget):
+    """The scale bar, as its own small widget floating over the preview.
+
+    The third shape this has taken, and the reason for the move is where
+    the cost was actually coming from. The styled tile was already cached,
+    but the cache key was cleared by `set_scale_bar` -- which the window
+    calls on every frame to keep the scale current -- so every frame paid
+    a full re-render: 11.1 ms at Nate's window size, two window-sized
+    canvases and two style passes to produce a mark that had not changed.
+    Bar on was 28.2 ms a frame against 13.2 with it off.
+
+    As its own widget the render happens once, when something it depends
+    on genuinely changes: the scale, the style, the window size, or the
+    ink. `set_scale` refuses to invalidate on equal input, so the window
+    may restate the bar as often as it likes. Between renders the widget
+    is just a few hundred premultiplied pixels for Qt to composite, which
+    was measured at 0.025 ms.
+
+    Mouse-transparent, because it sits over a surface people drag regions
+    on. Sized to the mark rather than to the view, so what Qt composites
+    per frame is the mark and not a window of nothing.
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        #: (micrometres per preview pixel, style) while a bar is wanted,
+        #: else None.
+        self._bar: tuple[float, dict] | None = None
+        self._key = None
+        self._tile: QtGui.QImage | None = None
+        self._tile_buf = None
+        self._at = (0, 0)
+        self.hide()
+
+    def set_scale(self, um_per_px, style) -> None:
+        """What the bar should say, restated as often as the caller likes.
+
+        Equal input is a no-op. This is the line the 11.1 ms was hiding
+        behind: the window restates the scale on every frame, and the
+        previous version took each restatement as a reason to re-render.
+        """
+        bar = None if not um_per_px else (float(um_per_px), dict(style))
+        if bar == self._bar:
+            return
+        self._bar = bar
+        self._key = None
+        if bar is None:
+            self._tile = None
+            self.hide()
+
+    def place(self, target: QtCore.QRect, src_width: int, is_light) -> None:
+        """Follow the frame the parent just laid out. Called per frame;
+        renders only when the mark itself would differ.
+
+        `is_light` is asked, not told: whether the corner is bright lives
+        with the parent, who holds the reduced frame, and it is only worth
+        reading when a bar is wanted at all.
+        """
+        if self._bar is None:
+            return
+        um, style = self._bar
+        tw, th = target.width(), target.height()
+        if tw < 8 or th < 8 or not src_width:
+            self.hide()
+            return
+        # Micrometres per *target* pixel. `um` is quoted per preview
+        # pixel and the bar is laid down over displayed ones; the ratio
+        # between them is whatever the window is doing. Losing this term
+        # made the bar change length as the window resized.
+        per_target = um * (src_width / float(tw))
+        light = bool(is_light(style.get("corner", "br")))
+        key = (round(per_target, 9), tw, th, light,
+               tuple(sorted((k, str(v)) for k, v in style.items())))
+        if key == self._key:
+            if self._tile is not None:
+                self._move(target)
+                self.show()          # a no-op when already visible
+            return
+        self._key = key
+        self._tile = None
+
+        from ..process import scalebar
+        rendered = scalebar.tile((th, tw), per_target, light_ground=light,
+                                 **style)
+        if rendered is None:
+            self.hide()
+            return
+        rgba, x0, y0 = rendered
+        # Held on the instance, not just handed to QImage: the QImage is a
+        # view of this buffer and does not own it, so letting it fall out
+        # of scope hands Qt freed memory to paint from.
+        self._tile_buf = np.ascontiguousarray(rgba)
+        h, w = self._tile_buf.shape[:2]
+        # BGRA in memory, which on a little-endian machine is what Qt
+        # calls ARGB32. Premultiplied already, from `tile`.
+        self._tile = QtGui.QImage(
+            self._tile_buf.data, w, h, 4 * w,
+            QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+        self._at = (x0, y0)
+        self._move(target)
+        self.show()
+        self.update()
+
+    def _move(self, target: QtCore.QRect) -> None:
+        if self._tile is None:
+            return
+        x0, y0 = self._at
+        geometry = QtCore.QRect(target.left() + x0, target.top() + y0,
+                                self._tile.width(), self._tile.height())
+        if geometry != self.geometry():
+            self.setGeometry(geometry)
+
+    def paintEvent(self, _event) -> None:
+        if self._tile is None:
+            return
+        with QtGui.QPainter(self) as p:
+            p.drawImage(0, 0, self._tile)
+
+
 class LiveView(QtWidgets.QWidget):
     """The preview. Scales to fit, keeps aspect, never upscales past 1:1."""
 
@@ -42,13 +163,9 @@ class LiveView(QtWidgets.QWidget):
         self._image: QtGui.QImage | None = None
         self._peaking: QtGui.QImage | None = None
         self._focus_rect: tuple[float, float, float, float] | None = None
-        #: (micrometres per preview pixel, style) while a scale bar is
-        #: wanted over the live view, else None. Drawn after the reduction
-        #: rather than before it; see `_set_frame`.
-        self._bar: tuple[float, dict] | None = None
-        self._tile_key = None
-        self._tile = None
-        self._tile_buf = None
+        #: The scale bar, drawn once into its own overlay rather than
+        #: into every paint. See `ScaleBarOverlay` for the cost history.
+        self._bar_overlay = ScaleBarOverlay(self)
         self._balance_rect: tuple[float, float, float, float] | None = None
         self._balancing = False
         #: The balance box is shown while it is being placed and for a
@@ -111,6 +228,7 @@ class LiveView(QtWidgets.QWidget):
                                    self._buf.strides[0],
                                    QtGui.QImage.Format.Format_BGR888)
         self._image_at = target
+        self._bar_overlay.place(target, w, self._corner_is_light)
         if peaking is not None:
             self._peaking = self._peaking_overlay(peaking, (tw, th))
         self.update()
@@ -125,83 +243,6 @@ class LiveView(QtWidgets.QWidget):
     #: near the middle and the cost of dithering between them is a
     #: re-render of the tile.
     BAR_INK_HOLD = 0.12
-
-    def _draw_scale_bar(self, p: QtGui.QPainter,
-                        target: QtCore.QRectF) -> None:
-        """Blit the bar, rather than compositing it into the picture.
-
-        Compositing it cost 6.7 ms of every frame at Nate's window size
-        and dropped frames all the way back to the driver. Two rounds of
-        making that cheaper both underdelivered, because the cost scales
-        with the area drawn and this window is close to 4K: 1.33 ms at
-        1039 px wide, 6.67 ms at 3000.
-
-        The picture changes every frame and the mark does not. It depends
-        on the scale, the style, the window size, and whether the corner
-        it sits in is light, so it is rendered when one of those four
-        changes and blitted the rest of the time. `scalebar.tile` does the
-        rendering, in the real style: this draws the same panel, the same
-        ruler segments, the same drop shadow and the same face a capture
-        would get, which the version this replaces did not.
-        """
-        tile = self._bar_tile(target)
-        if tile is None:
-            return
-        image, x, y = tile
-        p.drawImage(QtCore.QPointF(target.left() + x, target.top() + y),
-                    image)
-
-    def _bar_tile(self, target: QtCore.QRectF):
-        """The rendered mark, cropped to itself, and where it goes.
-
-        Cropping matters. The tile is rendered on a canvas the size of the
-        window so the style's own geometry decides the placement, but the
-        mark occupies a few hundred pixels of it, and blitting the whole
-        canvas per frame would reintroduce the full-area cost this exists
-        to avoid.
-        """
-        if self._bar is None or self._image is None:
-            return None
-        from ..process import scalebar
-
-        um, style = self._bar
-        shown = self._image.width()
-        tw, th = int(round(target.width())), int(round(target.height()))
-        if not shown or tw < 8 or th < 8:
-            return None
-        # Micrometres per *target* pixel. `um` is quoted per preview
-        # pixel, and the two reductions between them are the whole
-        # correction: without them the bar was sized in the preview's
-        # scale and laid down in the window's, so it changed length
-        # whenever the window did.
-        src = getattr(self, "_src_width", shown) or shown
-        per_target = um * (src / float(shown)) * (shown / float(tw))
-        light = self._corner_is_light(style.get("corner", "br"))
-
-        key = (round(per_target, 9), tw, th, light,
-               tuple(sorted((k, str(v)) for k, v in style.items())))
-        if key == self._tile_key:
-            return self._tile
-        self._tile_key = key
-        self._tile = None
-
-        rendered = scalebar.tile((th, tw), per_target, light_ground=light,
-                                 **style)
-        if rendered is None:
-            return None
-        rgba, x0, y0 = rendered
-        # Held on the instance, not just handed to QImage: the QImage is a
-        # view of this buffer and does not own it, so letting it fall out
-        # of scope hands Qt freed memory to paint from.
-        self._tile_buf = np.ascontiguousarray(rgba)
-        h, w = self._tile_buf.shape[:2]
-        # BGRA in memory, which on a little-endian machine is what Qt
-        # calls ARGB32. Premultiplied already, from `tile`.
-        image = QtGui.QImage(
-            self._tile_buf.data, w, h, 4 * w,
-            QtGui.QImage.Format.Format_ARGB32_Premultiplied)
-        self._tile = (image, x0, y0)
-        return self._tile
 
     #: How often the corner is re-read, in paints. A field does not change
     #: from bright to dark between frames, and reading it is the only part
@@ -414,9 +455,13 @@ class LiveView(QtWidgets.QWidget):
         return self._peak_image
 
     def set_scale_bar(self, um_per_px, style) -> None:
-        """Draw a bar over the live view, or stop. See `_set_frame`."""
-        self._bar = None if not um_per_px else (float(um_per_px), style)
-        self._tile_key = None
+        """Draw a bar over the live view, or stop.
+
+        Called every frame, because the scale can change under a running
+        preview. `ScaleBarOverlay.set_scale` treats equal input as a
+        no-op, which is what makes that affordable.
+        """
+        self._bar_overlay.set_scale(um_per_px, style)
 
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect
@@ -502,7 +547,6 @@ class LiveView(QtWidgets.QWidget):
                 p.drawImage(target.topLeft(), self._peaking)
 
             self._draw_guides(p, target)
-            self._draw_scale_bar(p, target)
 
             # The measured region, drawn so it is never a mystery what the focus
             # number refers to.

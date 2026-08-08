@@ -71,40 +71,16 @@ def test_a_camera_profile_starts_with_no_opinion():
     assert CameraProfile(serial="x").preview_width == 0
 
 
-# ---- the live scale bar, painted rather than composited ---------------------
+# ---- the live scale bar, an overlay rather than a composite -----------------
 
-class _Canvas:
-    """A painter and the surface under it.
-
-    The surface has to outlive the painter, and a helper that returns only
-    the painter lets the pixmap be collected while Qt is still drawing on
-    it, which segfaults rather than raising.
-    """
-
-    def __init__(self, view):
-        from PySide6 import QtGui
-        self.pixmap = QtGui.QPixmap(view.size())
-        self.painter = QtGui.QPainter(self.pixmap)
-
-    def __enter__(self):
-        return self.painter
-
-    def __exit__(self, *_exc):
-        self.painter.end()
-        return False
-
-
-def test_the_bar_is_painted_and_never_touches_the_picture(window):
+def test_the_bar_is_an_overlay_and_never_touches_the_picture(window):
     """Compositing it into pixels cost 10.7 ms a frame at preview size and
     6.7 ms at display size, because the work scales with the area drawn
     and this window is close to 4K.
 
-    Rendering it once and blitting it is 0.08 ms, and it is the styled bar
-    rather than a stand-in for one. The picture changes every frame and
-    the mark does not.
+    So the bar is its own widget over the preview, rendered once and
+    composited by Qt, and the picture underneath stays undecorated.
     """
-    from PySide6 import QtCore
-
     win = window()
     win.view.resize(600, 400)
     frame = np.full((400, 600, 3), 120, np.uint8)
@@ -114,8 +90,13 @@ def test_the_bar_is_painted_and_never_touches_the_picture(window):
     # The buffer the view hands to Qt is the picture, undecorated.
     assert np.array_equal(win.view._buf, frame)
 
-    with _Canvas(win.view) as p:
-        win.view._draw_scale_bar(p, QtCore.QRectF(0, 0, 600, 400))
+    overlay = win.view._bar_overlay
+    assert overlay._tile is not None, "no mark was rendered"
+    assert overlay.parent() is win.view
+    assert overlay.width() < 600, "the overlay was not sized to the mark"
+    assert overlay.testAttribute(
+        QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents), (
+        "the overlay would swallow the drags the view is for")
 
 
 def test_the_bar_measures_what_a_capture_would_measure(window):
@@ -131,16 +112,18 @@ def test_the_bar_measures_what_a_capture_would_measure(window):
     assert scalebar.choose(2.0, 600) is not None
 
 
-def test_no_bar_is_painted_when_none_is_wanted(window):
-    from PySide6 import QtCore
-
+def test_no_bar_is_shown_when_none_is_wanted(window):
     win = window()
     win.view.resize(600, 400)
+    win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
+    win.view._set_frame(np.full((400, 600, 3), 120, np.uint8), None)
+    assert win.view._bar_overlay._tile is not None
+
     win.view.set_scale_bar(None, None)
     win.view._set_frame(np.full((400, 600, 3), 120, np.uint8), None)
-    with _Canvas(win.view) as p:
-        win.view._draw_scale_bar(p, QtCore.QRectF(0, 0, 600, 400))
-    assert win.view._bar is None
+    assert win.view._bar_overlay._bar is None
+    assert win.view._bar_overlay._tile is None
+    assert win.view._bar_overlay.isHidden()
 
 
 def test_the_ink_follows_the_corner_it_sits_in(window):
@@ -191,7 +174,7 @@ def test_a_failing_bar_does_not_take_the_preview_with_it(window,
     monkeypatch.setattr(win, "_preview_um_per_px", boom)
     win._offer_scale_bar(2736)
     assert win.settings.scale_bar_live is False
-    assert win.view._bar is None
+    assert win.view._bar_overlay._bar is None
 
 
 # ---- how a segment reads ---------------------------------------------------
@@ -516,19 +499,51 @@ def test_the_bar_is_rendered_once_and_reused(window):
     and blitting it, so the reuse is the whole point of the change."""
     win = window()
     win.view.resize(1200, 800)
+    frame = np.random.default_rng(1).integers(
+        30, 90, (912, 1368, 3), dtype=np.uint8)
     win.view.set_scale_bar(0.49, win.settings.bar_style(live=True))
-    win.view._set_frame(np.random.default_rng(1).integers(
-        30, 90, (912, 1368, 3), dtype=np.uint8), None)
+    win.view._set_frame(frame, None)
 
-    rect = QtCore.QRectF(0, 0, 1200, 800)
-    first = win.view._bar_tile(rect)
+    first = win.view._bar_overlay._tile
     assert first is not None, "nothing was rendered"
-    image, x, y = first
-    assert image.width() < 1200, "the tile was not cropped to the mark"
-    assert win.view._bar_tile(rect) is first, "it re-rendered unnecessarily"
+    assert first.width() < 1200, "the tile was not cropped to the mark"
+    win.view._set_frame(frame, None)
+    assert win.view._bar_overlay._tile is first, "it re-rendered unnecessarily"
 
     # ...but not across a resize, where the mark genuinely changes.
-    assert win.view._bar_tile(QtCore.QRectF(0, 0, 900, 600)) is not first
+    win.view.resize(900, 600)
+    win.view._set_frame(frame, None)
+    assert win.view._bar_overlay._tile is not first
+
+
+def test_restating_the_bar_every_frame_does_not_re_render(window):
+    """The window offers the bar on every frame, because the scale can
+    change under a running preview, and each offer builds a fresh but
+    equal style dict. The previous version took every offer as a reason
+    to throw the rendered tile away, so every frame paid the full render:
+    11.1 ms at Nate's window size, of a 28.2 ms frame that is 13.2 ms
+    with the bar off. Equal input has to be a no-op."""
+    win = window()
+    win.view.resize(1200, 800)
+    frame = np.random.default_rng(2).integers(
+        30, 90, (912, 1368, 3), dtype=np.uint8)
+
+    # The app's own sequence, per frame: offer, then frame, then paint.
+    win.view.set_scale_bar(0.49, win.settings.bar_style(live=True))
+    win.view._set_frame(frame, None)
+    first = win.view._bar_overlay._tile
+    assert first is not None, "nothing was rendered"
+
+    for _ in range(3):
+        win.view.set_scale_bar(0.49, win.settings.bar_style(live=True))
+        win.view._set_frame(frame, None)
+    assert win.view._bar_overlay._tile is first, (
+        "restating an unchanged scale re-rendered the mark")
+
+    # A genuinely different scale still gets through.
+    win.view.set_scale_bar(0.7, win.settings.bar_style(live=True))
+    win.view._set_frame(frame, None)
+    assert win.view._bar_overlay._tile is not first
 
 
 def test_every_style_survives_the_round_trip(window):
