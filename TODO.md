@@ -90,18 +90,13 @@
       resolution. The sensor's own binned modes would give 7.5 MB at
       2736×1824 and 3.3 MB at 1824×1216, packed — a real choice for survey
       work where 20 MP per tile is not the point.
-- [ ] **Confirm the system thumbnailer is happy.** The preview is in the
-      right place and extracts correctly, but whether a given file manager
-      picks it up depends on that thumbnailer.
 - [ ] **The composite still holds one full canvas.** With the writer fixed,
       peak is 3.05 GB for 272 MP and the remainder is the uint16 result
       array plus the registration lumas. Rendering bands on demand into the
       writer, rather than filling a canvas and then streaming it, would drop
       it again — and the writer's `rows` callback is already the right shape
       for it.
-- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all — classic
-      TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for
-      viewing; the linear DNG stays the right output while it fits.
+- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all, TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for viewing; the linear DNG stays the right output while it fits.
 - [ ] **Stitch, the rest.** Full-resolution composite streamed band-by-band
       (current default renders at 0.25 scale into RAM; fine to ~10 tiles,
       not at 40). Verify the GBRG→OpenCV demosaic code choice on real glass
@@ -140,9 +135,7 @@
       10^0.80 and the mask barely changed, 25.0% of frame against 22.7%.
 
       **What it fixes.** Background depth standard deviation went 86.5 to
-      0 and 51.9 to 0, because those pixels stop voting. Nate: "the
-      diatoms are vastly improved", and the PLYs are the best he has had
-      from this.
+      0 and 51.9 to 0, because those pixels stop voting.
 
       **Growing it from seeds.** The gate is right that a smooth
       translucent interior was never in focus and wrong that it is not
@@ -214,7 +207,6 @@
 
 ## Unverified
 
-- [ ] **? Resolution index [1]:** true on-sensor binning or pixel skipping? The SDK reports 4.80 µm pixels, but `get_BinningNumber` returns 0. Settle empirically: shoot both, software-average the full-res one, and compare noise.
 - [ ] **? Can the optics out-resolve the binned mode at all?** If the relay is the limit, full resolution records empty magnification. The profiler answers this.
 - [ ] **? Do the SDK's FFC/DFC apply in the raw path or only the ISP path?**
 - [ ] **? Sony Camera Remote SDK on Linux for the A6700**, for the second backend.
@@ -224,6 +216,10 @@
 ## Packaging
 
 - [ ] **Windows testing.** Library naming is handled (`toupcam.dll`, `lib` prefix) and nothing else has been looked at. Does the window frame work? Does capture work at all?
+- [ ] **Microsoft store publishing.** This is a free route to a signed package for Windows users. A github action supports it.
+- [ ] **Apple signing cert.** I need to cough up $100/yr for an Apple signing certificate to avoid the warnings for Mac OS users.
+- [ ] **Microsoft signing cert.** This one's $120/yr through Azure signing... maybe worth it if Windows users hate the Microsoft Store.
+- [ ] **Confirm the system thumbnailer is happy.** The preview is in the right place and extracts correctly.
 
 ## Later
 
