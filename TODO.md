@@ -1,5 +1,35 @@
 # Next up
 
+- [ ] **Tracking that recovers: the slide map is a place-recognition
+      database.** Spiked 2026-08-08 (`spike/tracking/`), and the numbers
+      are strong enough that this is a plan. The map's own 120 px
+      thumbnails, matched by phase correlation, re-fix a lost position
+      anywhere on seen ground: 100% of trials on a unique 4×3-field
+      synthetic scene, ~3 preview px of error, through 5 µm of defocus,
+      on clean glass and textured mounts alike, at 0.15 ms per banked
+      thumb. And the same primitive run *continuously* over trodden
+      ground abolishes dead-reckoning drift: a 2% biased re-traversal
+      went from 63 px mean error uncorrected to 2 px corrected, which
+      also ends the map banking offset duplicate thumbs on revisits.
+      Sign convention settled in writing in the spike: probe position =
+      bank position − measured shift × scale.
+
+      The build, three tiers of one primitive: (1) while tracking near
+      banked ground, correct against the few overlapping thumbs at a few
+      Hz — sub-millisecond, riding the tracker's existing downsample;
+      (2) while lost (blank glass, a gated jump), sweep the bank at 2 to
+      3 Hz, distance-ranked with early-out, verified by response margin
+      plus two consecutive frames agreeing, and rejoin the *same* origin
+      so terrain and pins survive; (3) an advisory surface so none of it
+      is silent: "tracking lost, blank glass", "moving too fast to
+      track" (from the gated counter), extensible to low frame rate and
+      poor focus. Caveats to respect: the spike banks and returns under
+      one illumination; arrangements repeat similar valves, so the
+      verification gate is load-bearing (though every diatom carries its
+      own pore fingerprint — Nate); a truly blank returning field stays
+      lost until something enters the view, which is correct. Real glass
+      before trusting any of it.
+
 - [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional
       recording - x, y, zoom and focal plane - and every move through it
       can be perfectly smooth because it is synthesised rather than
