@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import snapshot from "./release-snapshot.json";
 
 const REPO = "nsfm/darlaston";
 const RELEASES = `https://github.com/${REPO}/releases`;
@@ -29,18 +30,25 @@ function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
+/* Baked by CI before the build (see site.yml), so the section renders
+   instantly with real data and survives the visitor being API
+   rate-limited. On the release-cutting push it is one release behind,
+   because the site deploys before the platform builds finish; the live
+   fetch below closes that gap at page load. */
+const BAKED = snapshot as unknown as Release | null;
+
 export default function Downloads() {
-  const [release, setRelease] = useState<Release | null>(null);
+  const [release, setRelease] = useState<Release | null>(BAKED);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((data: Release) => setRelease(data))
-      .catch(() => setFailed(true));
+      .catch(() => setFailed(true)); // the baked release, if any, stands
   }, []);
 
-  if (failed || (release && release.assets.length === 0)) {
+  if ((failed && !release) || (release && release.assets.length === 0)) {
     return (
       <p className="dl-meta">
         Grab the latest build from the{" "}

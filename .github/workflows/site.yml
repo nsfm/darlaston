@@ -42,6 +42,18 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci
+      # Baked into the bundle so the downloads section renders instantly
+      # and survives visitors hitting the unauthenticated API rate limit.
+      # On a release-cutting push this is one release behind (the site
+      # deploys before the platform builds finish); the client-side fetch
+      # closes the gap. The committed placeholder is `null`, which the
+      # component treats as "fetch live, show a loading line meanwhile".
+      - name: Snapshot the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases/latest" \
+            > src/release-snapshot.json || echo 'null' > src/release-snapshot.json
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
