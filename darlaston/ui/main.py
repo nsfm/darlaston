@@ -1942,10 +1942,12 @@ class MainWindow(QtWidgets.QMainWindow):
             # whatever happens here must set the box and release it --
             # including on failure, or a merge that has already read every
             # slice would hang on a dialog that never opened.
-            _kind, lumas, depth, solid, levels, box, done = message
+            (_kind, lumas, depth, solid, levels, width, feather,
+             box, done) = message
             try:
                 from .sampler_ui import ask
-                picked = ask(self, lumas, depth, solid, levels)
+                picked = ask(self, lumas, depth, solid, levels,
+                             width, feather)
                 if picked is not None:
                     box["slope"] = picked
                     self.settings.stack_clamp_slope = float(picked)

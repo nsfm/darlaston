@@ -439,7 +439,8 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     if choose_slope is not None:
         picked = choose_slope(aligned, depth,
                               solid if solid is not None
-                              else mask.body(aligned), n)
+                              else mask.body(aligned), n,
+                              width, feather)
         if picked is not None:
             clamp_slope = float(picked)
 

@@ -82,6 +82,12 @@ class StackAssembly(QtWidgets.QWidget):
         self.progress = QtWidgets.QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(3)
+        # Keep its three pixels reserved while it is hidden. Without this
+        # the whole panel jumps taller the moment a merge starts, which is
+        # exactly when the operator is watching it.
+        policy = self.progress.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.progress.setSizePolicy(policy)
         self.progress.hide()
         self.progress.setStyleSheet(
             f"QProgressBar {{ border: 0; background: {theme.SUNK}; }}"

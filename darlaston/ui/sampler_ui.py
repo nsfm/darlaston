@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import threading
 
-import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import N_, _
-from ..process import sampler, slope
+from ..process import sampler
 from . import theme
 
 #: The choices offered, as (label key, slope). Drawn from the range
@@ -84,7 +83,7 @@ def _pixmap(luma: np.ndarray) -> QtGui.QPixmap:
 class SamplerDialog(QtWidgets.QDialog):
     """The comparison itself. Returns a slope, or None to keep the default."""
 
-    def __init__(self, boxes, rendered, parent=None):
+    def __init__(self, rendered, parent=None):
         super().__init__(parent)
         self.setWindowTitle(_("sampler.title"))
         self.setStyleSheet(theme.stylesheet())
@@ -124,7 +123,8 @@ class SamplerDialog(QtWidgets.QDialog):
         return self._value
 
 
-def ask(parent, lumas, depth, solid, levels) -> float | None:
+def ask(parent, lumas, depth, solid, levels,
+        width=1.0, feather=0.0) -> float | None:
     """Render the options and put them in front of the operator.
 
     Called on the GUI thread. The merge worker is blocked behind this,
@@ -132,12 +132,13 @@ def ask(parent, lumas, depth, solid, levels) -> float | None:
     answer arrives, and the answer costs a second to prepare.
     """
     slopes = [v for _key, v in CHOICES]
-    boxes, rendered = sampler.preview(lumas, depth, solid, slopes)
+    boxes, rendered = sampler.preview(lumas, depth, solid, slopes,
+                                      width=width, feather=feather)
     if not boxes:
         # Nothing with a boundary and depth contrast in it, so there is
         # nothing to compare. Silence is better than four identical crops.
         return None
-    dialog = SamplerDialog(boxes, rendered, parent)
+    dialog = SamplerDialog(rendered, parent)
     dialog.exec()
     return dialog.value()
 
@@ -152,10 +153,11 @@ def bridge(window, signal) -> "callable":
     the settings already said, because a merge that has read every slice
     should not be lost to a closed dialog.
     """
-    def choose(lumas, depth, solid, levels):
+    def choose(lumas, depth, solid, levels, width=1.0, feather=0.0):
         box: dict = {}
         done = threading.Event()
-        signal.emit(("choose", lumas, depth, solid, levels, box, done))
+        signal.emit(("choose", lumas, depth, solid, levels, width, feather,
+                     box, done))
         if not done.wait(timeout=600):
             return None
         return box.get("slope")

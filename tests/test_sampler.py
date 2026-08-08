@@ -1,9 +1,10 @@
 """Choosing a halo setting by looking at crops of the merge.
 
-The load-bearing property here is that a crop rendered with its influence
-margin equals the same crop taken from a whole-frame clamp. If that ever
-stops being true the operator would be choosing against one picture and
-receiving another, so it is tested rather than trusted.
+The load-bearing property is that a crop rendered here equals the same
+region of the merge's own blend: the same clamp, the same per-pixel hat
+width, the same normalisation and the same feather. If that ever stops
+being true the operator is choosing against one picture and receiving
+another, so it is tested rather than trusted.
 """
 from __future__ import annotations
 
@@ -53,40 +54,74 @@ def test_crops_of_a_blank_field_returns_nothing_to_compare():
     assert sampler.crops(flat, np.zeros((80, 80), bool), count=3) == []
 
 
-def test_render_with_margin_equals_clamping_the_whole_frame():
-    """The claim the speed argument rests on, and it is exact.
+def _whole_frame_blend(lumas, depth, slope_, width, feather):
+    """What `merge` does, on the whole frame, at half res.
 
-    Without the margin the same crops were measured wrong by 2.2 to 7.2
-    slices on real stacks, which is a quarter of a whole stack, so this is
-    the difference between a correct fast path and a badly wrong one.
+    Deliberately a transcription of the blend in `stack.merge` rather than
+    a call into it, so that a change there which the sampler does not
+    follow shows up as a failure here.
+    """
+    d = slope.clamp(depth, slope_) if slope_ > 0 else depth
+    norm = np.zeros_like(d)
+    for i in range(len(lumas)):
+        norm += np.clip(1.0 - np.abs(d - i) / width, 0.0, 1.0)
+    np.maximum(norm, 1e-6, out=norm)
+    acc = np.zeros_like(d)
+    for i in range(len(lumas)):
+        hat = np.clip(1.0 - np.abs(d - i) / width, 0.0, 1.0) / norm
+        if feather > 0:
+            hat = cv2.GaussianBlur(hat, (0, 0), feather)
+        acc += lumas[i] * hat
+    return acc
+
+
+def test_render_matches_the_merges_own_blend():
+    """The claim the whole feature rests on: what is shown is what lands.
+
+    Exact, not close. The operator is choosing against these crops and
+    receiving a different render, so any gap here is a gap between the
+    decision and its consequence. An earlier version skipped the hat
+    width, the normalisation and the feather, and differed from the real
+    blend by a mean of 1.2 and a maximum of 23 counts.
     """
     lumas, depth, disk = _scene()
     levels = len(lumas)
     boxes = sampler.crops(depth, disk, count=2, size=64)
     assert boxes
-    for s in (0.2, 0.5):
-        whole = slope.clamp(depth, s)
-        for (y, x) in boxes:
-            got = sampler.render(lumas, depth, (y, x), s, levels, size=64)
-            d = whole[y:y + 64, x:x + 64]
-            want = None
-            for i in range(levels):
-                piece = lumas[i][y:y + 64, x:x + 64] * np.clip(
-                    1.0 - np.abs(d - i), 0.0, 1.0)
-                want = piece if want is None else want + piece
-            assert np.abs(got - want).max() < 1e-4
+    for slope_ in (0.0, 0.2, 0.5):
+        for width in (0.5, 1.0):
+            for feather in (0.0, 2.0):
+                whole = _whole_frame_blend(lumas, depth, slope_, width,
+                                           feather)
+                for (y, x) in boxes:
+                    got = sampler.render(lumas, depth, (y, x), slope_,
+                                         levels, size=64, width=width,
+                                         feather=feather)
+                    want = whole[y:y + 64, x:x + 64]
+                    # A twentieth of a count, on a sensor whose values run
+                    # to thousands. What is left at this level is float32
+                    # accumulation order: a Gaussian over a crop and the
+                    # same Gaussian over the frame do not sum identically,
+                    # and neither does a sum over slices. Orders of
+                    # magnitude below one step of the 16-bit output.
+                    assert np.abs(got - want).max() < 0.05
 
 
-def test_render_without_a_bound_is_the_plain_blend():
+def test_render_follows_a_per_pixel_hat_width():
+    """Width arrives as a field, not a number, whenever confidence varies."""
     lumas, depth, disk = _scene()
-    got = sampler.render(lumas, depth, (60, 60), 0.0, len(lumas), size=48)
-    want = None
-    d = depth[60:108, 60:108]
-    for i in range(len(lumas)):
-        piece = lumas[i][60:108, 60:108] * np.clip(1.0 - np.abs(d - i),
-                                                   0.0, 1.0)
-        want = piece if want is None else want + piece
-    assert np.abs(got - want).max() < 1e-4
+    width = np.where(disk, 0.5, 4.0).astype(np.float32)
+    whole = _whole_frame_blend(lumas, depth, 0.3, width, 2.0)
+    for (y, x) in sampler.crops(depth, disk, count=1, size=64):
+        got = sampler.render(lumas, depth, (y, x), 0.3, len(lumas),
+                             size=64, width=width, feather=2.0)
+        assert np.abs(got - whole[y:y + 64, x:x + 64]).max() < 0.05
+
+
+def test_feather_alone_still_needs_a_margin():
+    """With no bound the clamp reach is zero, but the blur still reaches."""
+    assert sampler.margin_for(0.0, 15, feather=2.0) >= 6
+    assert sampler.margin_for(0.0, 15, feather=0.0) == 0
 
 
 def test_preview_covers_every_requested_bound():
@@ -106,3 +141,47 @@ def test_the_bounds_actually_differ_from_one_another():
     _boxes, rendered = sampler.preview(lumas, depth, disk, [0.0, 0.25],
                                        count=1, size=64)
     assert np.abs(rendered[0.0][0] - rendered[0.25][0]).max() > 1.0
+
+
+# ---- the dialog -------------------------------------------------------------
+
+def test_the_dialog_returns_the_bound_that_was_clicked(qapp):
+    """Clicking a tile is the whole interface, so it is worth a test.
+
+    The maths above proves the crops are right; this proves the answer
+    gets back out. A merge is parked on that answer, so a tile that looks
+    clickable and returns nothing would strand it.
+    """
+    from darlaston.ui import sampler_ui
+
+    crop = np.linspace(0, 255, 64 * 64, dtype=np.float32).reshape(64, 64)
+    rendered = {value: [crop] for _key, value in sampler_ui.CHOICES}
+    dialog = sampler_ui.SamplerDialog(rendered)
+
+    tiles = dialog.findChildren(sampler_ui._Tile)
+    assert len(tiles) == len(sampler_ui.CHOICES)
+
+    assert dialog.value() is None            # nothing chosen yet
+    tiles[2].picked.emit(sampler_ui.CHOICES[2][1])
+    assert dialog.value() == sampler_ui.CHOICES[2][1]
+
+
+def test_the_dialog_says_nothing_when_it_is_dismissed(qapp):
+    """Skipping keeps whatever the settings already had, rather than zero."""
+    from darlaston.ui import sampler_ui
+
+    crop = np.zeros((64, 64), np.float32)
+    dialog = sampler_ui.SamplerDialog(
+        {value: [crop] for _key, value in sampler_ui.CHOICES})
+    dialog.reject()
+    assert dialog.value() is None
+
+
+def test_a_flat_crop_does_not_divide_by_zero(qapp):
+    """A featureless window is exactly what the picker tries to avoid, but
+    a stack of blank glass would hand it one anyway."""
+    from darlaston.ui import sampler_ui
+
+    flat = np.full((32, 32), 900.0, np.float32)
+    pix = sampler_ui._pixmap(flat)
+    assert not pix.isNull()
