@@ -96,6 +96,12 @@ class LiveSignals:
     #: Did this frame's offset actually integrate? False over featureless
     #: ground, where the position is held rather than trusted.
     stage_tracking: bool = False
+    #: Which tracking origin `stage_pos` was measured under. Bumped by
+    #: every reset. A consumer that clears on reset must refuse frames
+    #: stamped with an older generation: they were measured before the
+    #: reset landed and their positions describe an origin that no longer
+    #: exists -- delivered late, they repaint cleared ground.
+    track_gen: int = 0
     peaking: np.ndarray | None = None
     #: Normalised (x, y, w, h) of the region the metric was taken from, so the
     #: view can show what is actually being measured.
@@ -183,6 +189,11 @@ class LivePipeline:
         #: which is what keeps them out of a race.
         self._track_gen = 0
         self._track_seen = 0
+        #: Whether anything consumes the tracked position. The window
+        #: says so; blind, the correlation is skipped entirely. A plain
+        #: bool written by the interface thread and read by the analysis
+        #: thread, which is safe for a flag that only gates work.
+        self._track_wanted = True
         self._key: np.ndarray | None = None
         self._key_offset: tuple[float, float] = (0.0, 0.0)
         self._key_pending: np.ndarray | None = None
@@ -321,6 +332,13 @@ class LivePipeline:
             if rotation_sign != self._turret_det._sign:
                 self._turret_det = TurretDetector(rotation_sign=rotation_sign)
 
+    def set_track_wanted(self, wanted: bool) -> None:
+        """Run the tracker, or let it sleep. The window computes who is
+        listening: the map on screen, a mosaic, a sweep, a timelapse.
+        Waking is the caller's moment to reset the origin -- travel while
+        blind was never integrated, so old positions are lies."""
+        self._track_wanted = bool(wanted)
+
     def reset_tracking(self) -> None:
         """New origin. Required when the objective changes -- magnification
         changes the pixels-per-micron scale and old positions become lies.
@@ -346,10 +364,16 @@ class LivePipeline:
         generation, and the analysis thread -- the only thread that reads
         or writes the keyframe -- notices and clears it. A measurement
         that spans a bump is discarded rather than believed.
+
+        Returns the new generation, so whoever cleared can also refuse
+        frames still in flight from before the reset -- the slide map
+        was repainting the current view at its stale position from
+        exactly one such frame, which is why "clear" took two presses.
         """
         with self._lock:
             self._xy.reset()
             self._track_gen += 1
+            return self._track_gen
 
     # ---- the hold-still guard --------------------------------------------
     #
@@ -565,41 +589,63 @@ class LivePipeline:
         # note calls for, and never coarser than four, so no mode is
         # tracked on less than it is today.
         step = max(4, int(round(gray.shape[1] / TRACK_WIDTH)))
-        small = cv2.resize(gray, (gray.shape[1] // step,
-                                  gray.shape[0] // step),
-                           interpolation=cv2.INTER_AREA)
-        with self._lock:
-            gen = self._track_gen
-        if gen != self._track_seen:
-            # An origin was reset since the last frame. The correlation
-            # reference belongs to a scale or a position that no longer
-            # means anything, so it goes rather than being measured from.
-            self._track_seen = gen
-            self._drop_key()
-
-        key_offset, offset, confidence = self._track(small, gray.shape)
-
-        with self._lock:
-            if self._track_gen != gen:
-                # The reset landed while this frame was correlating. The
-                # measurement is against an origin that no longer exists,
-                # and handing it to the tracker is the whole bug.
-                self._track_seen = self._track_gen
+        # The turret watch reads this downsample too, so it outlives the
+        # tracker sleeping; only when neither wants it is it skipped.
+        small = (cv2.resize(gray, (gray.shape[1] // step,
+                                   gray.shape[0] // step),
+                            interpolation=cv2.INTER_AREA)
+                 if self._track_wanted or self._turret is not None else None)
+        if not self._track_wanted:
+            # Nobody is consuming the position: no map on screen, no
+            # mosaic, no sweep, no timelapse. The correlation is one of
+            # the larger stages in the table and is not run for an
+            # audience of zero. Blind means blind: the position is
+            # withheld and stillness is never claimed, so nothing
+            # downstream -- the opportunist banking flats, the capture
+            # guard -- mistakes sleep for a measurement. The window
+            # resets the origin when it wakes the tracker, because
+            # whatever moved while blind was never integrated and every
+            # old position is a lie about the new resting place.
+            offset, confidence = None, 0.0
+            stage_pos, stage_tracking = None, False
+            settled = False
+            self._still_for = 0
+            self.meter.skip("stage tracking")
+            mark = time.perf_counter()
+        else:
+            with self._lock:
+                gen = self._track_gen
+            if gen != self._track_seen:
+                # An origin was reset since the last frame. The correlation
+                # reference belongs to a scale or a position that no longer
+                # means anything, so it goes rather than being measured from.
+                self._track_seen = gen
                 self._drop_key()
-                key_offset, offset, confidence = None, None, 0.0
-            stage_pos, stage_tracking, rekey = self._xy.anchor(
-                key_offset, confidence, gray.shape)
-            self._confidence = confidence
-        if rekey or key_offset is None:
-            self._rekey()
 
-        # Stillness, from the tracker we already run. Two pixels of drift is
-        # hand tremor on a manual stage, not movement.
-        moving = offset is not None and (abs(offset[0]) > 2 or abs(offset[1]) > 2)
-        self._still_for = 0 if moving else self._still_for + 1
-        settled = self._still_for >= 8
+            key_offset, offset, confidence = self._track(small, gray.shape)
 
-        mark = self.meter.since("stage tracking", mark)
+            with self._lock:
+                if self._track_gen != gen:
+                    # The reset landed while this frame was correlating. The
+                    # measurement is against an origin that no longer exists,
+                    # and handing it to the tracker is the whole bug.
+                    self._track_seen = self._track_gen
+                    self._drop_key()
+                    key_offset, offset, confidence = None, None, 0.0
+                stage_pos, stage_tracking, rekey = self._xy.anchor(
+                    key_offset, confidence, gray.shape)
+                self._confidence = confidence
+            if rekey or key_offset is None:
+                self._rekey()
+
+            # Stillness, from the tracker we already run. Two pixels of
+            # drift is hand tremor on a manual stage, not movement.
+            moving = offset is not None and (abs(offset[0]) > 2
+                                             or abs(offset[1]) > 2)
+            self._still_for = 0 if moving else self._still_for + 1
+            settled = self._still_for >= 8
+
+            mark = self.meter.since("stage tracking", mark)
 
         # Turret watch, from the downsample the tracker already made.
         #
@@ -739,6 +785,11 @@ class LivePipeline:
             xy_confidence=confidence,
             stage_pos=stage_pos,
             stage_tracking=stage_tracking,
+            # After the sync above, `_track_seen` is the generation this
+            # frame's position was measured under -- including the case
+            # where a reset landed mid-correlation and the measurement
+            # was discarded, which syncs to the new origin.
+            track_gen=self._track_seen,
             peaking=peak_map,
             sharpness_field=field if sweeping else None,
             focus_rect=norm_rect,
@@ -748,6 +799,12 @@ class LivePipeline:
             turret_event=turret_event,
             stats={"analysed_fps": self._rate, "delivered": delivered,
                    "dropped": dropped, "exposure_us": frame.exposure_us,
+                   # Measured-but-rejected tracker steps. Each one is
+                   # travel discarded whole, so a climbing count during a
+                   # fast crank is the dead-reckoning undershoot being
+                   # committed live -- the number that turns "the map
+                   # feels short" into a diagnosis.
+                   "gated": self._xy.gated,
                    "gain_pct": frame.gain_pct},
             costs=self.meter.snapshot(),
         ))

@@ -233,6 +233,9 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.canvas = _Canvas(self.model)
         self.canvas.pin_clicked.connect(self._on_pin_clicked)
         self._mosaic_on = False
+        #: Frames stamped with an older tracking generation than this are
+        #: refused: they were measured before the map's last clear.
+        self._min_gen = 0
 
         self.pin_btn = QtWidgets.QPushButton(_("map.pin.action"))
         self.pin_btn.setProperty("role", "seg")
@@ -289,14 +292,27 @@ class SlideMapPanel(QtWidgets.QWidget):
     # ---- feed ------------------------------------------------------------
 
     def update_live(self, s: LiveSignals) -> None:
+        # Frames measured before the last clear still arrive after it --
+        # the analysis thread was mid-frame when the reset landed -- and
+        # their positions describe an origin that no longer exists.
+        # Banking one repainted the current view at its stale position,
+        # which is why clearing the map used to take two presses.
+        fresh = s.track_gen >= self._min_gen
+        pos = s.stage_pos if fresh else None
+        tracking = s.stage_tracking and fresh
         h, w = s.preview.shape[:2]
-        self._pos = s.stage_pos
+        self._pos = pos
         self._frame = (w, h)
-        self._tracking = s.stage_tracking
-        changed = self.model.observe(s.stage_pos, s.preview, s.stage_tracking)
-        self.canvas.set_state(s.stage_pos, (w, h), s.stage_tracking, changed)
-        self.pin_btn.setEnabled(s.stage_pos is not None)
+        self._tracking = tracking
+        changed = self.model.observe(pos, s.preview, tracking)
+        self.canvas.set_state(pos, (w, h), tracking, changed)
+        self.pin_btn.setEnabled(pos is not None)
         self._update_status()
+
+    def ignore_before(self, generation: int) -> None:
+        """Refuse frames measured under an origin older than `generation`.
+        Handed back by `reset_tracking` at every clear."""
+        self._min_gen = int(generation)
 
     def set_mosaic(self, on: bool) -> None:
         """Confirmation from the session owner, not the click itself."""

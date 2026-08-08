@@ -59,12 +59,32 @@
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that
       is an archival artifact, and Victorian mounters drew them by hand.
-- [ ] **Why does stage tracking undershoot Y at 25×?** The drift that
-      broke registration was systematic: monotonic, one direction, ~14%
-      of traveled distance. Candidates: per-objective calibration error
-      in preview-px-per-µm, tracking loss during capture blackouts, or
-      anisotropy in the tracker. The stitcher now survives it, but the
-      minimap would place fields better if dead reckoning were honest.
+- [ ] **The Y undershoot: mechanism found, fix unshipped.** Probed
+      synthetically through the real pipeline (2026-08-08): steady
+      tracking is clean on both axes at every speed (worst −0.4%, zero
+      gating), and defocus wobble up to 8 µm changes nothing. What
+      reproduces the loss is a jump arriving between two analysed frames:
+      the per-axis gate is 0.35 of each axis's own extent, 638 px in x
+      but 426 px in y on a landscape frame, and a gated jump is discarded
+      *whole*. So travel in the 426 to 638 px band survives in x and
+      vanishes in y — and dropped frames while cranking fast are exactly
+      what makes multi-hundred-pixel inter-frame steps, which is why it
+      shows at 25×, where a small field makes the hand fast in pixels.
+      Monotonic, one direction, proportional to how often it trips.
+
+      Confirm on glass before fixing: crank y hard at 25× and watch
+      "moves too fast to track" in the performance panel — that counter
+      climbing is this mechanism live (each tick is one discarded jump).
+
+      Fix candidates, in order of ambition: raise the gate toward the
+      physical half-frame limit (0.45 of the axis buys y 426 → 547 px,
+      cheap, partial); or disambiguate the wraparound — a shift past the
+      gate has exactly two candidates, the measured offset and offset ±
+      the frame extent, and directly comparing overlap agreement at both
+      extends the measurable range to half the frame and possibly past
+      it. The second is a real algorithm and wants a bench before it
+      ships. A characterisation test in test_tracker.py pins today's
+      behaviour so the fix shows up as a deliberate change.
 - [ ] **Measured candidates in waiting** (from the research sweep, each goes
       through `tools/stack_bench.py` before shipping): CombineZP's ramp
       subtraction (monotone-vs-peaked profile test — the only shipped

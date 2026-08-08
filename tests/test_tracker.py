@@ -413,3 +413,100 @@ def test_a_gated_jump_does_not_teleport_the_position_backwards():
     assert locked
     assert after == (-65.0, 0.0), (
         f"position teleported to {after} instead of (-65.0, 0.0)")
+
+
+def test_the_map_refuses_frames_from_before_its_clear(qapp):
+    """The two-press clear: the frame in flight when a reset lands still
+    carries the old origin's position, and banked, it repaints the
+    current view at stale coordinates -- the map shows the same picture
+    twice until a second press sweeps it. The generation fence refuses
+    it instead."""
+    import types
+
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    panel = SlideMapPanel()
+    frame = np.full((60, 80, 3), 120, np.uint8)
+
+    def signal(gen, pos):
+        return types.SimpleNamespace(preview=frame, stage_pos=pos,
+                                     stage_tracking=True, track_gen=gen)
+
+    panel.update_live(signal(0, (10.0, 10.0)))
+    assert panel.model.snapshots, "tracking never banked terrain"
+
+    panel.model.reset()
+    panel.ignore_before(1)
+    panel.update_live(signal(0, (10.0, 10.0)))    # measured before the reset
+    assert not panel.model.snapshots, "a stale frame repainted cleared ground"
+
+    panel.update_live(signal(1, (0.0, 0.0)))
+    assert panel.model.snapshots, "fresh frames must still bank"
+
+
+def test_clearing_the_map_fences_in_the_same_press(window):
+    """One route: the panel's clear resets the tracking origin and sets
+    the stale-frame fence together, whichever path asked for it."""
+    win = window()
+    before = win.pipeline.reset_tracking()
+    assert isinstance(before, int)
+    win.slidemap.clear()
+    assert win.slidemap._min_gen == before + 1, (
+        "the clear did not fence out frames from the old origin")
+
+
+def test_the_gate_is_a_fraction_of_each_axis():
+    """Documented, not endorsed: on a landscape frame the same jump in
+    pixels survives in x and is discarded whole in y, because the
+    measurable range is a fraction of each axis's own extent. This is
+    the mechanism behind the dead-reckoning undershoot in y -- see the
+    TODO entry -- and this test pins the current behaviour so a fix
+    shows up as a deliberate change here."""
+    shape = (1216, 1824)
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    _pos, locked, _rekey = t.anchor((500.0, 0.0), 0.9, shape)
+    assert locked, "x should keep a 500 px jump: the gate is 638 there"
+
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    _pos, locked, _rekey = t.anchor((0.0, 500.0), 0.9, shape)
+    assert not locked and t.gated == 1, (
+        "y's gate is 426 px: the same jump is discarded whole")
+
+
+def test_a_blind_tracker_costs_nothing_and_claims_nothing():
+    """With nobody consuming the position, the correlation is skipped --
+    and blind means blind: no position, no lock, no stillness, so the
+    opportunist and the guard cannot mistake sleep for a measurement."""
+    cam, pipe, push, got = _rig()
+    push(); push(); push()
+    assert got[-1].stage_pos is not None, "the premise: awake, it tracks"
+
+    pipe.set_track_wanted(False)
+    cam.stage_xy = (2400.0, 1800.0)             # travel nobody integrates
+    push(); push()
+    s = got[-1]
+    assert s.stage_pos is None
+    assert not s.stage_tracking
+    assert not s.settled, "a blind tracker claimed stillness"
+
+    pipe.set_track_wanted(True)
+    pipe.reset_tracking()                       # what the window does on wake
+    push(); push(); push()
+    assert got[-1].stage_pos is not None, "it did not wake"
+    cam.close()
+
+
+def test_the_window_wakes_the_tracker_for_a_listener(window):
+    win = window()
+    win.map_window.hide()
+    win._sync_track_wanted()
+    assert win.pipeline._track_wanted is False, (
+        "map closed, no session: the tracker should sleep")
+    fence = win.slidemap._min_gen
+    win.map_window.show()
+    win._sync_track_wanted()
+    assert win.pipeline._track_wanted is True
+    assert win.slidemap._min_gen > fence, (
+        "waking must clear the map and fence the blind gap")
