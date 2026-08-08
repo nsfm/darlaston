@@ -237,6 +237,29 @@ class Settings:
     #: debris it also diffuses away real background specks.
     stack_smoothing: str = "light"
     stack_feather: float = 2.0       # blend feather at depth seams, px
+    #: Flatten the featureless background to one plane in `depth.png` and
+    #: therefore in the mesh. Where nothing was ever in focus the merge is
+    #: choosing between identical-looking slices on sensor noise, and the
+    #: composite does not care but the geometry does: background depth
+    #: standard deviation measured 86.5 and 51.9 falling to zero, with
+    #: specimen depth unchanged to two decimals. It touches nothing but
+    #: the depth map, deliberately.
+    stack_mask_background: bool = True
+    #: Bound on how fast the composite's depth map may change, in slices
+    #: per pixel. Zero is off. This is what removes the halo: a selection
+    #: map that changes faster than the blur can justify integrates the
+    #: same ray twice, which is what a halo is.
+    #:
+    #: A real control rather than a constant, and the only one here that
+    #: is. Everything else in this pipeline is derived from the optics,
+    #: but the bound that looks best depends on the subject: crossing
+    #: diatoms make genuine steep steps and want about 0.6, a smooth
+    #: carapace wants 0.2 to 0.3, and estimating it from the depth map
+    #: separated those two cases by far too little to trust. The objective
+    #: here is which photograph looks better, and that has no derivable
+    #: optimum. Zero until the operator turns it on; the window offers the
+    #: optics-derived starting point.
+    stack_clamp_slope: float = 0.0
     #: How the live preview is scaled to the window. This is a real trade
     #: and the right answer depends on the subject and the machine, which is
     #: why it is here rather than decided once in the code.

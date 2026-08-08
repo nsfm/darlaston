@@ -154,6 +154,22 @@ class StackAssembly(QtWidgets.QWidget):
               [(N_("stack.feather.subtle.label"), 1.0),
                (N_("stack.feather.normal.label"), 2.0),
                (N_("stack.feather.wide.label"), 4.0)])
+        # The two halves of the halo work, and they are separate entries
+        # on purpose: one acts on the geometry and one on the photograph,
+        # and giving both the same treatment measured harmful each way.
+        group(N_("stack.background.heading"), "stack_mask_background",
+              [(N_("stack.background.flatten.label"), True),
+               (N_("stack.background.keep.label"), False)])
+        # Presets rather than a slider because the surrounding menu is
+        # presets. The values are the measured range: 0.20 suited a smooth
+        # carapace, 0.60 a mount of crossing diatoms, and 0.35 is what the
+        # optics imply for both. A continuous control belongs with the
+        # side by side sampler, where there is something to judge it by.
+        group(N_("stack.halo.heading"), "stack_clamp_slope",
+              [(N_("stack.halo.off.label"), 0.0),
+               (N_("stack.halo.strong.label"), 0.20),
+               (N_("stack.halo.balanced.label"), 0.35),
+               (N_("stack.halo.gentle.label"), 0.60)])
         group(N_("stack.output.heading"), "stack_output",
               [(N_("stack.output.bayer.label"), "bayer"),
                (N_("stack.output.linear.label"), "linear")])

@@ -1884,7 +1884,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _run_stack_merge(self, directory) -> None:
         opts = dict(output=self.settings.stack_output,
                     smoothing=self.settings.stack_smoothing,
-                    feather=self.settings.stack_feather)
+                    feather=self.settings.stack_feather,
+                    mask_background=self.settings.stack_mask_background,
+                    clamp_slope=self.settings.stack_clamp_slope)
         keep = self.settings.keep_slices
 
         def work():

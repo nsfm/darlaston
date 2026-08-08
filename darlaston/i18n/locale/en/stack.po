@@ -75,6 +75,39 @@ msgstr "normal (2 px)"
 msgid "stack.feather.wide.label"
 msgstr "wide (4 px)"
 
+#. The background of a depth map is a coin toss: where nothing ever came
+#. into focus, the merge is choosing between exposures that look alike, so
+#. the winner is whichever had the largest noise excursion. Harmless in the
+#. photograph and ruinous in the model, which is why this says model.
+msgid "stack.background.heading"
+msgstr "Empty background"
+
+msgid "stack.background.flatten.label"
+msgstr "flat in the 3D model"
+
+msgid "stack.background.keep.label"
+msgstr "leave as measured"
+
+#. The halo is a bright skirt around a subject, from an out of focus edge
+#. spilling onto the field beside it. Named for what the operator sees
+#. rather than for the bound that removes it. Strength is worded as how
+#. much halo goes, not as the slope, because the number means nothing at
+#. the point of choosing.
+msgid "stack.halo.heading"
+msgstr "Halo removal"
+
+msgid "stack.halo.off.label"
+msgstr "off"
+
+msgid "stack.halo.strong.label"
+msgstr "strong (smooth subjects)"
+
+msgid "stack.halo.balanced.label"
+msgstr "balanced"
+
+msgid "stack.halo.gentle.label"
+msgstr "gentle (layered subjects)"
+
 msgid "stack.output.heading"
 msgstr "Output"
 
