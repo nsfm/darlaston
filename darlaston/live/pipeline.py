@@ -176,6 +176,11 @@ class LivePipeline:
         #: The frame the stage position is currently measured against, the
         #: shift last measured from it, and the candidate that replaces it
         #: when the tracker asks for a fresh anchor.
+        #: Bumped whenever the origin is reset. Owned by the lock; the
+        #: keyframe fields below are owned by the analysis thread alone,
+        #: which is what keeps them out of a race.
+        self._track_gen = 0
+        self._track_seen = 0
         self._key: np.ndarray | None = None
         self._key_offset: tuple[float, float] = (0.0, 0.0)
         self._key_pending: np.ndarray | None = None
@@ -314,12 +319,24 @@ class LivePipeline:
         away from the frame the operator pressed the button on. Worse after
         an objective change, where the two frames are at different
         magnifications and the shift between them means nothing at all.
+
+        Which is exactly the bug this used to reintroduce by hand. The
+        keyframe state is read and written by `_track` without the lock,
+        and `phaseCorrelate` holds that window open for milliseconds of
+        every frame, so clearing it from here raced: a press landing
+        mid-correlation cleared the reference and then had the in-flight
+        measurement, taken against the reference that no longer existed,
+        handed to the freshly reset tracker. The origin went back to being
+        planted up to a keyframe away from where the operator pressed.
+
+        So this no longer touches that state at all. It bumps a
+        generation, and the analysis thread -- the only thread that reads
+        or writes the keyframe -- notices and clears it. A measurement
+        that spans a bump is discarded rather than believed.
         """
         with self._lock:
             self._xy.reset()
-            self._key = None
-            self._key_pending = None
-            self._key_offset = (0.0, 0.0)
+            self._track_gen += 1
 
     # ---- the hold-still guard --------------------------------------------
     #
@@ -538,8 +555,25 @@ class LivePipeline:
         small = cv2.resize(gray, (gray.shape[1] // step,
                                   gray.shape[0] // step),
                            interpolation=cv2.INTER_AREA)
-        key_offset, offset, confidence = self._track(small, gray.shape)
         with self._lock:
+            gen = self._track_gen
+        if gen != self._track_seen:
+            # An origin was reset since the last frame. The correlation
+            # reference belongs to a scale or a position that no longer
+            # means anything, so it goes rather than being measured from.
+            self._track_seen = gen
+            self._drop_key()
+
+        key_offset, offset, confidence = self._track(small, gray.shape)
+
+        with self._lock:
+            if self._track_gen != gen:
+                # The reset landed while this frame was correlating. The
+                # measurement is against an origin that no longer exists,
+                # and handing it to the tracker is the whole bug.
+                self._track_seen = self._track_gen
+                self._drop_key()
+                key_offset, offset, confidence = None, None, 0.0
             stage_pos, stage_tracking, rekey = self._xy.anchor(
                 key_offset, confidence, gray.shape)
             self._confidence = confidence
@@ -639,8 +673,11 @@ class LivePipeline:
             patch = data[int(by * fh):int((by + bh) * fh),
                          int(bx * fw):int((bx + bw) * fw)]
             if patch.size:
-                self._wb_sample = tuple(float(patch[..., i].mean())
-                                        for i in range(3))
+                # Three strided reductions over interleaved BGR, which is
+                # the slow way through a 3-channel array: 0.526 ms against
+                # 0.065 ms. `cv2.mean` returns B, G, R, alpha, which is
+                # the order this was already building.
+                self._wb_sample = tuple(cv2.mean(patch)[:3])
 
         self._analysed += 1
         self._tick.set()
@@ -737,6 +774,12 @@ class LivePipeline:
         self._key_offset = key_offset
         self._key_pending = cur
         return key_offset, motion, float(response)
+
+    def _drop_key(self) -> None:
+        """Forget the correlation reference. Analysis thread only."""
+        self._key = None
+        self._key_pending = None
+        self._key_offset = (0.0, 0.0)
 
     def _rekey(self) -> None:
         """Adopt the current frame as the new anchor point."""

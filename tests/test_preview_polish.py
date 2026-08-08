@@ -208,3 +208,81 @@ def test_no_mode_is_tracked_more_coarsely_than_it_was():
         step = max(4, int(round(width / TRACK_WIDTH)))
         assert step >= 4
         assert width // step <= width // 4
+
+
+# ---- the origin reset, against a correlation in flight ----------------------
+
+def test_resetting_the_origin_mid_correlation_does_not_plant_it_stale():
+    """Found by an audit of this path, and it is the bug `reset_tracking`
+    was written to fix, resurrected by the scheduler.
+
+    The keyframe state is read and written by `_track` without the lock,
+    and `phaseCorrelate` holds that window open for milliseconds of every
+    frame. A press landing inside it used to clear the reference and then
+    hand the in-flight measurement -- taken against the reference that no
+    longer existed -- to the freshly reset tracker, planting the origin up
+    to a keyframe interval from where the operator pressed.
+
+    The reset is injected at the correlation boundary here, which is only
+    a scheduler outcome made reliable.
+    """
+    import cv2
+    from darlaston.live.pipeline import LivePipeline
+    from darlaston.camera.buffers import Frame
+
+    p = LivePipeline(on_signals=lambda _s: None)
+    rng = np.random.default_rng(4)
+    scene = rng.integers(20, 230, (900, 1400, 3), dtype=np.uint8)
+
+    def feed(shift):
+        # A plain array rather than the pool: nothing releases these, and
+        # `_pool=None` makes release a no-op, which is what the pipeline's
+        # own loop would otherwise have done for us.
+        p._analyse(Frame(data=np.roll(scene, shift, axis=1), seq=1,
+                         timestamp=0.0, exposure_us=8000, gain_pct=100,
+                         binned=True, _pool=None))
+
+    feed(0)
+    feed(40)                       # travel, so there is a position to lose
+    assert p.stage_position() is not None
+
+    # The press lands while the next frame is correlating.
+    real = cv2.phaseCorrelate
+
+    def racing(a, b):
+        out = real(a, b)
+        p.reset_tracking()         # the operator, mid-correlation
+        return out
+
+    cv2.phaseCorrelate = racing
+    try:
+        feed(80)
+    finally:
+        cv2.phaseCorrelate = real
+
+    where = p.stage_position()
+    assert where is None or max(abs(where[0]), abs(where[1])) < 1.0, (
+        f"origin planted at {where} by a measurement taken against a "
+        "reference that had already been thrown away")
+
+
+def test_an_origin_reset_between_frames_still_works():
+    """The ordinary path, which the fix must not have cost."""
+    from darlaston.live.pipeline import LivePipeline
+    from darlaston.camera.buffers import Frame
+
+    p = LivePipeline(on_signals=lambda _s: None)
+    rng = np.random.default_rng(5)
+    scene = rng.integers(20, 230, (900, 1400, 3), dtype=np.uint8)
+
+    def feed(shift):
+        p._analyse(Frame(data=np.roll(scene, shift, axis=1), seq=1,
+                         timestamp=0.0, exposure_us=8000, gain_pct=100,
+                         binned=True, _pool=None))
+
+    feed(0)
+    feed(40)
+    p.reset_tracking()
+    feed(40)
+    where = p.stage_position()
+    assert where is None or max(abs(where[0]), abs(where[1])) < 1.0

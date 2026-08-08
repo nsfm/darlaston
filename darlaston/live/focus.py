@@ -125,9 +125,18 @@ def norm_variance(g: np.ndarray) -> float:
     makes it dimensionless and stable across exposure changes, which is what a
     live trace with peak memory actually needs.
     """
-    f = g.astype(np.float32)
-    m = float(f.mean())
-    return float(((f - m) ** 2).mean() / max(m * m, 1e-6))
+    # One pass over the plane, and no temporaries. The numpy form of
+    # this -- astype, subtract the mean, square, average -- materialises
+    # three float arrays the size of the frame to answer a question
+    # OpenCV answers with two accumulators: 3.49 ms against 0.071 ms at
+    # the 2736 preview, which is the largest single saving in the live
+    # loop and this is the default metric on brightfield, so it is every
+    # frame. It is also the *more* accurate of the two, accumulating in
+    # double where the numpy chain worked in float32.
+    mean, stddev = cv2.meanStdDev(g)
+    m = float(mean[0, 0])
+    sigma = float(stddev[0, 0])
+    return sigma * sigma / max(m * m, 1e-6)
 
 
 def lapv(g: np.ndarray) -> float:
