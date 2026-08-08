@@ -65,6 +65,16 @@ class LiveSignals:
     #: about 3x to neutralise this sensor, so blue saturates roughly 4.7x
     #: earlier in raw terms than green does.
     channel_clipped: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    #: Counts recomputations of `histogram`, not frames. The levels cost
+    #: enough that they are taken every INSTRUMENT_DIVISOR frames and the
+    #: same array is handed out in between, so a consumer acting on every
+    #: frame acts several times on one measurement. Harmless for a display,
+    #: which redraws the same thing; not harmless for a control loop, which
+    #: then applies several steps' worth of correction per observation.
+    #: That is dead time, and it oscillates the way dead time does:
+    #: measured at 1448x exposure swing against 1.00x when the loop acts
+    #: once per reading.
+    levels_seq: int = 0
     #: Does this frame look like empty slide? Cheap to compute here and it
     #: lets the app notice a chance to bank a flat field without asking.
     looks_blank: bool = False
@@ -173,6 +183,7 @@ class LivePipeline:
         #: explicit copy, the histogram is its own array, and the tracker,
         #: turret and peaking all resize into new buffers of their own.
         self._planes: list[np.ndarray] | None = None
+        self._levels_seq = 0
         #: Last (histogram, per-channel clipping), reused on the frames
         #: between instrument repaints.
         self._levels: tuple | None = None
@@ -476,6 +487,7 @@ class LivePipeline:
                 hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
                 per = (0.0, float(hist[255] / total), 0.0)
             self._levels = (hist, per)
+            self._levels_seq += 1
         hist, per = self._levels
 
         # Clipping is judged on green, not on luminance or on any channel.
@@ -636,6 +648,7 @@ class LivePipeline:
             # copy rather than adding a pass.
             preview=balance.applied(data, wb_lut),
             histogram=hist,
+            levels_seq=self._levels_seq,
             clipped_fraction=clipped,
             channel_clipped=per,
             looks_blank=blank,

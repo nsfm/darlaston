@@ -57,6 +57,7 @@ dist/
 .idea/
 *.swp
 .DS_Store
+.claude
 
 # Bundled fonts are deliberate (IBM Plex, OFL 1.1)
 !photomicrography/ui/fonts/

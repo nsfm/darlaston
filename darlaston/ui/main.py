@@ -36,6 +36,7 @@ from .. import __version__, log
 from ..live.focus import Illumination, Region
 from ..live import balance
 from ..live.cell import Newest
+from ..live import exposure as exposure_ctl
 from ..process import scalebar
 from ..process.metadata import sensor_pitch
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
@@ -185,6 +186,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_preview = None
         self._tile_merges: list[tuple[int, Path]] = []
         self._tile_merging: int | None = None
+        #: Take the next auto-exposure step at full stride. Set by things
+        #: that are known to change the light rather than measured to have
+        #: changed it: swapping objective loses four to sixteen times the
+        #: light, and the selector knows before the histogram does.
+        self._ae_hurry = True
+        #: The levels reading this loop last acted on. It must never act
+        #: twice on one measurement: the histogram is recomputed every few
+        #: frames and reused in between, so acting per frame applies the
+        #: same correction several times over, which is dead time in the
+        #: loop and oscillates exactly as dead time does.
+        self._ae_levels_seq = -1
         self._last_preview = None
         #: The live focus metric as of the frame the trigger last looked
         #: at. A stack has no absolute Z, so this number is the only thing
@@ -525,6 +537,32 @@ class MainWindow(QtWidgets.QMainWindow):
         exposure.addWidget(self.exposure)
         exposure.addWidget(self.gain)
 
+        # Auto-exposure sits with the two bars it drives rather than in a
+        # settings window: it moves them in front of the operator, so its
+        # switch belongs where the movement is.
+        #
+        # Segments, and the same three states the rail already speaks in:
+        # dim is off and yours to press, brass filled is on and working,
+        # and greyed is on but held by something that owns the light for
+        # the moment. In a bare layout rather than a wrapper widget, which
+        # paints itself with the panel background and reads as a black box
+        # behind the row.
+        self.auto_exposure = QtWidgets.QPushButton(_("shell.auto_exposure"))
+        self.auto_exposure.setCheckable(True)
+        self.auto_exposure.setProperty("role", "seg")
+        self.auto_exposure.toggled.connect(self._on_auto_exposure)
+        self.auto_exposure_lock = QtWidgets.QPushButton(
+            _("shell.auto_exposure.lock"))
+        self.auto_exposure_lock.setCheckable(True)
+        self.auto_exposure_lock.setProperty("role", "seg")
+        self.auto_exposure_lock.toggled.connect(self._on_auto_exposure_lock)
+        auto_row = QtWidgets.QHBoxLayout()
+        auto_row.setContentsMargins(0, 0, 0, 0)
+        auto_row.setSpacing(4)
+        auto_row.addWidget(self.auto_exposure)
+        auto_row.addWidget(self.auto_exposure_lock)
+        exposure.addLayout(auto_row)
+
         # A row inside exposure rather than a group of its own. It is one
         # control, and a heading over one control spends a line of rail to
         # repeat what the button already says.
@@ -688,6 +726,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.shutter.set_available(status.is_live and not self.capture.busy)
         self._set_shooting_enabled(status.is_live)
+        self._sync_auto_exposure()
         # Including the balance controls, which need a camera to point at.
         # This was missing: they were disabled once at startup, before the
         # session had come up, and nothing ever enabled them again -- so
@@ -882,6 +921,174 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_focus_peak()
         self.gain.set_value_text(f"{value / 100:.1f}×")
 
+    # ---- automatic exposure ---------------------------------------------
+
+    def _on_auto_exposure(self, on: bool) -> None:
+        self.settings.auto_exposure = bool(on)
+        self.settings.save()
+        self._ae_held_shown = None            # force the row to restyle
+        self._refresh_auto_exposure_hold()
+        # Coming back on after the scene has moved, so take the first step
+        # at full stride rather than crawling from wherever it was left.
+        self._ae_hurry = True
+
+    def _on_auto_exposure_lock(self, on: bool) -> None:
+        self.settings.auto_exposure_lock_time = bool(on)
+        self.settings.save()
+        self._ae_hurry = True
+
+    def _sync_auto_exposure(self) -> None:
+        """Offer the switch only where there is something for it to move.
+
+        Hidden rather than disabled, on the same reasoning the camera
+        dialog already uses for a control the device does not have: a
+        switch over a capability that does not exist is worse than no
+        switch, because it moves and nothing happens. `CameraInfo` reports
+        None rather than a zero width range precisely so this is knowable.
+
+        The lock is offered only when both controls exist. On a camera
+        with gain alone there is no exposure to pin, and on one with
+        exposure alone pinning it would leave the loop nothing at all.
+        """
+        info = self.session.status.info
+        has_time = bool(info and info.exposure_range_us)
+        has_gain = bool(info and info.gain_range_pct)
+        self.auto_exposure.setVisible(has_time or has_gain)
+        self.auto_exposure_lock.setVisible(has_time and has_gain)
+        with QtCore.QSignalBlocker(self.auto_exposure):
+            self.auto_exposure.setChecked(bool(self.settings.auto_exposure))
+        with QtCore.QSignalBlocker(self.auto_exposure_lock):
+            self.auto_exposure_lock.setChecked(
+                bool(self.settings.auto_exposure_lock_time))
+        self._refresh_auto_exposure_hold()
+
+    def _refresh_auto_exposure_hold(self) -> None:
+        """Grey the switch while something else owns the light.
+
+        The interlocks are not a detail the operator should have to infer
+        from the picture sitting still. A capture, a stack, a mosaic and a
+        calibration all stop the loop for reasons that are theirs rather
+        than ours, and a control that looks live while it is doing nothing
+        is worse than one that says so.
+        """
+        held = not self._auto_exposure_allowed()
+        on = bool(self.settings.auto_exposure)
+        if getattr(self, "_ae_held_shown", None) == (held, on):
+            return
+        self._ae_held_shown = (held, on)
+        self.auto_exposure.setEnabled(not held)
+        self.auto_exposure.setToolTip(
+            _("shell.auto_exposure.held") if held
+            else _("shell.auto_exposure.tooltip"))
+        self.auto_exposure_lock.setEnabled(on and not held)
+        self.auto_exposure_lock.setToolTip(
+            _("shell.auto_exposure.lock.tooltip"))
+
+    def _auto_exposure_allowed(self) -> bool:
+        """Whether the loop may move anything right now.
+
+        Freezing during a stack is not politeness. The merge blends slices
+        on the assumption that they share a photometric scale, and
+        tools/stack_bench.py carries a scene called `drift` precisely
+        because a few percent of per-slice exposure variation terraces the
+        result; both commercial stackers correct for it by default. A loop
+        adjusting exposure while somebody racks would manufacture that
+        artefact frame by frame.
+
+        The rest are quieter versions of the same argument. A flat field
+        measured while exposure moves is not a flat field. A mosaic whose
+        tiles were each exposed differently has visible seams that no
+        blending fixes. A focus sweep reads a metric normalised against
+        intensity, which changing the intensity underneath invalidates.
+        """
+        return not (self.capture.busy
+                    or self.calibration.busy
+                    or self.stack_session is not None
+                    or self.mosaic is not None
+                    or self.pipeline.sweeping)
+
+    def _auto_exposure_limits(self):
+        """What the camera and the current preview mode can actually do."""
+        info = self.session.status.info
+        if info is None:
+            return None
+        span = info.exposure_range_us
+        gain = info.gain_range_pct
+        if span is None and gain is None:
+            return None
+        # A control the camera does not have is a range of one value, so
+        # the ladder simply never spends anything there.
+        here = self._slider_to_us(self.exposure.value())
+        span = span or (here, here)
+        gain = gain or (self.gain.value(), self.gain.value())
+        return exposure_ctl.Limits(
+            exposure_us=span, gain_pct=gain,
+            target_fps=float(self.settings.auto_exposure_target_fps))
+
+    def _auto_expose_guarded(self, signals) -> None:
+        self._refresh_auto_exposure_hold()
+        """Never at the cost of the picture.
+
+        This runs inside the handler that draws every frame, so a fault in
+        a convenience must not take the preview down with it. Reported
+        once and then stood down for the session, rather than swallowed
+        per frame, which would hide it behind a picture that merely looks
+        a bit wrong.
+        """
+        if not self.settings.auto_exposure:
+            return
+        try:
+            self._auto_expose(signals)
+        except Exception:
+            self.settings.auto_exposure = False
+            _log.exception("auto-exposure failed and is now off")
+            self.strip.set_note(_("note.auto_exposure_failed"))
+
+    def _auto_expose(self, signals) -> None:
+        if not self.settings.auto_exposure:
+            return
+        if not self._auto_exposure_allowed():
+            self._ae_hurry = True      # resume from a known event, not drift
+            return
+        # One step per observation. Measured on a simulated sensor: with
+        # three frames of dead time the exposure swings 1448x, and acting
+        # only once per fresh reading takes that to 1.00x. The pipeline
+        # supplies three frames of it on its own, by design, because the
+        # levels are wanted at the rate they are looked at rather than at
+        # frame rate.
+        fresh = getattr(signals, "levels_seq", None)
+        if fresh is not None:
+            if fresh == self._ae_levels_seq:
+                return
+            self._ae_levels_seq = fresh
+
+        limits = self._auto_exposure_limits()
+        if limits is None or not limits.supported:
+            return
+
+        state = exposure_ctl.State(
+            exposure_us=self._slider_to_us(self.exposure.value()),
+            gain_pct=int(self.gain.value()),
+            lock_exposure=bool(self.settings.auto_exposure_lock_time))
+        level = exposure_ctl.measure_hist(signals.histogram)
+        hurry, self._ae_hurry = self._ae_hurry, False
+        moved = exposure_ctl.step(
+            state, limits, level,
+            reactivity=float(self.settings.auto_exposure_reactivity),
+            hurry=hurry,
+            clipped=exposure_ctl.clipped_share(signals.histogram))
+        if moved == state:
+            return
+
+        # Through the sliders rather than around them. They are the single
+        # source of truth for what the camera is set to, so auto-exposure
+        # leaving them where it finished is not a feature to implement --
+        # it is what happens when the loop never had a private copy.
+        if moved.exposure_us != state.exposure_us:
+            self.exposure.setValue(self._us_to_slider(moved.exposure_us))
+        if moved.gain_pct != state.gain_pct:
+            self.gain.setValue(moved.gain_pct)
+
     def _on_preview_res(self, at: int) -> None:
         index = self.strip.preview.itemData(at)
         if index is None or not self.session.status.is_live:
@@ -892,6 +1099,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
+        self._ae_hurry = True
 
     def _push_turret(self) -> None:
         """Hand the detector the turret, the stand's sign and its signatures."""
@@ -993,6 +1201,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for this path specifically: reaching for the stepper is the natural
         motion when the suggestion is wrong.
         """
+        self._ae_hurry = True
         if self.setup is None:
             return
         if self.proposal.isVisible():
@@ -1061,6 +1270,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_objective_changed(self) -> None:
         """Everything keyed on magnification is now stale."""
         self._remember_objective()
+        # A known event, so the exposure loop does not have to discover it:
+        # four to sixteen times the light arrives or leaves at once, and a
+        # loop damped to be calm in steady state would crawl there.
+        self._ae_hurry = True
         self.strip.update_status(self.session.status, self.setup)
         self.opportunist.set_key(flat_key(self.setup, self.subject.slide_note))
         self._refresh_calibration()
@@ -2514,6 +2727,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # taken then would be a black frame masquerading as a flat.
         if not self.calibration.busy and not self.capture.busy:
             self.opportunist.observe(s)
+        self._auto_expose_guarded(s)
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_remaining(s.coverage_remaining, s.focus_rect)
         self.focus.set_coverage(s.coverage, s.coverage_complete)

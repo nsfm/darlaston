@@ -214,3 +214,40 @@ msgstr[0] ""
 msgstr[1] ""
 "{count} exposures still being written.\n"
 "Nothing to wait for. Keep racking."
+
+#. Shown once if the exposure loop throws. It runs inside the handler that
+#. draws every frame, so it stands down rather than taking the picture with
+#. it. Worded as a state the operator can act on, not as a stack trace.
+msgid "note.auto_exposure_failed"
+msgstr "Automatic exposure stopped. The sliders are yours again."
+
+#. The switch beside the time and gain bars. It moves those two bars
+#. rather than holding a private copy of them, which is why turning it off
+#. leaves the picture exactly as it was.
+msgid "shell.auto_exposure"
+msgstr "Automatic"
+
+#. Shown while a capture, a stack, a mosaic or a calibration has the
+#. light. Says whose turn it is rather than that the control is broken.
+msgid "shell.auto_exposure.held"
+msgstr ""
+"Paused while this capture finishes. Exposure has to hold still for it,\n"
+"or the frames would not match each other."
+
+msgid "shell.auto_exposure.tooltip"
+msgstr ""
+"Hold the picture at a sensible brightness. Time is spent first, then\n"
+"gain once a longer exposure would cost frame rate. Paused during a\n"
+"capture, a stack, a mosaic and a calibration."
+
+#. Offered only where the camera has both controls: with gain alone there
+#. is no time to pin, and with time alone there would be nothing left to
+#. move.
+msgid "shell.auto_exposure.lock"
+msgstr "gain only"
+
+msgid "shell.auto_exposure.lock.tooltip"
+msgstr ""
+"Leave the exposure time where you set it and move only gain. Useful\n"
+"for a camera whose time steps are uneven, where the loop would\n"
+"otherwise hunt."
