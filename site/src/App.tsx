@@ -216,13 +216,14 @@ export default function App() {
         <div className="container">
           <p>
             Free to use, share, and modify under the GPLv3, with a linking
-            exception for the ToupTek SDK. Thanks to John McMaster's pyuscope
-            and gst-plugin-toupcam for SDK reference.
+            exception for the ToupTek SDK. No analytics, no cookies, no
+            accounts. Downloads are served by GitHub.
           </p>
           <p>
             <a href={GITHUB}>Source</a> ·{" "}
             <a href={`${GITHUB}/releases`}>Releases</a> ·{" "}
-            <a href={`${GITHUB}/issues`}>Issues</a>
+            <a href={`${GITHUB}/issues`}>Issues</a> ·{" "}
+            <a href={`${GITHUB}/blob/main/SUPPORT.md`}>Support</a>
           </p>
         </div>
       </footer>
