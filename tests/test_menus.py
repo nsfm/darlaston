@@ -27,8 +27,9 @@ def entries(win, menu):
             if not a.isSeparator() and a.isVisible()]
 
 
-def test_three_menus_on_one_axis(win):
-    assert list(win.toolbar.menus) == ["Setup", "Capture", "Darkroom"]
+def test_four_menus_on_one_axis(win):
+    assert list(win.toolbar.menus) == ["Setup", "Capture", "Darkroom",
+                                       "Present"]
     # The one-entry menu is gone: an entry is invisible until its menu is
     # opened, so a menu of one advertises nothing.
     assert "Session" not in win.toolbar.menus
@@ -59,6 +60,20 @@ def test_darkroom_never_touches_the_camera(win):
     assert entries(win, "Darkroom") == [
         "Stitch mosaic…", "Fly through a mosaic…", "Render from depth…",
         "Make a plate…", "Arrange specimens…"]
+
+
+def test_present_faces_the_audience(win):
+    """The window and its moment-to-moment control, then what it says,
+    then the operator's own words, then how the screen is used. Nothing
+    in this menu touches the camera or the files."""
+    assert entries(win, "Present") == [
+        "Presentation window", "Hold the picture", "Scale bar",
+        "Magnification", "Slide subject", "Live marker", "Header",
+        "Set the header…", "Crop to fill", "Caption size",
+        "Caption opacity", "Screen size…", "Stream to the network",
+        "Hide overlays from the stream"]
+    # Holding means nothing while there is no audience window.
+    assert not win.present_hold_action.isEnabled()
 
 
 def test_ellipsis_means_a_further_choice_follows(win):

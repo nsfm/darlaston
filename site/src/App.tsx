@@ -43,6 +43,14 @@ const FEATURES = [
     body: "See how your specimen changes over time.",
   },
   {
+    title: "Presentation mode",
+    body: "A second window made for audiences: just the picture, with a scale bar, magnification, your name, and the slide subject. Hold the view during slide changes and point out details with a click.",
+  },
+  {
+    title: "Live streaming",
+    body: "Stream the presentation straight to OBS or any browser on your network. Your viewers get the picture and its captions while your controls stay private. Made for microscopists who stream.",
+  },
+  {
     title: "Creative depthworks",
     body: "Turn focus stacks into wigglegrams, focus pulls, turntables, stereo pairs, anaglyphs, autostereograms, printable meshes, and more.",
   },
@@ -88,6 +96,7 @@ const COMPARISON: { row: string; cells: Cell[] }[] = [
     cells: [yes, { text: "Partial", cls: "partial" }, no, no],
   },
   { row: "Depth mapping", cells: [yes, no, yes, yes] },
+  { row: "Live streaming", cells: [yes, no, no, no] },
 ];
 
 export default function App() {
@@ -114,9 +123,9 @@ export default function App() {
           />
           <h1>A free, open source tool for creative microscopy.</h1>
           <p className="sub">
-            Focus stacking, mosaic stitching, 12-bit RAW capture, and a live
-            map of your slide. Built for photographing diatom arrangements,
-            made for sharing your love of the microscopic world.
+            Focus stacking, mosaic stitching, 12-bit RAW capture, and a live map
+            of your slide. Built for photographing diatom arrangements, made for
+            sharing your love of the microscopic world.
           </p>
           <div className="cta-row">
             <a className="btn primary" href="#download">
@@ -138,10 +147,10 @@ export default function App() {
           <div className="container">
             <div className="kicker">Every slide perfect</div>
             <p className="story">
-              Named for <strong>Herbert William Hutton Darlaston</strong>{" "}
-              (1867 to 1949), who prepared nearly a thousand microscope slides
-              in his first year at the bench, only to give most of them away.
-              He continued his work for the next fifty years under the promise{" "}
+              Named for <strong>Herbert William Hutton Darlaston</strong> (1867
+              to 1949), who prepared nearly a thousand microscope slides in his
+              first year at the bench, only to give most of them away. He
+              continued his work for the next fifty years under the promise{" "}
               <em className="promise">Every Slide Perfect</em>. This tool
               carries the same spirit: careful work, freely shared.
             </p>

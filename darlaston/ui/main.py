@@ -68,8 +68,10 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .widgets import (BalanceSwatch, FocusGroup, Histogram, LiveView,
-                      SaveGauge, ValueBar)
+from .present import (HeaderDialog, PresentWindow, ScreenDialog,
+                      screen_width_cm)
+from .widgets import (UI_METER, BalanceSwatch, FocusGroup, Histogram,
+                      LiveView, SaveGauge, ValueBar)
 
 _log = logging.getLogger(__name__)
 
@@ -242,11 +244,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toolbar.about.connect(lambda: AboutDialog(self).exec())
         # Menus rather than buttons, so these nest as more arrives instead of
         # every name having to change when the third tool appears.
-        # Three menus, on the one axis that decides every entry: before a
-        # session, during it, or after it. Every menu is built in one
-        # place, because the last entry to be added was appended to a menu
-        # three screens above and that is how the next one lands in the
-        # wrong group.
+        # Four menus, on the one axis that decides every entry: before a
+        # session, during it, or after it -- and Present, which is the
+        # session again but facing the audience. Every menu is built in
+        # one place, because the last entry to be added was appended to a
+        # menu three screens above and that is how the next one lands in
+        # the wrong group.
         #
         # An ellipsis means a further choice is needed before anything
         # happens -- a dialog or a file chooser. No ellipsis means it
@@ -376,6 +379,125 @@ class MainWindow(QtWidgets.QMainWindow):
         darkroom.addAction(_("menu.darkroom.plate"), self._plate_dialog)
         darkroom.addAction(_("menu.darkroom.arrange"), self._arrange_dialog)
 
+        # Present: the session again, facing the audience. A second
+        # window that mirrors the live view for a screen other people
+        # watch, with the few words a visitor asks for. Nothing in it
+        # touches the camera or the files.
+        self.present_window: PresentWindow | None = None
+        present = self.toolbar.add_menu("Present", _("menu.present"))
+        self.present_action = present.addAction(_("menu.present.window"))
+        self.present_action.setToolTip(_("menu.present.window.tooltip"))
+        self.present_action.setCheckable(True)
+        self.present_action.toggled.connect(self._toggle_present)
+        # Holding is a moment, not a preference: it lives on the window
+        # itself (space) and here for when the operator's focus is on
+        # this window. Only meaningful while the other one exists.
+        self.present_hold_action = present.addAction(_("menu.present.hold"))
+        self.present_hold_action.setToolTip(_("menu.present.hold.tooltip"))
+        self.present_hold_action.setCheckable(True)
+        self.present_hold_action.setEnabled(False)
+        # Application-wide, because the operator's hands live on *this*
+        # window and the swap is exactly when they cannot go clicking
+        # through a menu. A chord rather than a bare key: plain space in
+        # the subject boxes has to keep meaning a space.
+        self.present_hold_action.setShortcut(QtGui.QKeySequence("Ctrl+Space"))
+        self.present_hold_action.setShortcutContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut)
+        self.present_hold_action.toggled.connect(self._hold_present)
+        present.addSeparator()
+        self.present_bar_action = present.addAction(
+            _("menu.present.scale_bar"))
+        self.present_bar_action.setToolTip(
+            _("menu.present.scale_bar.tooltip"))
+        self.present_mag_action = present.addAction(
+            _("menu.present.magnification"))
+        self.present_mag_action.setToolTip(
+            _("menu.present.magnification.tooltip"))
+        self.present_subject_action = present.addAction(
+            _("menu.present.subject"))
+        self.present_subject_action.setToolTip(
+            _("menu.present.subject.tooltip"))
+        self.present_live_action = present.addAction(_("menu.present.live"))
+        self.present_live_action.setToolTip(_("menu.present.live.tooltip"))
+        present.addSeparator()
+        self.present_header_action = present.addAction(
+            _("menu.present.header"))
+        self.present_header_action.setToolTip(
+            _("menu.present.header.tooltip"))
+        for action, attr in (
+                (self.present_bar_action, "present_scale_bar"),
+                (self.present_mag_action, "present_magnification"),
+                (self.present_subject_action, "present_subject"),
+                (self.present_live_action, "present_live"),
+                (self.present_header_action, "present_header")):
+            action.setCheckable(True)
+            action.setChecked(getattr(self.settings, attr))
+            action.toggled.connect(lambda on, a=attr: self._set_present(a, on))
+        present.addAction(_("menu.present.header_text"),
+                          self._edit_present_header)
+        present.addSeparator()
+        # How the audience's screen is used: the frame's shape or the
+        # screen's, how large the words are, how solidly they sit.
+        self.present_fill_action = present.addAction(_("menu.present.fill"))
+        self.present_fill_action.setToolTip(_("menu.present.fill.tooltip"))
+        self.present_fill_action.setCheckable(True)
+        self.present_fill_action.setChecked(self.settings.present_fill)
+        self.present_fill_action.toggled.connect(
+            lambda on: self._set_present("present_fill", on))
+        sizes = present.addMenu(_("menu.present.captions.size"))
+        group = QtGui.QActionGroup(self)
+        group.setExclusive(True)
+        for value, label in (
+                ("small", _("menu.present.captions.small")),
+                ("normal", _("menu.present.captions.normal")),
+                ("large", _("menu.present.captions.large"))):
+            act = sizes.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.settings.present_caption_size == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_present_choice(
+                    "present_caption_size", v))
+            group.addAction(act)
+        opacities = present.addMenu(_("menu.present.captions.opacity"))
+        group = QtGui.QActionGroup(self)
+        group.setExclusive(True)
+        for value, label in (
+                ("solid", _("menu.present.captions.solid")),
+                ("soft", _("menu.present.captions.soft")),
+                ("faint", _("menu.present.captions.faint"))):
+            act = opacities.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.settings.present_caption_opacity == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_present_choice(
+                    "present_caption_opacity", v))
+            group.addAction(act)
+        self.present_screen_action = present.addAction(
+            _("menu.present.screen"), self._edit_present_screen)
+        self.present_screen_action.setToolTip(
+            _("menu.present.screen.tooltip"))
+        present.addSeparator()
+        # Off at every launch, deliberately: a port is opened by a
+        # person, on the day, never by a remembered preference.
+        self.streamer = None
+        self.present_stream_action = present.addAction(
+            _("menu.present.stream"))
+        self.present_stream_action.setToolTip(
+            _("menu.present.stream.tooltip"))
+        self.present_stream_action.setCheckable(True)
+        self.present_stream_action.toggled.connect(self._toggle_stream)
+        # For streamers who build their own titles in OBS: the wire
+        # carries the bare picture while the projector stays dressed.
+        self.present_stream_clean_action = present.addAction(
+            _("menu.present.stream_clean"))
+        self.present_stream_clean_action.setToolTip(
+            _("menu.present.stream_clean.tooltip"))
+        self.present_stream_clean_action.setCheckable(True)
+        self.present_stream_clean_action.setChecked(
+            self.settings.present_stream_clean)
+        self.present_stream_clean_action.toggled.connect(
+            lambda on: self._set_present("present_stream_clean", on))
+
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
         self.waiting.synthetic.setVisible(self._allow_synthetic)
@@ -384,6 +506,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view = LiveView()
         self.view.region_drawn.connect(self._on_custom_region)
         self.view.balance_region_drawn.connect(self._on_balance_region)
+        self.view.pointed.connect(self._on_pointed)
         self.histogram = Histogram()
         self.focus = FocusGroup()
         self.focus.peaking_toggled.connect(self._on_peaking)
@@ -2627,6 +2750,217 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.save()
         self._say_if_no_scale(on)
 
+    # ---- the presentation window ----------------------------------------
+
+    def _toggle_present(self, on: bool) -> None:
+        """Open or close the audience's window. Built on first use, and
+        reopened where it last sat, because at an event the second
+        screen is the same projector all day."""
+        if on:
+            if self.present_window is None:
+                self.present_window = PresentWindow()
+                self.present_window.closed.connect(self._present_closed)
+                self.present_window.held_changed.connect(
+                    self.present_hold_action.setChecked)
+                if self.settings.present_geometry:
+                    self.present_window.restoreGeometry(
+                        QtCore.QByteArray.fromHex(
+                            self.settings.present_geometry.encode("ascii")))
+                else:
+                    # Never placed before, and there is a second screen:
+                    # that screen is what this window is for, so start
+                    # there rather than making somebody drag it across.
+                    primary = QtWidgets.QApplication.primaryScreen()
+                    other = next(
+                        (s for s in QtWidgets.QApplication.screens()
+                         if s is not primary), None)
+                    if other is not None:
+                        frame = self.present_window.frameGeometry()
+                        frame.moveCenter(other.geometry().center())
+                        self.present_window.move(frame.topLeft())
+            self.present_window.show()
+            self.present_window.raise_()
+            self.present_hold_action.setEnabled(True)
+            if self.settings.present_scale_bar:
+                self._say_if_no_scale(True)
+        elif self.present_window is not None:
+            self.present_window.close()
+
+    def _present_closed(self) -> None:
+        """The window says it closed, however that happened -- its own
+        close button included -- and the menu follows the truth."""
+        w = self.present_window
+        if w is not None:
+            self.settings.present_geometry = bytes(
+                w.saveGeometry().toHex()).decode("ascii")
+            self.settings.save()
+        self.present_action.setChecked(False)
+        self.present_hold_action.setChecked(False)
+        self.present_hold_action.setEnabled(False)
+
+    def _hold_present(self, on: bool) -> None:
+        if self.present_window is not None:
+            self.present_window.set_held(on)
+        if self.streamer is not None:
+            self.streamer.set_held(on)
+
+    def _on_pointed(self, at: tuple) -> None:
+        """Ctrl+click on the operator's preview: a ring blooms at the
+        same spot on every audience face. The pointer that works over a
+        stream, where a finger at the projector cannot reach."""
+        fx, fy = at
+        if self.present_window is not None and self.present_window.isVisible():
+            self.present_window.view.set_pointer(fx, fy)
+        if self.streamer is not None and self.streamer.wants_frames():
+            self.streamer.pointer(fx, fy)
+
+    def _toggle_stream(self, on: bool) -> None:
+        """Serve the presentation on the LAN, or stop. The address is
+        said out loud when it starts: a port this program opened must
+        never be something the operator has to discover."""
+        if not on:
+            if self.streamer is not None:
+                self.streamer.stop()
+                self.streamer = None
+            # The address was a claim about the present tense, so it
+            # comes down with the server -- but only if it is still the
+            # note being shown, because something newer may have said
+            # something more important since.
+            if self.strip._note == getattr(self, "_stream_note", None):
+                self.strip.set_note("")
+            return
+        from .stream import Streamer
+        try:
+            self.streamer = Streamer(self.settings.present_stream_port,
+                                     parent=self)
+        except OSError:
+            self.streamer = None
+            self.strip.set_note(_("note.present.stream.failed",
+                                  port=self.settings.present_stream_port))
+            self.present_stream_action.setChecked(False)
+            return
+        if self.present_hold_action.isChecked():
+            self.streamer.set_held(True)
+        self._stream_note = _("note.present.stream", url=self.streamer.url)
+        self.strip.set_note(self._stream_note)
+
+    def _set_present_choice(self, attr: str, value: str) -> None:
+        setattr(self.settings, attr, value)
+        self.settings.save()
+
+    def _edit_present_screen(self) -> None:
+        dialog = ScreenDialog(self.settings, self)
+        dialog.setStyleSheet(theme.stylesheet())
+        dialog.exec()
+
+    def _set_present(self, attr: str, on: bool) -> None:
+        setattr(self.settings, attr, bool(on))
+        self.settings.save()
+        if attr == "present_scale_bar" and on:
+            self._say_if_no_scale(True)
+
+    def _edit_present_header(self) -> None:
+        dialog = HeaderDialog(self.settings, self)
+        dialog.setStyleSheet(theme.stylesheet())
+        if dialog.exec():
+            # The dialog decides whether there is a header to show; the
+            # menu's check mark follows it rather than remembering.
+            self.present_header_action.setChecked(self.settings.present_header)
+
+    def _offer_present(self, s: LiveSignals) -> None:
+        """Mirror the frame and its captions to the presentation window.
+
+        Shielded the way the live bar is: a fault on this face must not
+        take the operator's own preview with it. The audience's window
+        closing is a mishap; the viewfinder going black is not allowed.
+        """
+        w = self.present_window
+        window_up = w is not None and w.isVisible()
+        streaming = self.streamer is not None and self.streamer.wants_frames()
+        if not window_up:
+            UI_METER.skip("presentation")
+        if not streaming:
+            UI_METER.skip("stream")
+        if not window_up and not streaming:
+            return
+        try:
+            st = self.settings
+            # The scale travels whether or not a bar is drawn from it:
+            # the on-screen magnification reads it too.
+            um = self._preview_um_per_px(s.preview.shape[1])
+            # The photograph's opacity, not the live view's: on the
+            # operator's screen the bar is a reminder under the work,
+            # on the audience's it is one of the two answers the window
+            # exists to give.
+            bar = st.bar_style() if st.present_scale_bar and um else None
+            subject = (self.subject.subject, self.subject.slide_note) \
+                if st.present_subject else ("", "")
+            header = (st.present_header_title, st.present_header_subtitle) \
+                if st.present_header else ("", "")
+            views = ([w.view] if window_up else []) \
+                + ([self.streamer.view] if streaming else [])
+            for view in views:
+                # The clean feed: a bare picture for streamers who build
+                # their own titles in OBS, while the projector next to
+                # the microscope keeps its captions.
+                clean = (streaming and view is self.streamer.view
+                         and st.present_stream_clean)
+                view.set_scale(um)
+                view.set_bar(None if clean else bar)
+                view.set_fill(st.present_fill)
+                view.set_caption_size(st.present_caption_size)
+                view.set_caption_opacity(st.present_caption_opacity)
+                view.set_magnification(
+                    "" if clean else self._present_magnification())
+                view.set_subject(*(("", "") if clean else subject))
+                view.set_header(*(("", "") if clean else header))
+                view.set_live(False if clean else st.present_live)
+            if window_up:
+                # Only the window's screen is measurable; the stream is
+                # watched on screens nobody here can measure, and its
+                # view is never told otherwise.
+                w.view.set_screen_scale(self._present_screen_scale(w))
+                w.set_frame(s.preview)
+            if streaming:
+                self.streamer.frame(s.preview)
+        except Exception:
+            _log.exception("the presentation window failed and was closed")
+            if w is not None:
+                w.close()
+            self.present_stream_action.setChecked(False)
+
+    def _present_screen_scale(self, w) -> float | None:
+        """Millimetres one of the presentation window's pixels covers on
+        the screen it is actually on, from the operator's measurement.
+        Asked per frame because the window can be dragged between
+        screens with different geometries mid-session."""
+        width_cm = screen_width_cm(self.settings)
+        screen = w.screen() if width_cm > 0 else None
+        if screen is None:
+            return None
+        px = screen.geometry().width() * screen.devicePixelRatio()
+        return (width_cm * 10.0 / px) if px else None
+
+    def _present_magnification(self) -> str:
+        """What the audience is told: one optical figure, carrying the
+        same doubt marker the rail does, because a doubted number must
+        not grow more confident by being projected. The numerical
+        aperture stays on the operator's side of the table."""
+        if not self.settings.present_magnification or self.setup is None:
+            return ""
+        suffix = _("objective.uncertain") if self.objective.uncertain else ""
+        total = self.setup.total_magnification
+        # Whole numbers: a 6.3x objective through a 1.2x changer is
+        # 7.56x on paper, and nobody at a table says "seven point five
+        # six". The precise figure still drives every measurement; this
+        # is the spoken form.
+        if total:
+            return f"{total:.0f}×{suffix}"
+        obj = self.setup.scope.turret.objective
+        if obj:
+            return f"{obj.magnification:.0f}×{suffix}"
+        return ""
+
     def _preview_um_per_px(self, preview_width: int) -> float | None:
         """Micrometres per pixel *of the preview*, not of a capture.
 
@@ -2829,6 +3163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # on, which is the honest place to charge it.
         self._offer_scale_bar(s.preview.shape[1])
         self.view.set_frame(s.preview, s.peaking)
+        self._offer_present(s)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.
@@ -3006,6 +3341,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._seal_tile_stack()
             except Exception:
                 pass               # closing must never be blocked
+        # Reached from Ctrl-C too, which never passes through closeEvent,
+        # and an open presentation window would keep the process alive.
+        if self.present_window is not None:
+            self.present_window.close()
+        if self.streamer is not None:
+            self.streamer.stop()
+            self.streamer = None
         self.timelapse.stop()
         self.session.stop()
         self.pipeline.stop()
@@ -3077,6 +3419,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 event.ignore()
                 return
             _log.warning("closing while still running: %s", ", ".join(busy))
+        # The audience's window follows the operator's. Left open it
+        # would keep the application alive headless, because Qt only
+        # quits when the last window closes.
+        if self.present_window is not None:
+            self.present_window.close()
         # `shutdown` waits for the write queue, and is reached from here
         # and from Ctrl-C both.
         self.shutdown()

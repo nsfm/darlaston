@@ -915,6 +915,13 @@ class ObjectiveStepper(QtWidgets.QWidget):
         self._uncertain = uncertain
         self._refresh()
 
+    @property
+    def uncertain(self) -> bool:
+        """Whether the shown objective is currently in doubt. Read by the
+        presentation window, which must not state a doubted number more
+        confidently than the rail does."""
+        return self._uncertain
+
     def _step(self, delta: int) -> None:
         if self._turret is None:
             return

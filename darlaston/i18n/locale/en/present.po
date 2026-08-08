@@ -1,0 +1,56 @@
+# The presentation window: the live view again, for an audience.
+
+msgid "present.title"
+msgstr "Presentation"
+
+#. The mark that says the picture is happening now. Kept to one word:
+#. it is read across a room, next to a small pulsing dot. While the
+#. operator holds the picture the corner simply goes quiet -- the
+#. claim comes down, and a deliberate freeze needs no apology.
+msgid "present.live"
+msgstr "live"
+
+#. The screen size dialog.
+msgid "present.screen.title"
+msgstr "Screen size"
+
+msgid "present.screen.explain"
+msgstr ""
+"Measure how wide the picture is on the audience's screen, edge to "
+"edge. With that the window can say how large things really appear "
+"there, which is the honest answer to what magnification is this: it "
+"depends on the size of the screen showing it."
+
+msgid "present.screen.width"
+msgstr "Width of the picture"
+
+#. Units the measurement may be taken in, as a tape measure or a
+#. screen's box would quote them.
+msgid "present.screen.unit.cm"
+msgstr "cm"
+
+msgid "present.screen.unit.in"
+msgstr "in"
+
+msgid "present.screen.unit.m"
+msgstr "m"
+
+msgid "present.screen.unit.ft"
+msgstr "ft"
+
+#. The header dialog: two free lines of the operator's own, shown in
+#. the top corner of the presentation window.
+msgid "present.header.title"
+msgstr "Header"
+
+msgid "present.header.explain"
+msgstr ""
+"Two lines of your own, shown in the top corner of the presentation "
+"window. A society name and its website, or a note about what is on "
+"the stage."
+
+msgid "present.header.first"
+msgstr "First line"
+
+msgid "present.header.second"
+msgstr "Second line"

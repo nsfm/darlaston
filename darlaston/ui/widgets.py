@@ -1,6 +1,8 @@
 """Small painted widgets. Qt lives here and nowhere below it."""
 from __future__ import annotations
 
+import time
+
 import cv2
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -24,6 +26,42 @@ BG_TEXT = QtGui.QColor("#101210")
 #: "the preview" and "the slide map" can be compared against "peaking"
 #: rather than each being a separate mystery.
 UI_METER = Meter()
+
+#: How long the presenter's ring lives, in seconds.
+POINTER_S = 2.0
+
+
+def draw_pointer(p: QtGui.QPainter, target: QtCore.QRect,
+                 at: tuple[float, float], age: float) -> bool:
+    """The presenter's ring: blooms outward from where they pointed and
+    fades as it goes. Returns False once it has nothing left to draw.
+
+    `at` is a fraction of `target` each way. Stroked twice, dark under
+    brass, because it lands on brightfield and darkfield alike -- the
+    same reason the framing guides are drawn twice.
+    """
+    if age < 0 or age > POINTER_S:
+        return False
+    t = age / POINTER_S
+    ease = 1.0 - (1.0 - t) ** 2
+    span = min(target.width(), target.height())
+    radius = (0.03 + 0.11 * ease) * span
+    fade = 1.0 - t
+    cx = target.x() + at[0] * target.width()
+    cy = target.y() + at[1] * target.height()
+    p.save()
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    stroke = max(2.0, span * 0.006)
+    for colour, width, alpha in ((QtGui.QColor(16, 18, 16), stroke * 2.2,
+                                  0.4 * fade),
+                                 (BRASS, stroke, fade)):
+        ink = QtGui.QColor(colour)
+        ink.setAlphaF(alpha)
+        p.setPen(QtGui.QPen(ink, width))
+        p.drawEllipse(QtCore.QPointF(cx, cy), radius, radius)
+    p.restore()
+    return True
 
 
 class ScaleBarOverlay(QtWidgets.QWidget):
@@ -59,8 +97,17 @@ class ScaleBarOverlay(QtWidgets.QWidget):
         self._key = None
         self._tile: QtGui.QImage | None = None
         self._tile_buf = None
+        self._mark: QtCore.QRect | None = None
         self._at = (0, 0)
         self.hide()
+
+    def mark_rect(self) -> QtCore.QRect | None:
+        """The drawn mark's tight box, in the parent's coordinates, or
+        None while nothing is shown. For anything laying other furniture
+        against the bar: the widget's own edges include padding."""
+        if self._mark is None or self.isHidden():
+            return None
+        return self._mark.translated(self.geometry().topLeft())
 
     def set_scale(self, um_per_px, style) -> None:
         """What the bar should say, restated as often as the caller likes.
@@ -76,6 +123,7 @@ class ScaleBarOverlay(QtWidgets.QWidget):
         self._key = None
         if bar is None:
             self._tile = None
+            self._mark = None
             self.hide()
 
     def place(self, target: QtCore.QRect, src_width: int, is_light) -> None:
@@ -126,6 +174,15 @@ class ScaleBarOverlay(QtWidgets.QWidget):
         self._tile = QtGui.QImage(
             self._tile_buf.data, w, h, 4 * w,
             QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+        # Where the mark actually is, tight, from its own alpha. The tile
+        # carries padding, so the widget's edges say nothing about the
+        # rule's -- and the presentation window aligns type to the rule,
+        # not to the padding. Once per render, over a few hundred pixels.
+        ys, xs = np.nonzero(self._tile_buf[..., 3])
+        self._mark = (QtCore.QRect(int(xs.min()), int(ys.min()),
+                                   int(xs.max() - xs.min() + 1),
+                                   int(ys.max() - ys.min() + 1))
+                      if xs.size else None)
         self._at = (x0, y0)
         self._move(target)
         self.show()
@@ -152,6 +209,10 @@ class LiveView(QtWidgets.QWidget):
 
     #: Normalised (x, y, w, h) the operator dragged out on the image.
     region_drawn = QtCore.Signal(tuple)
+    #: Normalised (x, y) the operator pointed at with Ctrl held: "look
+    #: here", for the presentation faces. The chord is the verb -- plain
+    #: click and drag keep meaning focus region and balance.
+    pointed = QtCore.Signal(tuple)
     #: A box dragged while the white balance is armed. Separate from
     #: `region_drawn` because they mean opposite things: focus assist is
     #: aimed at the subject, and a balance has to be taken off something
@@ -543,6 +604,12 @@ class LiveView(QtWidgets.QWidget):
 
             self._draw_guides(p, target)
 
+            pointer = getattr(self, "_pointer", None)
+            if pointer is not None:
+                at, t0 = pointer
+                if not draw_pointer(p, target, at, time.monotonic() - t0):
+                    self._pointer = None
+
             # The measured region, drawn so it is never a mystery what the focus
             # number refers to.
             if self._focus_rect is not None:
@@ -595,10 +662,25 @@ class LiveView(QtWidgets.QWidget):
     # ---- drawing a region ------------------------------------------------
 
     def mousePressEvent(self, e) -> None:
-        if self._image is not None:
-            self._drag_from = e.position()
-            self._drag_to = e.position()
-            self.update()
+        if self._image is None:
+            return
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+            # "Look here." Shown on this view too, because the surface
+            # it is really for -- the presentation -- usually faces away
+            # from the person pointing.
+            target = getattr(self, "_image_at", None) or \
+                self._fit(self._image.size())
+            if target.width() and target.height():
+                nx = (e.position().x() - target.x()) / target.width()
+                ny = (e.position().y() - target.y()) / target.height()
+                nx, ny = min(max(nx, 0.0), 1.0), min(max(ny, 0.0), 1.0)
+                self._pointer = ((nx, ny), time.monotonic())
+                self.pointed.emit((nx, ny))
+                self.update()
+            return
+        self._drag_from = e.position()
+        self._drag_to = e.position()
+        self.update()
 
     def mouseMoveEvent(self, e) -> None:
         if self._drag_from is not None:

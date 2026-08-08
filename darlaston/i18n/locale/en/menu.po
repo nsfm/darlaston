@@ -105,6 +105,131 @@ msgstr "Make a plate…"
 msgid "menu.darkroom.arrange"
 msgstr "Arrange specimens…"
 
+#. Present: the session again, facing the audience. A second window that
+#. mirrors the live view for a screen other people watch.
+msgid "menu.present"
+msgstr "Present"
+
+msgid "menu.present.window"
+msgstr "Presentation window"
+
+msgid "menu.present.window.tooltip"
+msgstr ""
+"A second window that shows only the picture.\n"
+"Drag it to a screen the audience can see, and double click it to fill "
+"the screen."
+
+#. The overlays. Each answers something a visitor at an event asks.
+msgid "menu.present.scale_bar"
+msgstr "Scale bar"
+
+msgid "menu.present.scale_bar.tooltip"
+msgstr ""
+"Draw the scale bar on the presentation, in the style chosen under "
+"Capture.\n"
+"It answers the first question every audience asks: how big is that?"
+
+msgid "menu.present.magnification"
+msgstr "Magnification"
+
+msgid "menu.present.magnification.tooltip"
+msgstr "Show the magnification in the corner of the presentation."
+
+msgid "menu.present.subject"
+msgstr "Slide subject"
+
+msgid "menu.present.subject.tooltip"
+msgstr "Show what is on the slide, as typed in the subject boxes."
+
+msgid "menu.present.live"
+msgstr "Live marker"
+
+msgid "menu.present.live.tooltip"
+msgstr ""
+"Mark the picture as happening right now.\n"
+"It goes out by itself if the feed stops, so it never marks a frozen "
+"frame as live."
+
+msgid "menu.present.header"
+msgstr "Header"
+
+msgid "menu.present.header.tooltip"
+msgstr ""
+"Show your own two lines in the top corner.\n"
+"A society name and its website, or a note about the exhibit."
+
+msgid "menu.present.header_text"
+msgstr "Set the header…"
+
+#. Holding is a moment, not a preference: it freezes the audience's
+#. picture while a slide is swapped. Space on the window does the same.
+msgid "menu.present.hold"
+msgstr "Hold the picture"
+
+msgid "menu.present.hold.tooltip"
+msgstr ""
+"Freeze the presentation on the current field while you change slides.\n"
+"Space on the presentation window does the same thing."
+
+msgid "menu.present.fill"
+msgstr "Crop to fill"
+
+msgid "menu.present.fill.tooltip"
+msgstr ""
+"Let the picture fill the whole screen, cropping the frame's edges,\n"
+"instead of keeping every pixel and living with black bars."
+
+msgid "menu.present.captions.size"
+msgstr "Caption size"
+
+msgid "menu.present.captions.small"
+msgstr "Small"
+
+msgid "menu.present.captions.normal"
+msgstr "Normal"
+
+msgid "menu.present.captions.large"
+msgstr "Large"
+
+msgid "menu.present.captions.opacity"
+msgstr "Caption opacity"
+
+msgid "menu.present.captions.solid"
+msgstr "Solid"
+
+msgid "menu.present.captions.soft"
+msgstr "Soft"
+
+msgid "menu.present.captions.faint"
+msgstr "Faint"
+
+msgid "menu.present.screen"
+msgstr "Screen size…"
+
+msgid "menu.present.screen.tooltip"
+msgstr ""
+"Tell the window how wide the audience's picture really is,\n"
+"and it can say how large things appear on that screen."
+
+#. A network service, so it is off at every launch and the address is
+#. announced when it starts.
+msgid "menu.present.stream"
+msgstr "Stream to the network"
+
+msgid "menu.present.stream.tooltip"
+msgstr ""
+"Stream the presentation live on your local network.\n"
+"OBS reads it as a browser or media source, and any browser on the "
+"network can simply open the address."
+
+msgid "menu.present.stream_clean"
+msgstr "Hide overlays from the stream"
+
+msgid "menu.present.stream_clean.tooltip"
+msgstr ""
+"Send the bare picture, for building your own titles in OBS.\n"
+"The presentation window keeps its captions either way."
+
 #. A toggle and a window, the same shape as white balance above it. In
 #. Capture rather than in Files, because Files is about where photographs
 #. go and this is about what is on them.

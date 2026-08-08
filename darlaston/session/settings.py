@@ -320,6 +320,63 @@ class Settings:
     #: which is four; more is available for anyone who would rather spend
     #: the machine than the milliseconds.
     cpu_threads: int = 0
+    #: The presentation window's overlays. Each answers something a
+    #: visitor at an event actually asks, and each is separate because a
+    #: table at a society meeting and a screen in a hallway want
+    #: different amounts said. The scale bar and the magnification are on
+    #: by default: "how big is that" and "what magnification is this" are
+    #: the two questions every audience opens with.
+    present_scale_bar: bool = True
+    present_magnification: bool = True
+    #: What is on the slide, as typed in the rail. On by default because
+    #: it costs nothing when the boxes are empty and is exactly the label
+    #: a passer-by needs when they are not.
+    present_subject: bool = True
+    #: The operator's own two lines, top left: a society name and its
+    #: website, an exhibit note, whatever the table wants said. The text
+    #: is kept even while the toggle is off, so hiding it for a moment
+    #: does not mean retyping it.
+    present_header: bool = False
+    present_header_title: str = ""
+    present_header_subtitle: str = ""
+    #: A small mark that says the picture is happening now. Off by
+    #: default; it earns its place at events, where a live microscope
+    #: is routinely mistaken for a looping video.
+    present_live: bool = False
+    #: Crop the frame to fill the presentation window rather than
+    #: letterboxing it. Projectors are wider than the sensor, and two
+    #: black bars are a lot of screen to spend on the frame's edges.
+    present_fill: bool = False
+    #: Caption type scale and ink opacity: small | normal | large, and
+    #: solid | soft | faint. A tabletop monitor and a hall projector are
+    #: read from different distances, and how far the words may sink
+    #: into the picture is taste.
+    present_caption_size: str = "normal"
+    present_caption_opacity: str = "solid"
+    #: The measured width of the audience's picture, in whichever unit
+    #: it was taken -- projector screens are quoted in feet or metres,
+    #: desktop displays in inches or centimetres. Zero means unmeasured.
+    #: With it the window can state how large things really appear on
+    #: that screen, which is the honest answer to "what magnification
+    #: is this" -- the figure depends on the screen, which is exactly
+    #: the explanation operators keep giving.
+    present_screen_width: float = 0.0
+    present_screen_unit: str = "cm"  # cm | in | m | ft
+    #: Where the network stream listens when it is turned on. The
+    #: switch itself is deliberately not remembered: a program used on
+    #: an institution's network must never open a port because of what
+    #: happened last week. Turning it on is one menu click, per session,
+    #: on purpose.
+    present_stream_port: int = 8089
+    #: Send the stream bare, with no captions, for streamers who build
+    #: their own titles in OBS. The projector keeps its captions either
+    #: way; this describes only the wire.
+    present_stream_clean: bool = False
+    #: Where the presentation window last sat, as Qt geometry bytes in
+    #: hex. At an event the second screen is the same projector all day,
+    #: and a window that reopens on it is one less thing to arrange in
+    #: front of an audience.
+    present_geometry: str = ""
 
     def __post_init__(self) -> None:
         if not self.capture_root:
