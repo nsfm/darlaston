@@ -68,7 +68,7 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .present import HeaderDialog, PresentWindow
+from .present import HeaderDialog, PresentWindow, ScreenDialog
 from .widgets import (UI_METER, BalanceSwatch, FocusGroup, Histogram,
                       LiveView, SaveGauge, ValueBar)
 
@@ -388,6 +388,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.present_action.setToolTip(_("menu.present.window.tooltip"))
         self.present_action.setCheckable(True)
         self.present_action.toggled.connect(self._toggle_present)
+        # Holding is a moment, not a preference: it lives on the window
+        # itself (space) and here for when the operator's focus is on
+        # this window. Only meaningful while the other one exists.
+        self.present_hold_action = present.addAction(_("menu.present.hold"))
+        self.present_hold_action.setToolTip(_("menu.present.hold.tooltip"))
+        self.present_hold_action.setCheckable(True)
+        self.present_hold_action.setEnabled(False)
+        self.present_hold_action.toggled.connect(self._hold_present)
         present.addSeparator()
         self.present_bar_action = present.addAction(
             _("menu.present.scale_bar"))
@@ -419,6 +427,47 @@ class MainWindow(QtWidgets.QMainWindow):
             action.toggled.connect(lambda on, a=attr: self._set_present(a, on))
         present.addAction(_("menu.present.header_text"),
                           self._edit_present_header)
+        present.addSeparator()
+        # How the audience's screen is used: the frame's shape or the
+        # screen's, how large the words are, how solidly they sit.
+        self.present_fill_action = present.addAction(_("menu.present.fill"))
+        self.present_fill_action.setToolTip(_("menu.present.fill.tooltip"))
+        self.present_fill_action.setCheckable(True)
+        self.present_fill_action.setChecked(self.settings.present_fill)
+        self.present_fill_action.toggled.connect(
+            lambda on: self._set_present("present_fill", on))
+        sizes = present.addMenu(_("menu.present.captions.size"))
+        group = QtGui.QActionGroup(self)
+        group.setExclusive(True)
+        for value, label in (
+                ("small", _("menu.present.captions.small")),
+                ("normal", _("menu.present.captions.normal")),
+                ("large", _("menu.present.captions.large"))):
+            act = sizes.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.settings.present_caption_size == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_present_choice(
+                    "present_caption_size", v))
+            group.addAction(act)
+        opacities = present.addMenu(_("menu.present.captions.opacity"))
+        group = QtGui.QActionGroup(self)
+        group.setExclusive(True)
+        for value, label in (
+                ("solid", _("menu.present.captions.solid")),
+                ("soft", _("menu.present.captions.soft")),
+                ("faint", _("menu.present.captions.faint"))):
+            act = opacities.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.settings.present_caption_opacity == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_present_choice(
+                    "present_caption_opacity", v))
+            group.addAction(act)
+        self.present_screen_action = present.addAction(
+            _("menu.present.screen"), self._edit_present_screen)
+        self.present_screen_action.setToolTip(
+            _("menu.present.screen.tooltip"))
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -2681,12 +2730,27 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.present_window is None:
                 self.present_window = PresentWindow()
                 self.present_window.closed.connect(self._present_closed)
+                self.present_window.held_changed.connect(
+                    self.present_hold_action.setChecked)
                 if self.settings.present_geometry:
                     self.present_window.restoreGeometry(
                         QtCore.QByteArray.fromHex(
                             self.settings.present_geometry.encode("ascii")))
+                else:
+                    # Never placed before, and there is a second screen:
+                    # that screen is what this window is for, so start
+                    # there rather than making somebody drag it across.
+                    primary = QtWidgets.QApplication.primaryScreen()
+                    other = next(
+                        (s for s in QtWidgets.QApplication.screens()
+                         if s is not primary), None)
+                    if other is not None:
+                        frame = self.present_window.frameGeometry()
+                        frame.moveCenter(other.geometry().center())
+                        self.present_window.move(frame.topLeft())
             self.present_window.show()
             self.present_window.raise_()
+            self.present_hold_action.setEnabled(True)
             if self.settings.present_scale_bar:
                 self._say_if_no_scale(True)
         elif self.present_window is not None:
@@ -2701,6 +2765,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 w.saveGeometry().toHex()).decode("ascii")
             self.settings.save()
         self.present_action.setChecked(False)
+        self.present_hold_action.setChecked(False)
+        self.present_hold_action.setEnabled(False)
+
+    def _hold_present(self, on: bool) -> None:
+        if self.present_window is not None:
+            self.present_window.set_held(on)
+
+    def _set_present_choice(self, attr: str, value: str) -> None:
+        setattr(self.settings, attr, value)
+        self.settings.save()
+
+    def _edit_present_screen(self) -> None:
+        dialog = ScreenDialog(self.settings, self)
+        dialog.setStyleSheet(theme.stylesheet())
+        dialog.exec()
 
     def _set_present(self, attr: str, on: bool) -> None:
         setattr(self.settings, attr, bool(on))
@@ -2729,14 +2808,20 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             st = self.settings
-            um = (self._preview_um_per_px(s.preview.shape[1])
-                  if st.present_scale_bar else None)
+            # The scale travels whether or not a bar is drawn from it:
+            # the on-screen magnification reads it too.
+            um = self._preview_um_per_px(s.preview.shape[1])
+            w.view.set_scale(um)
             # The photograph's opacity, not the live view's: on the
             # operator's screen the bar is a reminder under the work,
             # on the audience's it is one of the two answers the window
             # exists to give.
-            w.view.set_scale_bar(um, self.settings.bar_style() if um
-                                 else None)
+            w.view.set_bar(st.bar_style() if st.present_scale_bar and um
+                           else None)
+            w.view.set_screen_scale(self._present_screen_scale(w))
+            w.view.set_fill(st.present_fill)
+            w.view.set_caption_size(st.present_caption_size)
+            w.view.set_caption_opacity(st.present_caption_opacity)
             w.view.set_magnification(*self._present_magnification())
             subject = (self.subject.subject, self.subject.slide_note) \
                 if st.present_subject else ("", "")
@@ -2749,6 +2834,18 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             _log.exception("the presentation window failed and was closed")
             w.close()
+
+    def _present_screen_scale(self, w) -> float | None:
+        """Millimetres one of the presentation window's pixels covers on
+        the screen it is actually on, from the operator's measurement.
+        Asked per frame because the window can be dragged between
+        screens with different geometries mid-session."""
+        width_cm = self.settings.present_screen_width_cm
+        screen = w.screen() if width_cm > 0 else None
+        if screen is None:
+            return None
+        px = screen.geometry().width() * screen.devicePixelRatio()
+        return (width_cm * 10.0 / px) if px else None
 
     def _present_magnification(self) -> tuple[str, str]:
         """What the audience is told: the total onto the sensor, with

@@ -6,7 +6,31 @@ msgstr "Presentation"
 #. The mark that says the picture is happening now. Kept to one word:
 #. it is read across a room, next to a small pulsing dot.
 msgid "present.live"
-msgstr "Live"
+msgstr "live"
+
+#. What replaces it while the operator holds the picture. Also one
+#. word, so a deliberate freeze never reads as a fault.
+msgid "present.held"
+msgstr "held"
+
+#. The headline magnification once the audience's screen has been
+#. measured. {mag} is already formatted, e.g. "1,900×".
+msgid "present.mag.screen"
+msgstr "{mag} on this screen"
+
+#. The screen size dialog.
+msgid "present.screen.title"
+msgstr "Screen size"
+
+msgid "present.screen.explain"
+msgstr ""
+"Measure how wide the picture is on the audience's screen, edge to "
+"edge, in centimetres. With that the window can say how large things "
+"really appear there, which is the honest answer to what magnification "
+"is this: it depends on the size of the screen showing it."
+
+msgid "present.screen.width"
+msgstr "Width in centimetres"
 
 #. The header dialog: two free lines of the operator's own, shown in
 #. the top corner of the presentation window.

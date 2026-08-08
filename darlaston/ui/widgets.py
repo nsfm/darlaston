@@ -59,8 +59,17 @@ class ScaleBarOverlay(QtWidgets.QWidget):
         self._key = None
         self._tile: QtGui.QImage | None = None
         self._tile_buf = None
+        self._mark: QtCore.QRect | None = None
         self._at = (0, 0)
         self.hide()
+
+    def mark_rect(self) -> QtCore.QRect | None:
+        """The drawn mark's tight box, in the parent's coordinates, or
+        None while nothing is shown. For anything laying other furniture
+        against the bar: the widget's own edges include padding."""
+        if self._mark is None or self.isHidden():
+            return None
+        return self._mark.translated(self.geometry().topLeft())
 
     def set_scale(self, um_per_px, style) -> None:
         """What the bar should say, restated as often as the caller likes.
@@ -76,6 +85,7 @@ class ScaleBarOverlay(QtWidgets.QWidget):
         self._key = None
         if bar is None:
             self._tile = None
+            self._mark = None
             self.hide()
 
     def place(self, target: QtCore.QRect, src_width: int, is_light) -> None:
@@ -126,6 +136,15 @@ class ScaleBarOverlay(QtWidgets.QWidget):
         self._tile = QtGui.QImage(
             self._tile_buf.data, w, h, 4 * w,
             QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+        # Where the mark actually is, tight, from its own alpha. The tile
+        # carries padding, so the widget's edges say nothing about the
+        # rule's -- and the presentation window aligns type to the rule,
+        # not to the padding. Once per render, over a few hundred pixels.
+        ys, xs = np.nonzero(self._tile_buf[..., 3])
+        self._mark = (QtCore.QRect(int(xs.min()), int(ys.min()),
+                                   int(xs.max() - xs.min() + 1),
+                                   int(ys.max() - ys.min() + 1))
+                      if xs.size else None)
         self._at = (x0, y0)
         self._move(target)
         self.show()

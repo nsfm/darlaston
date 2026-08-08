@@ -343,6 +343,22 @@ class Settings:
     #: default; it earns its place at events, where a live microscope
     #: is routinely mistaken for a looping video.
     present_live: bool = False
+    #: Crop the frame to fill the presentation window rather than
+    #: letterboxing it. Projectors are wider than the sensor, and two
+    #: black bars are a lot of screen to spend on the frame's edges.
+    present_fill: bool = False
+    #: Caption type scale and ink opacity: small | normal | large, and
+    #: solid | soft | faint. A tabletop monitor and a hall projector are
+    #: read from different distances, and how far the words may sink
+    #: into the picture is taste.
+    present_caption_size: str = "normal"
+    present_caption_opacity: str = "solid"
+    #: The measured width of the audience's picture, in centimetres.
+    #: Zero means unmeasured. With it the window can state how large
+    #: things really appear on that screen, which is the honest answer
+    #: to "what magnification is this" -- the figure depends on the
+    #: screen, which is exactly the explanation operators keep giving.
+    present_screen_width_cm: float = 0.0
     #: Where the presentation window last sat, as Qt geometry bytes in
     #: hex. At an event the second screen is the same projector all day,
     #: and a window that reopens on it is one less thing to arrange in

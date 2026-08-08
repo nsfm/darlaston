@@ -63,11 +63,16 @@ def test_darkroom_never_touches_the_camera(win):
 
 
 def test_present_faces_the_audience(win):
-    """The window itself, then what it says, then the operator's own
-    words. Nothing in this menu touches the camera or the files."""
+    """The window and its moment-to-moment control, then what it says,
+    then the operator's own words, then how the screen is used. Nothing
+    in this menu touches the camera or the files."""
     assert entries(win, "Present") == [
-        "Presentation window", "Scale bar", "Magnification",
-        "Slide subject", "Live marker", "Header", "Set the header…"]
+        "Presentation window", "Hold the picture", "Scale bar",
+        "Magnification", "Slide subject", "Live marker", "Header",
+        "Set the header…", "Crop to fill", "Caption size",
+        "Caption opacity", "Screen size…"]
+    # Holding means nothing while there is no audience window.
+    assert not win.present_hold_action.isEnabled()
 
 
 def test_ellipsis_means_a_further_choice_follows(win):

@@ -14,7 +14,8 @@ import pytest
 from PySide6 import QtCore, QtGui, QtTest
 
 from darlaston.session.settings import Settings
-from darlaston.ui.present import HeaderDialog, PresentView, PresentWindow
+from darlaston.ui.present import (HeaderDialog, PresentView, PresentWindow,
+                                  ScreenDialog)
 
 
 def _frame(level: int, w: int = 600, h: int = 400) -> np.ndarray:
@@ -55,7 +56,8 @@ def test_the_picture_is_never_decorated_in_the_buffer(qapp):
     the photograph, so nothing here can ever leak into a capture path."""
     view = PresentView()
     view.resize(600, 400)
-    view.set_scale_bar(2.0, Settings().bar_style())
+    view.set_scale(2.0)
+    view.set_bar(Settings().bar_style())
     view.set_header("San Francisco Microscopical Society",
                     "sfmicrosociety.org")
     view.set_frame(_frame(120))
@@ -157,7 +159,164 @@ def test_the_corner_is_not_re_read_every_frame(qapp):
     assert view._corner_light("tl") is False
 
 
+def test_fill_uses_every_pixel_and_keeps_the_scale_honest(qapp):
+    """Crop to fill shows a crop, so the width the bar converts against
+    must be the crop's -- a bar honest about pixels nobody is seeing
+    would be the one lie this window cannot tell."""
+    view = PresentView()
+    view.resize(600, 400)                      # 3:2 window
+    view.set_fill(True)
+    view.set_scale(2.0)
+    view.set_bar(Settings().bar_style())
+    view.set_frame(_frame(120, w=600, h=300))  # 2:1 frame
+    assert view._image_at == view.rect(), "fill left letterboxing behind"
+    # scale = max(600/600, 400/300); the crop keeps 450 of 600 columns.
+    assert view._src_width == 450
+    assert view._bar._tile is not None
+
+
+def test_a_held_or_quiet_picture_follows_its_window(qapp):
+    view = PresentView()
+    view.resize(600, 400)
+    # Shown, because Qt only delivers resize events to widgets it has
+    # shown -- which is the only state a real presentation is ever in.
+    view.show()
+    view.set_frame(_frame(120))
+    view.resize(800, 600)                      # no new frame arrives
+    assert view._image_at.width() == 800, "the picture missed the resize"
+
+
+def test_the_magnification_aligns_to_the_bars_rule(qapp):
+    """The complaint that started this: two grids a few pixels apart.
+    The type goes flush against the mark's own edge, not the tile's
+    padding and not a margin of its own invention."""
+    view = PresentView()
+    view.resize(600, 400)
+    view.set_scale(2.0)
+    view.set_bar(Settings().bar_style())
+    view.set_frame(_frame(240))
+    mark = view._bar.mark_rect()
+    assert mark is not None
+    before = _pixels(view)
+    view.set_magnification("250×", "25×/0.65")
+    after = _pixels(view)
+    changed = np.any(before != after, axis=2)
+    ys, xs = np.nonzero(changed)
+    assert xs.size, "the magnification drew nothing"
+    assert abs(int(xs.max()) - mark.right()) <= 2, (
+        "the type is not flush with the rule's end")
+    assert int(ys.max()) < mark.top(), "the type ran into the mark"
+
+
+def test_the_screen_measurement_changes_the_headline(qapp):
+    """Measured screen, headline becomes what the audience actually
+    sees; unmeasured claims nothing and says what it said before."""
+    view = PresentView()
+    view.resize(600, 400)
+    view.set_frame(_frame(240))
+    view.set_scale(2.0)
+    view.set_magnification("160×", "16×/0.4")
+    plain = _pixels(view)
+    view.set_screen_scale(0.5)                 # mm per displayed pixel
+    measured = _pixels(view)
+    assert np.any(plain != measured), "the measurement changed nothing"
+    view.set_screen_scale(None)
+    assert np.array_equal(_pixels(view), plain)
+
+
+def test_caption_opacity_thins_the_ink(qapp):
+    view = PresentView()
+    view.resize(600, 400)
+    view.set_frame(_frame(240))
+    view.set_header("Waterbears", "")
+    ground = _frame(240)[0, 0].mean()
+    view.set_caption_opacity("solid")
+    solid = _pixels(view)
+    view.set_caption_opacity("faint")
+    faint = _pixels(view)
+    changed = np.any(solid != faint, axis=2)
+    assert changed.sum() > 20
+    # Faint ink sits nearer the ground than solid ink does.
+    assert abs(faint[changed].mean() - ground) < \
+        abs(solid[changed].mean() - ground)
+
+
+def test_caption_size_changes_the_type(qapp):
+    view = PresentView()
+    view.resize(600, 400)
+    view.set_frame(_frame(240))
+    view.set_header("Waterbears", "")
+    view.set_caption_size("small")
+    small = _pixels(view)
+    view.set_caption_size("large")
+    large = _pixels(view)
+    dark_small = (np.any(small < 200, axis=2)).sum()
+    dark_large = (np.any(large < 200, axis=2)).sum()
+    assert dark_large > dark_small * 1.5, "large type is not larger"
+
+
+def test_the_cursor_hides_when_it_sits_still(qapp):
+    view = PresentView()
+    view._cursor.timeout.emit()
+    assert view.cursor().shape() == QtCore.Qt.CursorShape.BlankCursor
+    move = QtGui.QMouseEvent(
+        QtCore.QEvent.Type.MouseMove, QtCore.QPointF(5, 5),
+        QtCore.QPointF(5, 5), QtCore.QPointF(5, 5),
+        QtCore.Qt.MouseButton.NoButton, QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier)
+    view.mouseMoveEvent(move)
+    assert view.cursor().shape() == QtCore.Qt.CursorShape.ArrowCursor
+    assert view._cursor.isActive(), "the quiet timer did not restart"
+
+
 # ---- the window -------------------------------------------------------------
+
+def test_hold_freezes_the_audience_not_the_operator(qapp):
+    w = PresentWindow()
+    w.set_frame(_frame(120))
+    first = w.view._buf.copy()
+    w.set_held(True)
+    w.set_frame(_frame(240))
+    assert np.array_equal(w.view._buf, first), "a held picture moved"
+    w.set_held(False)
+    w.set_frame(_frame(240))
+    assert not np.array_equal(w.view._buf, first), "release did not resume"
+
+
+def test_space_toggles_the_hold_and_says_so(qapp):
+    w = PresentWindow()
+    told = []
+    w.held_changed.connect(told.append)
+    QtTest.QTest.keyClick(w, QtCore.Qt.Key.Key_Space)
+    assert w.held and told == [True]
+    QtTest.QTest.keyClick(w, QtCore.Qt.Key.Key_Space)
+    assert not w.held and told == [True, False]
+
+
+def test_a_held_picture_reads_held_not_live(qapp):
+    """Both truths at once resolve in favour of the deliberate one: the
+    audience is told the picture is held, and the red dot -- the claim
+    that what they see is happening now -- comes down."""
+    w = PresentWindow()
+    w.view.resize(600, 400)
+    w.set_frame(_frame(120))
+    w.view.set_live(True)
+    lit = _pixels(w.view)
+    reds = (lit[..., 0].astype(int) - lit[..., 1].astype(int)) > 20
+    assert reds.sum() > 10
+    w.set_held(True)
+    held = _pixels(w.view)
+    reds = (held[..., 0].astype(int) - held[..., 1].astype(int)) > 20
+    assert reds.sum() == 0, "the dot outlived the hold"
+    assert np.any(lit != held), "nothing says the picture is held"
+
+
+def test_a_hold_does_not_survive_the_window_closing(qapp):
+    w = PresentWindow()
+    w.show()
+    w.set_held(True)
+    w.close()
+    assert not w.held
 
 def test_the_live_marker_cannot_outlive_the_feed(qapp):
     w = PresentWindow()
@@ -195,6 +354,25 @@ def test_the_header_dialog_decides_whether_there_is_a_header(qapp):
     d.second.setText("")
     d.accept()
     assert not s.present_header, "an empty header stayed switched on"
+
+
+def test_the_screen_dialog_takes_a_measurement(qapp):
+    s = Settings()
+    d = ScreenDialog(s)
+    d.width_cm.setText("120")
+    d.accept()
+    assert s.present_screen_width_cm == 120.0
+
+    # Cleared means unmeasured, and a decimal comma is a measurement
+    # too -- most tape measures this program will meet are metric.
+    d = ScreenDialog(s)
+    d.width_cm.setText("58,4")
+    d.accept()
+    assert s.present_screen_width_cm == pytest.approx(58.4)
+    d = ScreenDialog(s)
+    d.width_cm.setText("")
+    d.accept()
+    assert s.present_screen_width_cm == 0.0
 
 
 # ---- the window in the application ------------------------------------------

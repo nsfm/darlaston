@@ -25,7 +25,8 @@ from .widgets import BAD, UI_METER, ScaleBarOverlay
 
 
 class PresentView(QtWidgets.QWidget):
-    """The mirrored frame, letterboxed, with the overlays painted on.
+    """The mirrored frame, letterboxed or filled, with the overlays
+    painted on.
 
     Fed the same preview array as the operator's view and does its own
     fit, because the two windows are different sizes on different
@@ -34,6 +35,20 @@ class PresentView(QtWidgets.QWidget):
     restate everything on every frame -- the pattern the scale bar
     overlay established, and the reason restating is affordable.
     """
+
+    #: The caption grid, as a fraction of the picture's width from each
+    #: edge -- the same inset rule the scale bar's geometry uses, so the
+    #: type and the mark sit on one grid instead of two nearly equal
+    #: ones. Two grids a few pixels apart is what "misaligned" looks
+    #: like without anyone being able to say why.
+    MARGIN = 0.035
+
+    #: Type scale per caption size, and ink opacity per caption
+    #: opacity. A tabletop monitor and a hall projector are read from
+    #: very different distances, and how far the words may sit into the
+    #: picture is taste; both are the operator's call.
+    SIZES = {"small": 0.75, "normal": 1.0, "large": 1.4}
+    OPACITIES = {"solid": 1.0, "soft": 0.78, "faint": 0.55}
 
     #: Ink for the captions, as a fraction of full scale either side of
     #: mid, with hysteresis -- the same rule the scale bar uses, for the
@@ -47,16 +62,31 @@ class PresentView(QtWidgets.QWidget):
     #: pixels this widget reads rather than blits.
     INK_EVERY = 15
 
+    #: How long the pointer may sit still over the picture before it is
+    #: hidden. An arrow parked on the specimen is the one piece of the
+    #: operator's screen that always sneaks onto the projector.
+    CURSOR_MS = 2000
+
     def __init__(self) -> None:
         super().__init__()
         self._image: QtGui.QImage | None = None
         self._buf: np.ndarray | None = None
+        self._src: np.ndarray | None = None
+        self._src_width = 0
         self._image_at: QtCore.QRect | None = None
         self._frame_count = 0
         #: corner -> (frame it was read at, bright or not).
         self._ink: dict[str, tuple[int, bool]] = {}
         self._bar = ScaleBarOverlay(self)
-        self._bar_corner = "br"
+        self._bar_style: dict | None = None
+        self._um: float | None = None
+        self._fill = False
+        self._caption_size = "normal"
+        self._caption_opacity = "solid"
+        #: Millimetres one displayed pixel covers on the audience's
+        #: screen, when the operator has measured it. None means unknown
+        #: and nothing is claimed.
+        self._screen_mm_per_px: float | None = None
         self._header = ("", "")
         self._subject = ("", "")
         self._magnification = ("", "")
@@ -65,6 +95,13 @@ class PresentView(QtWidgets.QWidget):
         #: off when the feed goes quiet, because a live marker over a
         #: frozen picture is the exact lie the marker exists to prevent.
         self._live_lit = True
+        self._held = False
+        self._cursor = QtCore.QTimer(self)
+        self._cursor.setSingleShot(True)
+        self._cursor.setInterval(self.CURSOR_MS)
+        self._cursor.timeout.connect(
+            lambda: self.setCursor(QtCore.Qt.CursorShape.BlankCursor))
+        self.setMouseTracking(True)
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
                            QtWidgets.QSizePolicy.Policy.Expanding)
@@ -76,24 +113,82 @@ class PresentView(QtWidgets.QWidget):
         way down this is the `fast` trade the operator's view defaults
         to, and on the way up -- a projector is usually larger than the
         preview -- linear is the only sensible magnifier anyway."""
-        h, w = bgr.shape[:2]
-        target = self._fit(QtCore.QSize(w, h))
-        tw, th = max(1, target.width()), max(1, target.height())
-        if (tw, th) != (w, h):
-            bgr = cv2.resize(bgr, (tw, th), interpolation=cv2.INTER_LINEAR)
+        self._src = bgr
         self._frame_count += 1
+        self._refit()
+
+    def _refit(self) -> None:
+        """Lay the kept frame into the current widget, cropped to fill
+        or letterboxed to fit. Re-run on resize as well as on arrival,
+        because a held picture still has to follow its window onto the
+        projector."""
+        src = self._src
+        if src is None:
+            return
+        h, w = src.shape[:2]
+        if self._fill:
+            # The window's shape wins and the frame gives up its edges,
+            # centred. What is shown is a crop, so the width the scale
+            # bar converts against is the crop's, or the bar would be
+            # honest about a frame nobody is seeing all of.
+            target = self.rect()
+            tw, th = max(1, target.width()), max(1, target.height())
+            scale = max(tw / w, th / h)
+            cw = max(1, min(w, int(round(tw / scale))))
+            ch = max(1, min(h, int(round(th / scale))))
+            x0, y0 = (w - cw) // 2, (h - ch) // 2
+            src = src[y0:y0 + ch, x0:x0 + cw]
+            self._src_width = cw
+        else:
+            target = self._fit(QtCore.QSize(w, h))
+            tw, th = max(1, target.width()), max(1, target.height())
+            self._src_width = w
+        if (tw, th) != src.shape[:2][::-1]:
+            src = cv2.resize(src, (tw, th), interpolation=cv2.INTER_LINEAR)
         # QImage does not copy, so the buffer lives on the instance.
-        self._buf = np.ascontiguousarray(bgr)
+        self._buf = np.ascontiguousarray(src)
         self._image = QtGui.QImage(self._buf.data, tw, th,
                                    self._buf.strides[0],
                                    QtGui.QImage.Format.Format_BGR888)
         self._image_at = target
-        self._bar.place(target, w, self._corner_light)
+        self._bar.set_scale(self._um if self._bar_style else None,
+                            self._bar_style)
+        self._bar.place(target, self._src_width, self._corner_light)
         self.update()
 
-    def set_scale_bar(self, um_per_px, style) -> None:
-        self._bar_corner = (style or {}).get("corner", "br")
-        self._bar.set_scale(um_per_px, style)
+    def set_scale(self, um_per_px) -> None:
+        """Micrometres per pixel of the frame as fed, bar or no bar: the
+        screen magnification reads it too."""
+        um = float(um_per_px) if um_per_px else None
+        if um != self._um:
+            self._um = um
+            self.update()
+
+    def set_bar(self, style: dict | None) -> None:
+        self._bar_style = dict(style) if style else None
+        self._bar.set_scale(self._um if self._bar_style else None,
+                            self._bar_style)
+
+    def set_fill(self, on: bool) -> None:
+        if bool(on) != self._fill:
+            self._fill = bool(on)
+            self._refit()
+
+    def set_caption_size(self, size: str) -> None:
+        if size != self._caption_size and size in self.SIZES:
+            self._caption_size = size
+            self.update()
+
+    def set_caption_opacity(self, opacity: str) -> None:
+        if opacity != self._caption_opacity and opacity in self.OPACITIES:
+            self._caption_opacity = opacity
+            self.update()
+
+    def set_screen_scale(self, mm_per_px) -> None:
+        mm = float(mm_per_px) if mm_per_px else None
+        if mm != self._screen_mm_per_px:
+            self._screen_mm_per_px = mm
+            self.update()
 
     def set_header(self, title: str, subtitle: str) -> None:
         if (title, subtitle) != self._header:
@@ -120,6 +215,11 @@ class PresentView(QtWidgets.QWidget):
             self._live_lit = bool(lit)
             self.update()
 
+    def set_held(self, held: bool) -> None:
+        if bool(held) != self._held:
+            self._held = bool(held)
+            self.update()
+
     # ---- painting --------------------------------------------------------
 
     def paintEvent(self, _event) -> None:
@@ -140,12 +240,13 @@ class PresentView(QtWidgets.QWidget):
         """The four corners, sized to the picture rather than the window,
         so filling the projector scales the words with the image."""
         th = target.height()
-        margin = max(10, int(th * 0.028))
+        margin = max(8, int(round(self.MARGIN * target.width())))
+        scale = self.SIZES[self._caption_size]
         fams = theme.load_fonts()
 
         def font(family: str, px: int, weight=None) -> QtGui.QFont:
             f = QtGui.QFont(family)
-            f.setPixelSize(px)
+            f.setPixelSize(max(9, int(px * scale)))
             if weight is not None:
                 f.setWeight(weight)
             return f
@@ -155,36 +256,63 @@ class PresentView(QtWidgets.QWidget):
         mag_px = max(14, int(th * 0.050))
         demi = QtGui.QFont.Weight.DemiBold
 
-        # Where the scale bar is, so a caption sharing its corner steps
-        # out of the way rather than through it.
-        avoid = self._bar.geometry() if self._bar.isVisible() else None
+        # The mark's tight box, so a caption sharing its corner aligns
+        # to the rule itself rather than to the tile's padding.
+        mark = self._bar.mark_rect()
+        corner = (self._bar_style or {}).get("corner", "br")
 
         title, subtitle = self._header
         self._block(p, target, "tl", margin,
                     [(title, font(fams["sans"], title_px, demi), 0.92),
                      (subtitle, font(fams["sans"], sub_px), 0.70)],
-                    avoid if self._bar_corner == "tl" else None)
+                    mark if corner == "tl" else None)
         subject, note = self._subject
         self._block(p, target, "bl", margin,
                     [(subject, font(fams["sans"], title_px, demi), 0.92),
                      (note, font(fams["sans"], sub_px), 0.70)],
-                    avoid if self._bar_corner == "bl" else None)
+                    mark if corner == "bl" else None)
         # The magnification is set in the mono face on purpose: it is a
         # reading, like the scale bar's label, not a caption.
-        primary, secondary = self._magnification
+        primary, secondary = self._screen_magnification(target)
         self._block(p, target, "br", margin,
                     [(primary, font(fams["mono"], mag_px, demi), 0.92),
                      (secondary, font(fams["mono"], sub_px), 0.70)],
-                    avoid if self._bar_corner == "br" else None)
-        if self._live and self._live_lit:
-            self._live_marker(p, target, margin,
-                              font(fams["sans"], sub_px, demi),
-                              avoid if self._bar_corner == "tr" else None)
+                    mark if corner == "br" else None)
+        if self._held or (self._live and self._live_lit):
+            self._marker(p, target, margin,
+                         font(fams["sans"], sub_px, demi),
+                         mark if corner == "tr" else None)
+
+    def _screen_magnification(self, target: QtCore.QRect) -> tuple[str, str]:
+        """What the magnification block says, given what is known.
+
+        With the audience's screen measured, the headline is how large
+        things really appear *there* -- the honest answer to "what
+        magnification is this", and the number that changes when the
+        window is resized, which is the explanation working by itself.
+        Rounded to two figures: a screen measured with a tape does not
+        support 1,937x and printing it would claim it does.
+        """
+        primary, secondary = self._magnification
+        mm = self._screen_mm_per_px
+        if (primary and mm and self._um and self._src_width
+                and target.width() >= 8):
+            per_target = self._um * (self._src_width / float(target.width()))
+            mag = mm * 1000.0 / per_target
+            if mag >= 10:
+                step = 10 ** max(0, int(math.floor(math.log10(mag))) - 1)
+                shown = f"{int(round(mag / step) * step):,}×"
+            else:
+                shown = f"{mag:.1f}×"
+            primary = _("present.mag.screen", mag=shown)
+        return primary, secondary
 
     def _block(self, p: QtGui.QPainter, target: QtCore.QRect, corner: str,
-               margin: int, lines, avoid: QtCore.QRect | None) -> None:
+               margin: int, lines, mark: QtCore.QRect | None) -> None:
         """A stack of left or right aligned lines in one corner, in
-        whichever ink the field under it can carry."""
+        whichever ink the field under it can carry. Handed the bar's
+        mark when they share the corner: the type goes flush against
+        the rule's own edge and clear of its height."""
         lines = [(t, f, a) for t, f, a in lines if t]
         if not lines:
             return
@@ -192,58 +320,70 @@ class PresentView(QtWidgets.QWidget):
         heights = [m.height() for m in metrics]
         gap = max(2, heights[0] // 6)
         total = sum(heights) + gap * (len(lines) - 1)
+        right = corner.endswith("r")
+        edge = ((mark.right() + 1 if right else mark.left())
+                if mark is not None
+                else (target.right() + 1 - margin if right
+                      else target.left() + margin))
         if corner.startswith("t"):
             y = target.top() + margin
-            if avoid is not None:
-                y = max(y, avoid.bottom() + gap)
+            if mark is not None:
+                y = max(y, mark.bottom() + gap)
         else:
-            y = target.bottom() - margin - total
-            if avoid is not None:
-                y = min(y, avoid.top() - gap - total)
+            y = target.bottom() + 1 - margin - total
+            if mark is not None:
+                y = min(y, mark.top() - gap - total)
+        dim = self.OPACITIES[self._caption_opacity]
         base = (QtGui.QColor("#101210") if self._corner_light(corner)
                 else QtGui.QColor("#e4e7e0"))
         for (text, f, alpha), m, h in zip(lines, metrics, heights):
             ink = QtGui.QColor(base)
-            ink.setAlphaF(alpha)
-            x = (target.right() - margin - m.horizontalAdvance(text)
-                 if corner.endswith("r") else target.left() + margin)
+            ink.setAlphaF(alpha * dim)
+            x = edge - m.horizontalAdvance(text) if right else edge
             p.setFont(f)
             p.setPen(ink)
             p.drawText(QtCore.QPointF(x, y + m.ascent()), text)
             y += h + gap
 
-    def _live_marker(self, p: QtGui.QPainter, target: QtCore.QRect,
-                     margin: int, f: QtGui.QFont,
-                     avoid: QtCore.QRect | None) -> None:
-        """A breathing dot and the word. The breath is the point: a
-        static badge could be part of a recording, and the slow pulse is
-        the one thing a loop of the same frames cannot fake cheaply."""
+    def _marker(self, p: QtGui.QPainter, target: QtCore.QRect,
+                margin: int, f: QtGui.QFont,
+                mark: QtCore.QRect | None) -> None:
+        """The top right word: "held" while the operator holds the
+        picture, else a breathing dot and "live". The breath is the
+        point -- a static badge could be part of a recording, and the
+        slow pulse is the one thing a loop of frames cannot fake
+        cheaply."""
         m = QtGui.QFontMetrics(f)
-        text = _("present.live")
+        text = _("present.held") if self._held else _("present.live")
         tw = m.horizontalAdvance(text)
-        d = max(6, int(m.ascent() * 0.6))
-        gap = max(4, d // 2)
+        gap = max(4, int(m.ascent() * 0.3))
         y = target.top() + margin
-        if avoid is not None:
-            y = max(y, avoid.bottom() + gap)
-        x = target.right() - margin - tw
+        if mark is not None:
+            y = max(y, mark.bottom() + gap)
+        x = target.right() + 1 - margin - tw
         ink = (QtGui.QColor("#101210") if self._corner_light("tr")
                else QtGui.QColor("#e4e7e0"))
-        ink.setAlphaF(0.92)
+        ink.setAlphaF(0.92 * self.OPACITIES[self._caption_opacity])
         p.setFont(f)
         p.setPen(ink)
         p.drawText(QtCore.QPointF(x, y + m.ascent()), text)
+        if self._held:
+            return
         dot = QtGui.QColor(BAD)
         # The breath never takes the dot below legible: at the bottom of
         # a 0.2 floor it disappeared into a brightfield ground entirely,
         # which reads as the marker going out -- and going out means
         # something here.
         dot.setAlphaF(0.7 + 0.3 * math.sin(time.monotonic() * math.pi))
+        d = max(6, int(m.ascent() * 0.6))
         p.setPen(QtCore.Qt.PenStyle.NoPen)
         p.setBrush(dot)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        cy = y + m.ascent() - d * 0.5 - m.descent() * 0.5
-        p.drawEllipse(QtCore.QPointF(x - gap - d * 0.5, cy), d * 0.5, d * 0.5)
+        # Centred on the lowercase body of the word beside it, which is
+        # where the eye reads the line's middle -- the ascender of the
+        # "l" does not move the optical centre.
+        cy = y + m.ascent() - m.xHeight() * 0.5
+        p.drawEllipse(QtCore.QPointF(x - gap - d, cy), d * 0.5, d * 0.5)
 
     # ---- geometry and ink ------------------------------------------------
 
@@ -253,6 +393,25 @@ class PresentView(QtWidgets.QWidget):
         x = (self.width() - scaled.width()) // 2
         y = (self.height() - scaled.height()) // 2
         return QtCore.QRect(x, y, scaled.width(), scaled.height())
+
+    def resizeEvent(self, event) -> None:
+        # A held or momentarily quiet picture still follows its window:
+        # without this, dragging to the projector or going fullscreen
+        # would leave the old letterbox until the next frame -- which,
+        # held, never comes.
+        super().resizeEvent(event)
+        if self._src is not None:
+            self._refit()
+
+    def mouseMoveEvent(self, event) -> None:
+        self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        self._cursor.start()
+        super().mouseMoveEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self._cursor.stop()
+        self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        super().hideEvent(event)
 
     def _corner_light(self, corner: str) -> bool:
         """Is this corner of the frame bright? Read from the reduced
@@ -284,10 +443,13 @@ class PresentWindow(QtWidgets.QWidget):
 
     Plain system frame, because this window's job is to be dragged to
     another screen and then filled -- double click fills it, Escape
-    steps back out, and the frame is only ever seen in between.
+    steps back out, and the frame is only ever seen in between. Space
+    holds the picture while a slide is swapped, so the audience sees
+    the last good field rather than the blur of the change.
     """
 
     closed = QtCore.Signal()
+    held_changed = QtCore.Signal(bool)
 
     #: How long the feed may go quiet before the live marker goes out.
     STALE_S = 2.0
@@ -300,9 +462,10 @@ class PresentWindow(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.view)
         self._last_frame = 0.0
+        self._held = False
         #: Watches for the feed stopping. Only the marker needs this: the
         #: picture freezing is visible on its own, but a frozen frame
-        #: under a lit "Live" would be the marker lying.
+        #: under a lit "live" would be the marker lying.
         self._stale = QtCore.QTimer(self)
         self._stale.setInterval(1000)
         self._stale.timeout.connect(self._check_stale)
@@ -314,9 +477,22 @@ class PresentWindow(QtWidgets.QWidget):
         try:
             self._last_frame = time.monotonic()
             self.view.set_live_lit(True)
-            self.view.set_frame(bgr)
+            if not self._held:
+                self.view.set_frame(bgr)
         finally:
             UI_METER.since("presentation", start)
+
+    @property
+    def held(self) -> bool:
+        return self._held
+
+    def set_held(self, held: bool) -> None:
+        held = bool(held)
+        if held == self._held:
+            return
+        self._held = held
+        self.view.set_held(held)
+        self.held_changed.emit(held)
 
     def _check_stale(self) -> None:
         if time.monotonic() - self._last_frame > self.STALE_S:
@@ -337,9 +513,15 @@ class PresentWindow(QtWidgets.QWidget):
         if event.key() == QtCore.Qt.Key.Key_Escape:
             self.showNormal() if self.isFullScreen() else self.close()
             return
+        if event.key() == QtCore.Qt.Key.Key_Space:
+            self.set_held(not self._held)
+            return
         super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
+        # A hold is a moment, not a mode worth keeping. Reopening later
+        # to a mysteriously frozen picture would read as a fault.
+        self.set_held(False)
         self.closed.emit()
         super().closeEvent(event)
 
@@ -381,4 +563,44 @@ class HeaderDialog(QtWidgets.QDialog):
         s.present_header = bool(s.present_header_title
                                 or s.present_header_subtitle)
         s.save()
+        super().accept()
+
+
+class ScreenDialog(QtWidgets.QDialog):
+    """How wide the audience's picture really is.
+
+    One measured number, and it buys the one magnification figure an
+    audience can actually stand next to: how large things appear on
+    *that* screen. Empty means unmeasured, and unmeasured claims
+    nothing.
+    """
+
+    def __init__(self, settings, parent=None) -> None:
+        super().__init__(parent)
+        self._settings = settings
+        self.setWindowTitle(_("present.screen.title"))
+        explain = QtWidgets.QLabel(_("present.screen.explain"))
+        explain.setWordWrap(True)
+        self.width_cm = QtWidgets.QLineEdit(
+            f"{settings.present_screen_width_cm:g}"
+            if settings.present_screen_width_cm else "")
+        self.width_cm.setPlaceholderText(_("present.screen.width"))
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        col = QtWidgets.QVBoxLayout(self)
+        col.addWidget(explain)
+        col.addWidget(self.width_cm)
+        col.addWidget(buttons)
+        self.setMinimumWidth(420)
+
+    def accept(self) -> None:
+        try:
+            width = float(self.width_cm.text().replace(",", "."))
+        except ValueError:
+            width = 0.0
+        self._settings.present_screen_width_cm = max(0.0, width)
+        self._settings.save()
         super().accept()
