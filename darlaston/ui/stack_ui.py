@@ -160,14 +160,18 @@ class StackAssembly(QtWidgets.QWidget):
         group(N_("stack.background.heading"), "stack_mask_background",
               [(N_("stack.background.flatten.label"), True),
                (N_("stack.background.keep.label"), False)])
-        # Presets rather than a slider because the surrounding menu is
-        # presets. The values are the measured range: 0.20 suited a smooth
+        # How the bound gets chosen, then what it is. The presets stay
+        # for the operator who knows their subject; "help me choose" is
+        # for the one who does not, which on a new mount is everyone.
+        group(N_("stack.halo.heading"), "stack_halo_mode",
+              [(N_("stack.halo.mode.off"), "off"),
+               (N_("stack.halo.mode.last"), "last"),
+               (N_("stack.halo.mode.choose"), "choose")])
+        # The values are the measured range: 0.20 suited a smooth
         # carapace, 0.60 a mount of crossing diatoms, and 0.35 is what the
-        # optics imply for both. A continuous control belongs with the
-        # side by side sampler, where there is something to judge it by.
-        group(N_("stack.halo.heading"), "stack_clamp_slope",
-              [(N_("stack.halo.off.label"), 0.0),
-               (N_("stack.halo.strong.label"), 0.20),
+        # optics imply for both.
+        group(N_("stack.halo.strength.heading"), "stack_clamp_slope",
+              [(N_("stack.halo.strong.label"), 0.20),
                (N_("stack.halo.balanced.label"), 0.35),
                (N_("stack.halo.gentle.label"), 0.60)])
         group(N_("stack.output.heading"), "stack_output",

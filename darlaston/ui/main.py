@@ -1705,6 +1705,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merging = index
         smoothing = self.settings.stack_smoothing
         feather = self.settings.stack_feather
+        masking = self.settings.stack_mask_background
+        # Locked for the whole mosaic, and never asked. Forty tiles would
+        # be forty questions, and worse, forty different answers stitched
+        # into one picture -- so a tile takes the stored bound whatever
+        # the mode says, which also keeps a tile identical to the same
+        # stack merged on its own.
+        slope_ = (0.0 if self.settings.stack_halo_mode == "off"
+                  else self.settings.stack_clamp_slope)
 
         def work():
             from ..process.stack import merge
@@ -1712,7 +1720,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Always bayer, whatever the free-standing preference: the
                 # stitcher reads bayer tiles.
                 merge(directory, output="bayer", smoothing=smoothing,
-                      feather=feather)
+                      feather=feather, mask_background=masking,
+                      clamp_slope=slope_)
                 self.bridge.tile_merge.emit((index, True, ""))
             except Exception as exc:
                 self.bridge.tile_merge.emit((index, False, str(exc)))
@@ -1887,6 +1896,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     feather=self.settings.stack_feather,
                     mask_background=self.settings.stack_mask_background,
                     clamp_slope=self.settings.stack_clamp_slope)
+        # "off" ignores whatever slope is stored; "last" uses it silently;
+        # "choose" stops mid-merge and asks. A mosaic never reaches here.
+        mode = self.settings.stack_halo_mode
+        if mode == "off":
+            opts["clamp_slope"] = 0.0
+        elif mode == "choose":
+            from .sampler_ui import bridge
+            opts["choose_slope"] = bridge(self, self.bridge.stack_merge)
         keep = self.settings.keep_slices
 
         def work():
@@ -1920,6 +1937,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object)
     def _on_stack_merge(self, message) -> None:
+        if message[0] == "choose":
+            # The merge thread is parked on `done` until this returns, so
+            # whatever happens here must set the box and release it --
+            # including on failure, or a merge that has already read every
+            # slice would hang on a dialog that never opened.
+            _kind, lumas, depth, solid, levels, box, done = message
+            try:
+                from .sampler_ui import ask
+                picked = ask(self, lumas, depth, solid, levels)
+                if picked is not None:
+                    box["slope"] = picked
+                    self.settings.stack_clamp_slope = float(picked)
+                    self.settings.save()
+            except Exception:
+                _log.warning("the halo sampler failed; merging with the "
+                             "stored setting", exc_info=True)
+            finally:
+                done.set()
+            return
         if message[0] == "progress":
             _kind, stage, i, n = message
             # Three stages of n slices each, as one bar: honest and smooth.

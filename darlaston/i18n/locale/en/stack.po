@@ -96,8 +96,21 @@ msgstr "leave as measured"
 msgid "stack.halo.heading"
 msgstr "Halo removal"
 
-msgid "stack.halo.off.label"
+#. How the bound gets picked. "use last" is the quiet path once the
+#. operator knows their subject; "help me choose" stops the merge and
+#. shows a few crops, which is only possible because it happens before
+#. the blend, where a variant costs milliseconds.
+msgid "stack.halo.mode.off"
 msgstr "off"
+
+msgid "stack.halo.mode.last"
+msgstr "use last setting"
+
+msgid "stack.halo.mode.choose"
+msgstr "help me choose"
+
+msgid "stack.halo.strength.heading"
+msgstr "Halo strength"
 
 msgid "stack.halo.strong.label"
 msgstr "strong (smooth subjects)"
@@ -142,3 +155,32 @@ msgid "stack.canvas.detail.slices"
 msgid_plural "stack.canvas.detail.slices"
 msgstr[0] "{count} slice"
 msgstr[1] "{count} slices"
+
+#. The comparison shown in the middle of a merge. Deliberately worded as
+#. a preference and not as a measurement: the setting behind it has no
+#. correct value, only one that suits this subject.
+msgid "sampler.title"
+msgstr "Which looks better?"
+
+msgid "sampler.intro"
+msgstr ""
+"Out of focus edges spill a soft skirt onto the field beside them. Pick "
+"whichever of these you like the look of and the merge carries on."
+
+msgid "sampler.note"
+msgstr "Sampled where the subject meets the field, at full capture scale."
+
+msgid "sampler.action.skip"
+msgstr "Keep current setting"
+
+msgid "sampler.choice.off"
+msgstr "leave it"
+
+msgid "sampler.choice.strong"
+msgstr "most removal"
+
+msgid "sampler.choice.balanced"
+msgstr "balanced"
+
+msgid "sampler.choice.gentle"
+msgstr "least removal"

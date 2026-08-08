@@ -260,6 +260,17 @@ class Settings:
     #: optimum. Zero until the operator turns it on; the window offers the
     #: optics-derived starting point.
     stack_clamp_slope: float = 0.0
+    #: How that bound gets chosen: off, last, or choose.
+    #:
+    #: "choose" shows a few crops mid-merge and takes the one picked. It
+    #: can only exist because of where it sits: depth and mask are done,
+    #: the blend has not started, and a variant on a crop costs
+    #: milliseconds against minutes for the merge, so the question is
+    #: cheap exactly there and nowhere else.
+    #:
+    #: A mosaic never asks, whatever this says. Forty tiles is forty
+    #: questions, and worse, forty different answers stitched together.
+    stack_halo_mode: str = "off"
     #: How the live preview is scaled to the window. This is a real trade
     #: and the right answer depends on the subject and the machine, which is
     #: why it is here rather than decided once in the code.

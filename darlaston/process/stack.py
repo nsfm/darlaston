@@ -350,7 +350,8 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
           smoothing: str = "normal",
           feather: float = FEATHER_SIGMA,
           mask_background: bool = True,
-          clamp_slope: float = 0.0) -> tuple[Path, dict]:
+          clamp_slope: float = 0.0,
+          choose_slope=None) -> tuple[Path, dict]:
     """The whole run: load, align, map depth, blend, write. (path, report).
 
     `output` is "bayer" or "linear", and bayer is the default because of an
@@ -427,6 +428,21 @@ def merge(directory: Path | str, progress=None, output: str = "bayer",
     from . import mask, slope
 
     solid = mask.body(aligned) if mask_background else None
+
+    # The one moment worth asking the operator anything. Depth and mask
+    # exist, the blend has not started, and a settings variant on a crop
+    # costs milliseconds against minutes for the merge -- so the choice is
+    # cheap here and expensive anywhere else. `choose_slope` is handed the
+    # aligned lumas, the depth map and the subject mask, and returns the
+    # bound it wants; returning None keeps the caller's. Nothing in this
+    # module knows or cares whether a human was involved.
+    if choose_slope is not None:
+        picked = choose_slope(aligned, depth,
+                              solid if solid is not None
+                              else mask.body(aligned), n)
+        if picked is not None:
+            clamp_slope = float(picked)
+
     del aligned
     blend_depth = depth if not clamp_slope else slope.clamp(depth,
                                                             clamp_slope)
