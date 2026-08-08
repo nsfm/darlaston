@@ -44,7 +44,7 @@ const FEATURES = [
   },
   {
     title: "Presentation mode",
-    body: "A second window made for audiences: just the picture, with a scale bar, magnification, your name, and the slide subject. Hold the view during slide changes and point out details with a click. No other tool does this either.",
+    body: "A second window made for audiences: just the picture, with a scale bar, magnification, your name, and the slide subject. Hold the view during slide changes and point out details with a click.",
   },
   {
     title: "Live streaming",
@@ -123,9 +123,9 @@ export default function App() {
           />
           <h1>A free, open source tool for creative microscopy.</h1>
           <p className="sub">
-            Focus stacking, mosaic stitching, 12-bit RAW capture, and a live
-            map of your slide. Built for photographing diatom arrangements,
-            made for sharing your love of the microscopic world.
+            Focus stacking, mosaic stitching, 12-bit RAW capture, and a live map
+            of your slide. Built for photographing diatom arrangements, made for
+            sharing your love of the microscopic world.
           </p>
           <div className="cta-row">
             <a className="btn primary" href="#download">
@@ -147,10 +147,10 @@ export default function App() {
           <div className="container">
             <div className="kicker">Every slide perfect</div>
             <p className="story">
-              Named for <strong>Herbert William Hutton Darlaston</strong>{" "}
-              (1867 to 1949), who prepared nearly a thousand microscope slides
-              in his first year at the bench, only to give most of them away.
-              He continued his work for the next fifty years under the promise{" "}
+              Named for <strong>Herbert William Hutton Darlaston</strong> (1867
+              to 1949), who prepared nearly a thousand microscope slides in his
+              first year at the bench, only to give most of them away. He
+              continued his work for the next fifty years under the promise{" "}
               <em className="promise">Every Slide Perfect</em>. This tool
               carries the same spirit: careful work, freely shared.
             </p>
