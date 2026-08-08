@@ -1,9 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Served from https://nsfm.github.io/darlaston/ unless a custom domain
-// takes over, in which case set SITE_BASE=/ in the workflow.
+// Relative base, so the same build serves from nsfm.github.io/darlaston/
+// and from darlaston.app without caring which. Safe because the site is a
+// single page with anchor links; introduce real routing and this needs to
+// become an absolute base again.
 export default defineConfig({
-  base: process.env.SITE_BASE ?? "/darlaston/",
+  base: "./",
   plugins: [react()],
 });
