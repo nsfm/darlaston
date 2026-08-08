@@ -192,11 +192,18 @@ class LiveView(QtWidgets.QWidget):
         if tw >= w:
             return cv2.resize(rgb, (tw, th), interpolation=cv2.INTER_LINEAR)
         if self.preview_quality == "fast":
-            # One bilinear step. Keeps the full grid but point-samples a
-            # 2x2 neighbourhood across a reduction much larger than that,
-            # so it invents edge energy: measured at nearly twice the
-            # Laplacian variance of the honest reduction, which on fine
-            # periodic structure reads as shimmer.
+            # The default, and the right one. One bilinear step, which
+            # point-samples a 2x2 neighbourhood across a much larger
+            # reduction and so invents edge energy: twice the Laplacian
+            # variance of the honest reduction on fine periodic structure.
+            #
+            # That is a real measurement and it is not a real problem.
+            # Nate, twice now, having looked at it on striae while racking:
+            # the difference is barely visible and the time is worth more.
+            # It costs 1.7 ms against 5 to 14 for the alternatives, on the
+            # thread that also has to stay responsive, so this is where
+            # the setting should sit unless somebody says otherwise about
+            # their own subject.
             return cv2.resize(rgb, (tw, th), interpolation=cv2.INTER_LINEAR)
         if self.preview_quality == "reduced":
             # An exact half is the one cheap reduction available, so take
