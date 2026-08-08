@@ -461,3 +461,50 @@ def test_the_synthetic_camera_cannot_see_a_channel_swap():
     assert (patch[..., 0] == patch[..., 2]).all(), (
         "the mock now has distinguishable channels: it can catch a red "
         "and blue swap, so test the picture rather than the option")
+
+
+def test_the_bar_covers_the_same_distance_at_every_window_size(window):
+    """Nate: the 100 um bar got longer at some window sizes, against a
+    reference in the picture.
+
+    Micrometres-per-pixel is quoted for a *preview* pixel and the bar is
+    drawn over *displayed* ones. Moving the drawing into the paint dropped
+    the term between them, so the length was computed from one scale and
+    laid down in the other, and the error was whatever the reduction
+    happened to be at that window size.
+    """
+    from darlaston.process import scalebar
+
+    win = window()
+    preview = np.random.default_rng(0).integers(
+        60, 200, (912, 1368, 3), dtype=np.uint8)
+    per_preview_px = 0.49
+
+    covered = []
+    for wide in (400, 700, 1000, 1360):
+        win.view.resize(wide, int(wide * 912 / 1368))
+        win.view.set_scale_bar(per_preview_px, win.settings.bar_style(
+            live=True))
+        win.view._set_frame(preview, None)
+        shown = win.view._image.width()
+        um_shown = per_preview_px * (win.view._src_width / shown)
+        chosen = scalebar.choose(um_shown, shown)
+        if chosen is None:
+            continue
+        micrometres, length = chosen
+        covered.append((length * um_shown, micrometres))
+
+    assert len(covered) >= 3, "no bar was chosen at most window sizes"
+    for distance, says in covered:
+        assert abs(distance - says) / says < 0.02, (
+            f"a bar labelled {says} um covered {distance:.1f} um")
+
+
+def test_the_source_width_is_recorded_for_the_bar(window):
+    """The term whose absence caused it. Kept as its own check because a
+    ratio that is silently 1.0 looks exactly like a correct one."""
+    win = window()
+    win.view.resize(400, 300)
+    win.view._set_frame(np.zeros((912, 1368, 3), np.uint8), None)
+    assert win.view._src_width == 1368
+    assert win.view._image.width() < 1368, "the frame was not reduced"

@@ -95,6 +95,12 @@ class LiveView(QtWidgets.QWidget):
         tw, th = max(1, target.width()), max(1, target.height())
         if (tw, th) != (w, h):
             rgb = self._scaled(rgb, w, h, tw, th)
+        #: Width of the frame *before* the reduction. The scale bar needs
+        #: it: its micrometres-per-pixel is quoted for a preview pixel and
+        #: it is drawn over displayed ones, and the two differ by whatever
+        #: the window is doing. Losing this term made the bar change
+        #: length as the window resized.
+        self._src_width = w
         # QImage does not copy, so keep the buffer alive on the instance.
         self._buf = np.ascontiguousarray(rgb)
 
@@ -138,17 +144,25 @@ class LiveView(QtWidgets.QWidget):
         from ..process import scalebar
 
         um, style = self._bar
-        shown_um = um * (self._image.width() and
-                         self._buf.shape[1] / self._image.width() or 1.0)
-        chosen = scalebar.choose(shown_um, self._image.width())
+        shown = self._image.width()
+        if not shown:
+            return
+        # Micrometres per *displayed* pixel. `um` is quoted per preview
+        # pixel, and the reduction between them is the whole correction:
+        # without it the bar was drawn from the preview's scale onto the
+        # window's pixels, so it changed length whenever the window did.
+        src = getattr(self, "_src_width", shown) or shown
+        chosen = scalebar.choose(um * (src / float(shown)), shown)
         if chosen is None:
             return
         micrometres, length = chosen
         if length < 8:
             return
 
-        scale = target.width() / max(self._image.width(), 1)
-        run = length * scale
+        # `length` is already in displayed pixels, and the image is
+        # blitted one to one, so the only correction left is any
+        # difference between the image and the rectangle it landed in.
+        run = length * (target.width() / float(shown))
         margin = max(10.0, target.width() * 0.028)
         thick = max(2.0, target.height() * 0.005)
         corner = style.get("corner", "br")
