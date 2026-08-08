@@ -200,6 +200,13 @@
 
 - [ ] **Inverted brightfield** native in the live view. Display and export transform only; the raw stays linear positive.
 
+## Presentation, deferred by choice
+
+- [ ] **Capture moment.** When the shutter fires, hold the developed capture on the presentation for a couple of seconds with a border pulse. "We just took that" is half the fun of tabling; deferred to keep the first release of the feature calm.
+- [ ] **QR code beside the header.** Visitors ask "where do I find you". Needs either a dependency or a hand-rolled encoder, and neither is earned yet. The /still.jpg endpoint is a natural target once it exists.
+- [ ] **Auto-hold on a blank field.** The slide leaving the stage could hold the last good frame automatically, piggybacking on the blank detection the stack trigger uses. Needs care in darkfield, where blank is dark rather than bright, and must never fire during ordinary panning.
+- [ ] **Field width readout.** "This view spans 1.3 mm" is the third question visitors ask, is exact from µm/pixel times frame width with no assumptions, and would slot into the magnification line. Low priority while the scale bar answers it indirectly.
+
 ## Optics and measurement
 
 - [ ] **Optical profiler.** Stage micrometer plus grid target → µm/pixel, distortion, field curvature, lateral CA, MTF50 centre vs corner, and a computed **usable field fraction** that derives the crop radius instead of leaving it to judgement. Also settles AmScope adapter vs planar relay eyepiece with numbers.
