@@ -1,7 +1,6 @@
 # Next up
 
-- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`,
-      deliberately not started. A stacked mosaic is a four-dimensional
+- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional
       recording - x, y, zoom and focal plane - and every move through it
       can be perfectly smooth because it is synthesised rather than
       performed, which is virtual camera work on a slide and is offered
@@ -210,34 +209,6 @@
       fell" are different claims and only the second is defensible. The
       bench already has a synthetic glow case to measure against.
 
-- [x] **A 12 fps preview drags the whole interface to 12 fps.** The
-      diagnosis in this entry was wrong, and worth recording as such: it
-      blamed the preview and the interface sharing a thread and a clock,
-      and proposed decoupling them. Drawing was never the cost. Measured
-      on the GUI thread at 5440 wide, `set_frame` is 1.7 ms at the default
-      preview quality.
-
-      The cost is the pipeline's analysis, which scales with preview
-      pixels: 143.9 ms a frame at 5440 against an 83 ms frame period, so
-      it cannot keep up, saturates the workers and starves everything
-      behind it. At 2736 it is 28.0 ms against 33 ms, which is why
-      changing the default mode felt like such a large improvement: it
-      moved from 1.7x over budget to just inside it.
-
-      Two fixes, both about not doing work that buys nothing. The default
-      preview mode is now the largest at or under 6 MP rather than
-      whichever the camera lists first. And the stage tracker correlates
-      at a fixed 684 px wide instead of the preview divided by four, which
-      was handing phase correlation four times the pixels at 5440 for no
-      gain: 38.0 ms of that frame. The 2736 grid is unchanged, because it
-      is the one the tracker's own measurements were taken on.
-
-      Now 23.5 ms at 2736 and 92.1 ms at 5440. The large mode still does
-      not quite make its 83 ms period, and is left there deliberately: the
-      remaining weight is a full-frame copy, a channel split and a median
-      blur, all of which want the whole picture for reasons of their own,
-      and nobody has to use that mode any more to get a preview.
-
 ## Capture features
 
 - [ ] **Inverted brightfield** native in the live view. Display and export
@@ -292,8 +263,6 @@
       the limit, full resolution records empty magnification. The profiler
       answers this.
 - [ ] **? Do the SDK's FFC/DFC apply in the raw path or only the ISP path?**
-- [ ] **? Sustained frame rate for full-res 12-bit raw** over this link.
-      Bandwidth arithmetic says ~8–10 fps, not the rated 15.
 - [ ] **? Sony Camera Remote SDK on Linux for the A6700**, for the second
       backend.
 - [ ] **? Dead-reckoning drift** across a 40-tile mosaic — is overview
