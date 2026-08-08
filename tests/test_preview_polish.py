@@ -70,41 +70,61 @@ def test_a_camera_profile_starts_with_no_opinion():
     assert CameraProfile(serial="x").preview_width == 0
 
 
-# ---- the live scale bar's cost ---------------------------------------------
+# ---- the live scale bar's cost -----------------------------------------------
 
-def test_the_overlay_buffer_is_reused_between_frames(window):
-    """Allocating it is nearly all of the cost. Measured at 5440 wide,
-    which is 60 MB a frame: a fresh copy is 24.9 ms against 4.3 ms into a
-    buffer already there, on a 33 ms budget."""
+def test_the_bar_is_drawn_after_the_reduction_not_before(window):
+    """It used to go onto the frame at preview size, which cost 10.7 ms of
+    every frame on the interface thread: the rest of the window keeps the
+    frame undecorated so it needed a copy first, and the bar's opacity
+    blend then worked over a region scaling with the frame.
+
+    Drawn on the reduced image instead it is 1.33 ms, and the copy is
+    gone entirely because the reduction already hands back a fresh array.
+    The trade, which Nate chose knowingly, is that the live bar is laid
+    out in display pixels and so is no longer pixel-identical to the one a
+    capture carries. It still measures correctly.
+    """
     win = window()
-    frame = np.zeros((64, 96, 3), np.uint8)
-    first = win._live_overlay_buffer(frame)
-    second = win._live_overlay_buffer(frame)
-    assert first is second
+    frame = np.full((400, 600, 3), 120, np.uint8)
+    win.view.resize(300, 200)
+
+    win.view.set_scale_bar(None, None)
+    win.view._set_frame(frame, None)
+    plain = win.view._buf.copy()
+
+    win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
+    win.view._set_frame(frame, None)
+    assert win.view._buf.shape == plain.shape, "the bar changed the size"
+    assert not np.array_equal(win.view._buf, plain), "no bar was drawn"
+    assert (frame == 120).all(), "the frame itself was drawn into"
 
 
-def test_the_buffer_follows_a_change_of_preview_size(window):
+def test_turning_the_bar_off_stops_drawing_it(window):
     win = window()
-    small = win._live_overlay_buffer(np.zeros((64, 96, 3), np.uint8))
-    big = win._live_overlay_buffer(np.zeros((128, 192, 3), np.uint8))
-    assert big.shape == (128, 192, 3)
-    assert big is not small
+    frame = np.full((400, 600, 3), 120, np.uint8)
+    win.view.resize(300, 200)
+    win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
+    win.view._set_frame(frame, None)
+    with_bar = win.view._buf.copy()
+    win.view.set_scale_bar(None, None)
+    win.view._set_frame(frame, None)
+    assert not np.array_equal(win.view._buf, with_bar)
 
 
-def test_the_buffer_carries_the_frame_rather_than_stale_pixels(window):
+def test_a_failing_bar_does_not_take_the_preview_with_it(window,
+                                                         monkeypatch):
+    """It went black once already, from an exception raised before the
+    view was ever reached."""
     win = window()
-    win._live_overlay_buffer(np.full((16, 16, 3), 7, np.uint8))
-    out = win._live_overlay_buffer(np.full((16, 16, 3), 200, np.uint8))
-    assert int(out.min()) == 200
+    win.settings.scale_bar_live = True
 
+    def boom(*_a, **_k):
+        raise RuntimeError("no")
 
-def test_the_frame_itself_is_never_drawn_into(window):
-    """The rest of the window keeps that array: the balance sample, the
-    tile thumbnail, the style window's preview. They want the photograph,
-    not the photograph with a ruler on it."""
-    win = window()
-    frame = np.zeros((32, 48, 3), np.uint8)
-    assert win._live_overlay_buffer(frame) is not frame
+    monkeypatch.setattr(win, "_preview_um_per_px", boom)
+    win._offer_scale_bar(2736)
+    assert win.settings.scale_bar_live is False
+    assert win.view._bar is None
 
 
 # ---- how a segment reads ---------------------------------------------------
@@ -158,25 +178,6 @@ def test_a_switch_invites_a_press_only_when_there_is_one_to_make(window):
     assert not win.auto_exposure.isEnabled()
 
 
-def test_a_failing_scale_bar_does_not_take_the_preview_with_it(window,
-                                                               monkeypatch):
-    """It went black once, from a missing import raising before the frame
-    was ever handed to the view, while everything reading the pipeline
-    carried on as though nothing were wrong."""
-    win = window()
-    win.settings.scale_bar_live = True
-
-    def boom(*_a, **_k):
-        raise RuntimeError("no")
-
-    monkeypatch.setattr(win, "_preview_um_per_px", boom)
-    frame = np.full((32, 48, 3), 128, np.uint8)
-    shown = win._shown_preview(frame)
-    assert shown is frame                       # the photograph, undecorated
-    assert win.settings.scale_bar_live is False
-
-
-# ---- what the analysis costs, per preview mode ------------------------------
 
 def test_the_tracker_grid_is_a_size_not_a_fraction():
     """It used to be the preview divided by four, which is 684 wide at the

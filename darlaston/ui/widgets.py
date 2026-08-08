@@ -42,6 +42,10 @@ class LiveView(QtWidgets.QWidget):
         self._image: QtGui.QImage | None = None
         self._peaking: QtGui.QImage | None = None
         self._focus_rect: tuple[float, float, float, float] | None = None
+        #: (micrometres per preview pixel, style) while a scale bar is
+        #: wanted over the live view, else None. Drawn after the reduction
+        #: rather than before it; see `_set_frame`.
+        self._bar: tuple[float, dict] | None = None
         self._balance_rect: tuple[float, float, float, float] | None = None
         self._balancing = False
         #: The balance box is shown while it is being placed and for a
@@ -93,6 +97,27 @@ class LiveView(QtWidgets.QWidget):
             rgb = self._scaled(rgb, w, h, tw, th)
         # QImage does not copy, so keep the buffer alive on the instance.
         self._buf = np.ascontiguousarray(rgb)
+
+        # The scale bar goes on *here*, after the reduction, rather than
+        # onto the frame before it. Drawn at preview size it cost 10.7 ms
+        # of every frame on this thread -- a third of a 30 fps budget for
+        # a decoration -- because it needs a copy of the frame first (the
+        # rest of the window keeps the undecorated one) and because its
+        # opacity blend converts a region that scales with the frame. At
+        # display size there are seven times fewer pixels and the copy is
+        # already made: the reduction above hands back a fresh array.
+        #
+        # The cost is that the live bar is no longer laid out identically
+        # to the one a capture carries, since it is placed in display
+        # pixels rather than sensor pixels. It still measures correctly,
+        # which is the part that matters, and Nate chose this trade
+        # explicitly over a preview that stutters.
+        if self._bar is not None and self._buf.size:
+            um, style = self._bar
+            if self._buf is rgb and rgb.base is None:
+                self._buf = rgb.copy()      # never draw on the caller's
+            from ..process import scalebar
+            scalebar.draw(self._buf, um * (w / float(tw)), **style)
         self._image = QtGui.QImage(self._buf.data, tw, th,
                                    self._buf.strides[0],
                                    QtGui.QImage.Format.Format_BGR888)
@@ -272,6 +297,10 @@ class LiveView(QtWidgets.QWidget):
         # strided store, np.multiply did it as a strided read-modify-write.
         cv2.mixChannels([mask], [buf], [0, 3])
         return self._peak_image
+
+    def set_scale_bar(self, um_per_px, style) -> None:
+        """Draw a bar over the live view, or stop. See `_set_frame`."""
+        self._bar = None if not um_per_px else (float(um_per_px), style)
 
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect

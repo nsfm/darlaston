@@ -2595,53 +2595,32 @@ class MainWindow(QtWidgets.QMainWindow):
         elif not sensor_pitch(self.setup, info):
             self.strip.set_note(_("note.scale_bar.no_pitch"))
 
-    def _shown_preview(self, preview):
-        """The frame as it goes to the view, with the bar on it if asked.
+    def _offer_scale_bar(self, preview_width: int) -> None:
+        """Tell the view whether to draw a bar, and at what scale.
 
-        Decoration, drawn inside the handler that puts every frame on
-        screen, so a fault in it must not take the frame with it. It
-        already has once: a missing import raised before the view was ever
+        The view draws it after reducing the frame to the window, which is
+        seven times fewer pixels and needs no copy of its own. Drawing it
+        here instead, onto the frame, cost 10.7 ms of every frame on this
+        thread: the rest of the window keeps `preview` undecorated, so it
+        needed a copy first, and the bar's opacity blend then worked over
+        a region that scales with the frame rather than with the bar.
+
+        A fault in this must not take the picture with it -- it already
+        did once, when a missing import raised before the view was
         reached and the preview went black while everything reading the
-        pipeline carried on as though nothing were wrong, which is a
-        confusing way to find a one line mistake. Reported once, then left
-        off, so the picture keeps arriving.
+        pipeline carried on. Reported once, then left off.
         """
         if not self.settings.scale_bar_live:
-            return preview
+            self.view.set_scale_bar(None, None)
+            return
         try:
-            um = self._preview_um_per_px(preview.shape[1])
-            if not um:
-                return preview
-            shown = self._live_overlay_buffer(preview)
-            scalebar.draw(shown, um, **self.settings.bar_style(live=True))
-            return shown
+            um = self._preview_um_per_px(preview_width)
+            self.view.set_scale_bar(um, self.settings.bar_style(live=True))
         except Exception:
             self.settings.scale_bar_live = False
+            self.view.set_scale_bar(None, None)
             _log.exception("the live scale bar failed and is now off")
             self.strip.set_note(_("note.scale_bar.failed"))
-            return preview
-
-    def _live_overlay_buffer(self, preview) -> "np.ndarray":
-        """A reusable copy of the frame, for drawing furniture into.
-
-        The bar cannot go straight into `preview`: the rest of the window
-        keeps that frame -- the balance sample, the tile thumbnail, the
-        style window's own preview -- and those want the photograph rather
-        than the photograph with a ruler on it. So it needs a copy, and
-        the copy was being allocated every frame.
-
-        Allocating is nearly all of the cost. Measured at 5440 wide, which
-        is 60 MB a frame: a fresh copy is 24.9 ms and writing into a
-        buffer already there is 4.3 ms, on a budget of 33. At the 2736
-        preview it is 0.8 ms either way, which is the other half of why
-        this hurt so much more at the larger mode.
-        """
-        buf = getattr(self, "_bar_buf", None)
-        if buf is None or buf.shape != preview.shape or \
-                buf.dtype != preview.dtype:
-            buf = self._bar_buf = np.empty_like(preview)
-        np.copyto(buf, preview)
-        return buf
 
     def _set_scale_bar_live(self, on: bool) -> None:
         self.settings.scale_bar_live = bool(on)
@@ -2848,8 +2827,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # photograph rather than the photograph with furniture on it. One
         # extra copy of 6.65 MB per frame, paid only while the toggle is
         # on, which is the honest place to charge it.
-        shown = self._shown_preview(s.preview)
-        self.view.set_frame(shown, s.peaking)
+        self._offer_scale_bar(s.preview.shape[1])
+        self.view.set_frame(s.preview, s.peaking)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.
