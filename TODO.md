@@ -35,15 +35,9 @@
       black is the loudest thing the darkness sweep will ever see. The mock
       can occlude the field on demand, so both cases can be simulated as
       soon as there is something to test.
-- [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a
-      guess rather than a mistake, but a matrix measured from a colour target
-      would be better than assuming sRGB primaries.
-- [ ] **Exposure handoff.** Carry the live view's brightness into the capture
-      at unity gain. Needs calibration to be verifiable.
-- [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept
-      is wired; the objective _stepper_ and future turret auto-detection are
-      not. When magnification becomes known per objective, positions could be
-      rescaled instead of discarded.
+- [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a guess rather than a mistake, but a matrix measured from a colour target would be better than assuming sRGB primaries.
+- [ ] **Exposure handoff.** Carry the live view's brightness into the capture at unity gain. Needs calibration to be verifiable.
+- [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept is wired; the objective _stepper_ and future turret auto-detection are not. When magnification becomes known per objective, positions could be rescaled instead of discarded.
 - [ ] **Spike `Toupcam_CtiEnable`.** `libtoupcam` is a GenTL _consumer_
       (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings);
       the call succeeds and is non-destructive. If a third-party GenTL
@@ -211,88 +205,28 @@
 
 ## Capture features
 
-- [ ] **Inverted brightfield** native in the live view. Display and export
-      transform only; the raw stays linear positive.
+- [ ] **Inverted brightfield** native in the live view. Display and export transform only; the raw stays linear positive.
 
 ## Optics and measurement
 
-- [ ] **Optical profiler.** Stage micrometer plus grid target → µm/pixel,
-      distortion, field curvature, lateral CA, MTF50 centre vs corner, and a
-      computed **usable field fraction** that derives the crop radius instead
-      of leaving it to judgement. Also settles AmScope adapter vs planar relay
-      eyepiece with numbers.
-- [ ] **Brightness signatures on real glass.** The third signal is wired and
-      learns from every confirmed rotation, per illumination mode — which
-      matters most for the 6.3×, which has no phase ring and goes darkfield
-      against the phase stop. Whether the learned values stay stable across a
-      session (lamp drift, iris adjustments) is the open question.
-- [ ] **Stop the preview during a long timelapse.** Nate's idea, and the
-      reasoning is sound: a 30 fps preview between shots that are minutes
-      apart is an enormous amount of readout for nothing, and readout is
-      what heats a sensor. Dark current roughly doubles every 6-8 C, so
-      the preview may be _causing_ the drift the timelapse warning
-      describes. Wake the stream only shortly before each frame, and show
-      the last capture in the meantime rather than a live view.
-
-      Cheap to do: a mode change measured about a second, which is
-      nothing against a minute-long interval. Two things to check first
-      -- the stage tracker feeds on preview frames, which is fine for a
-      timelapse where nothing moves but means the hold-still guard is
-      unavailable; and stopping a UVC stream may drop the manual exposure
-      and white balance we set on open, so they would need re-applying
-      each time. Worth measuring the actual sensor warming before and
-      after, since the whole premise is that it matters.
+- [ ] **Optical profiler.** Stage micrometer plus grid target → µm/pixel, distortion, field curvature, lateral CA, MTF50 centre vs corner, and a computed **usable field fraction** that derives the crop radius instead of leaving it to judgement. Also settles AmScope adapter vs planar relay eyepiece with numbers.
+- [ ] **Stop the preview during a long timelapse.** A 30 fps preview between shots that are minutes apart is an enormous amount of readout for nothing, and readout is what heats a sensor. Wake the stream only shortly before each frame, and show the last capture in the meantime rather than a live view. Cheap to do: a mode change measured about a second, which is nothing against a minute-long interval. Two things to check first the stage tracker feeds on preview frames, which is fine for a timelapse where nothing moves but means the hold-still guard is unavailable; and stopping a UVC stream may drop the manual exposure and white balance we set on open, so they would need re-applying each time.
 
 ## Unverified
 
-- [ ] **? `imagepro_stitch` on sparse darkfield.** The largest open question in
-      the project. If it grades diatoms `GOOD` it saves months on Linux and
-      Windows — but it has no arm64 slice on macOS, so the portable path is
-      ours regardless.
-- [ ] **? m2stitch's grid requirement.** One survey pass called it the top pick
-      for accepting seed positions; another said it needs a regular grid with
-      row/column indices, which would make ASHLAR the better fit for freehand
-      tiles. Read the API.
-- [ ] **? ChimpStackr's depth-map mode.** Two passes disagreed on whether it
-      has one. Matters, because depth-map is the merge we want.
-- [ ] **? Resolution index [1]:** true on-sensor binning or pixel skipping?
-      The SDK reports 4.80 µm pixels, but `get_BinningNumber` returns 0.
-      Settle empirically: shoot both, software-average the full-res one, and
-      compare noise.
-- [ ] **? Can the optics out-resolve the binned mode at all?** If the relay is
-      the limit, full resolution records empty magnification. The profiler
-      answers this.
+- [ ] **? Resolution index [1]:** true on-sensor binning or pixel skipping? The SDK reports 4.80 µm pixels, but `get_BinningNumber` returns 0. Settle empirically: shoot both, software-average the full-res one, and compare noise.
+- [ ] **? Can the optics out-resolve the binned mode at all?** If the relay is the limit, full resolution records empty magnification. The profiler answers this.
 - [ ] **? Do the SDK's FFC/DFC apply in the raw path or only the ISP path?**
-- [ ] **? Sony Camera Remote SDK on Linux for the A6700**, for the second
-      backend.
-- [ ] **? Dead-reckoning drift** across a 40-tile mosaic — is overview
-      anchoring sufficient, or is a brightfield registration pass needed?
-- [ ] **? The window frames, on Windows and macOS.** Checklist in
-      `docs/frame-bench.md`, written to be worked through by somebody with
-      the hardware. Most of the frame is a pure function of rectangles and
-      is tested on any machine; the rest reaches past Qt into the platform
-      and has never run. The two that matter most: a maximised window on a
-      scaled display, and the macOS title bar surviving a trip through
-      fullscreen.
-- [ ] **? Snap layouts below half-screen.** The window's minimum width is
-      766 px and Microsoft's limit for snap layouts is 500, so the
-      half-screen layouts work and the third- and quarter-width ones
-      invoke and then fail to snap. Traced to three constraints in a
-      chain - the rail fixed at 286, the live view's 480 minimum and the
-      waiting page's 458 - so relaxing the live view alone bottoms out
-      at 744 and changes nothing. The one that bites is a third of 1920,
-      the commonest screen.
+- [ ] **? Sony Camera Remote SDK on Linux for the A6700**, for the second backend.
+- [ ] **? Dead-reckoning drift** across a 40-tile mosaic — is overview anchoring sufficient, or is a brightfield registration pass needed?
+- [ ] **? Snap layouts below half-screen.** The window's minimum width is 766 px and Microsoft's limit for snap layouts is 500, so the half-screen layouts work and the third- and quarter-width ones invoke and then fail to snap. Traced to three constraints in a chain - the rail fixed at 286, the live view's 480 minimum and the waiting page's 458 - so relaxing the live view alone bottoms out at 744 and changes nothing. The one that bites is a third of 1920.
 
 ## Packaging
 
-- [ ] **Windows testing.** Library naming is handled (`toupcam.dll`, no
-      `lib` prefix) and nothing else has been looked at.
+- [ ] **Windows testing.** Library naming is handled (`toupcam.dll`, `lib` prefix) and nothing else has been looked at. Does the window frame work? Does capture work at all?
 
 ## Later
 
-- [ ] **Gallery and basic develop view (v2).** The sidecar above is the
-      camera's JPEG, one honest rendering with no choices in it. This is the
-      other half: browsing what you shot, and a few sliders over the raw for
-      people who are not raw photographers and never will be.
+- [ ] **Gallery and basic develop view.** Browsing what you shot, and a few sliders for developing RAW to jpeg
 - [ ] **Setup card.** "what's your setup?", neofetch style
 - [ ] **Session resumability.** To rescue interrupted mosaics
