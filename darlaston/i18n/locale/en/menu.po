@@ -105,6 +105,62 @@ msgstr "Make a plate…"
 msgid "menu.darkroom.arrange"
 msgstr "Arrange specimens…"
 
+#. Present: the session again, facing the audience. A second window that
+#. mirrors the live view for a screen other people watch.
+msgid "menu.present"
+msgstr "Present"
+
+msgid "menu.present.window"
+msgstr "Presentation window"
+
+msgid "menu.present.window.tooltip"
+msgstr ""
+"A second window that shows only the picture.\n"
+"Drag it to a screen the audience can see, and double click it to fill "
+"the screen."
+
+#. The overlays. Each answers something a visitor at an event asks.
+msgid "menu.present.scale_bar"
+msgstr "Scale bar"
+
+msgid "menu.present.scale_bar.tooltip"
+msgstr ""
+"Draw the scale bar on the presentation, in the style chosen under "
+"Capture.\n"
+"It answers the first question every audience asks: how big is that?"
+
+msgid "menu.present.magnification"
+msgstr "Magnification"
+
+msgid "menu.present.magnification.tooltip"
+msgstr "Show the magnification in the corner of the presentation."
+
+msgid "menu.present.subject"
+msgstr "Slide subject"
+
+msgid "menu.present.subject.tooltip"
+msgstr "Show what is on the slide, as typed in the subject boxes."
+
+msgid "menu.present.live"
+msgstr "Live marker"
+
+msgid "menu.present.live.tooltip"
+msgstr ""
+"Mark the picture as happening right now.\n"
+"It goes out by itself if the feed stops, so it never marks a frozen "
+"frame as live."
+
+msgid "menu.present.header"
+msgstr "Header"
+
+msgid "menu.present.header.tooltip"
+msgstr ""
+"Show your own two lines in the top corner.\n"
+"A society name and its website, or a note about the exhibit."
+
+msgid "menu.present.header_text"
+msgstr "Set the header…"
+
 #. A toggle and a window, the same shape as white balance above it. In
 #. Capture rather than in Files, because Files is about where photographs
 #. go and this is about what is on them.

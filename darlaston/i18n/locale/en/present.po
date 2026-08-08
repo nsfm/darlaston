@@ -1,0 +1,26 @@
+# The presentation window: the live view again, for an audience.
+
+msgid "present.title"
+msgstr "Presentation"
+
+#. The mark that says the picture is happening now. Kept to one word:
+#. it is read across a room, next to a small pulsing dot.
+msgid "present.live"
+msgstr "Live"
+
+#. The header dialog: two free lines of the operator's own, shown in
+#. the top corner of the presentation window.
+msgid "present.header.title"
+msgstr "Header"
+
+msgid "present.header.explain"
+msgstr ""
+"Two lines of your own, shown in the top corner of the presentation "
+"window. A society name and its website, or a note about what is on "
+"the stage."
+
+msgid "present.header.first"
+msgstr "First line"
+
+msgid "present.header.second"
+msgstr "Second line"

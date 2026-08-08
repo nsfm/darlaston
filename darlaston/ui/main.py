@@ -68,8 +68,9 @@ from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
 from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
-from .widgets import (BalanceSwatch, FocusGroup, Histogram, LiveView,
-                      SaveGauge, ValueBar)
+from .present import HeaderDialog, PresentWindow
+from .widgets import (UI_METER, BalanceSwatch, FocusGroup, Histogram,
+                      LiveView, SaveGauge, ValueBar)
 
 _log = logging.getLogger(__name__)
 
@@ -242,11 +243,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toolbar.about.connect(lambda: AboutDialog(self).exec())
         # Menus rather than buttons, so these nest as more arrives instead of
         # every name having to change when the third tool appears.
-        # Three menus, on the one axis that decides every entry: before a
-        # session, during it, or after it. Every menu is built in one
-        # place, because the last entry to be added was appended to a menu
-        # three screens above and that is how the next one lands in the
-        # wrong group.
+        # Four menus, on the one axis that decides every entry: before a
+        # session, during it, or after it -- and Present, which is the
+        # session again but facing the audience. Every menu is built in
+        # one place, because the last entry to be added was appended to a
+        # menu three screens above and that is how the next one lands in
+        # the wrong group.
         #
         # An ellipsis means a further choice is needed before anything
         # happens -- a dialog or a file chooser. No ellipsis means it
@@ -375,6 +377,48 @@ class MainWindow(QtWidgets.QMainWindow):
         darkroom.addSeparator()
         darkroom.addAction(_("menu.darkroom.plate"), self._plate_dialog)
         darkroom.addAction(_("menu.darkroom.arrange"), self._arrange_dialog)
+
+        # Present: the session again, facing the audience. A second
+        # window that mirrors the live view for a screen other people
+        # watch, with the few words a visitor asks for. Nothing in it
+        # touches the camera or the files.
+        self.present_window: PresentWindow | None = None
+        present = self.toolbar.add_menu("Present", _("menu.present"))
+        self.present_action = present.addAction(_("menu.present.window"))
+        self.present_action.setToolTip(_("menu.present.window.tooltip"))
+        self.present_action.setCheckable(True)
+        self.present_action.toggled.connect(self._toggle_present)
+        present.addSeparator()
+        self.present_bar_action = present.addAction(
+            _("menu.present.scale_bar"))
+        self.present_bar_action.setToolTip(
+            _("menu.present.scale_bar.tooltip"))
+        self.present_mag_action = present.addAction(
+            _("menu.present.magnification"))
+        self.present_mag_action.setToolTip(
+            _("menu.present.magnification.tooltip"))
+        self.present_subject_action = present.addAction(
+            _("menu.present.subject"))
+        self.present_subject_action.setToolTip(
+            _("menu.present.subject.tooltip"))
+        self.present_live_action = present.addAction(_("menu.present.live"))
+        self.present_live_action.setToolTip(_("menu.present.live.tooltip"))
+        present.addSeparator()
+        self.present_header_action = present.addAction(
+            _("menu.present.header"))
+        self.present_header_action.setToolTip(
+            _("menu.present.header.tooltip"))
+        for action, attr in (
+                (self.present_bar_action, "present_scale_bar"),
+                (self.present_mag_action, "present_magnification"),
+                (self.present_subject_action, "present_subject"),
+                (self.present_live_action, "present_live"),
+                (self.present_header_action, "present_header")):
+            action.setCheckable(True)
+            action.setChecked(getattr(self.settings, attr))
+            action.toggled.connect(lambda on, a=attr: self._set_present(a, on))
+        present.addAction(_("menu.present.header_text"),
+                          self._edit_present_header)
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -2627,6 +2671,101 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.save()
         self._say_if_no_scale(on)
 
+    # ---- the presentation window ----------------------------------------
+
+    def _toggle_present(self, on: bool) -> None:
+        """Open or close the audience's window. Built on first use, and
+        reopened where it last sat, because at an event the second
+        screen is the same projector all day."""
+        if on:
+            if self.present_window is None:
+                self.present_window = PresentWindow()
+                self.present_window.closed.connect(self._present_closed)
+                if self.settings.present_geometry:
+                    self.present_window.restoreGeometry(
+                        QtCore.QByteArray.fromHex(
+                            self.settings.present_geometry.encode("ascii")))
+            self.present_window.show()
+            self.present_window.raise_()
+            if self.settings.present_scale_bar:
+                self._say_if_no_scale(True)
+        elif self.present_window is not None:
+            self.present_window.close()
+
+    def _present_closed(self) -> None:
+        """The window says it closed, however that happened -- its own
+        close button included -- and the menu follows the truth."""
+        w = self.present_window
+        if w is not None:
+            self.settings.present_geometry = bytes(
+                w.saveGeometry().toHex()).decode("ascii")
+            self.settings.save()
+        self.present_action.setChecked(False)
+
+    def _set_present(self, attr: str, on: bool) -> None:
+        setattr(self.settings, attr, bool(on))
+        self.settings.save()
+        if attr == "present_scale_bar" and on:
+            self._say_if_no_scale(True)
+
+    def _edit_present_header(self) -> None:
+        dialog = HeaderDialog(self.settings, self)
+        dialog.setStyleSheet(theme.stylesheet())
+        if dialog.exec():
+            # The dialog decides whether there is a header to show; the
+            # menu's check mark follows it rather than remembering.
+            self.present_header_action.setChecked(self.settings.present_header)
+
+    def _offer_present(self, s: LiveSignals) -> None:
+        """Mirror the frame and its captions to the presentation window.
+
+        Shielded the way the live bar is: a fault on this face must not
+        take the operator's own preview with it. The audience's window
+        closing is a mishap; the viewfinder going black is not allowed.
+        """
+        w = self.present_window
+        if w is None or not w.isVisible():
+            UI_METER.skip("presentation")
+            return
+        try:
+            st = self.settings
+            um = (self._preview_um_per_px(s.preview.shape[1])
+                  if st.present_scale_bar else None)
+            # The photograph's opacity, not the live view's: on the
+            # operator's screen the bar is a reminder under the work,
+            # on the audience's it is one of the two answers the window
+            # exists to give.
+            w.view.set_scale_bar(um, self.settings.bar_style() if um
+                                 else None)
+            w.view.set_magnification(*self._present_magnification())
+            subject = (self.subject.subject, self.subject.slide_note) \
+                if st.present_subject else ("", "")
+            w.view.set_subject(*subject)
+            header = (st.present_header_title, st.present_header_subtitle) \
+                if st.present_header else ("", "")
+            w.view.set_header(*header)
+            w.view.set_live(st.present_live)
+            w.set_frame(s.preview)
+        except Exception:
+            _log.exception("the presentation window failed and was closed")
+            w.close()
+
+    def _present_magnification(self) -> tuple[str, str]:
+        """What the audience is told: the total onto the sensor, with
+        the objective under it -- and the same doubt marker the rail
+        carries, because a doubted number must not grow more confident
+        by being projected."""
+        if not self.settings.present_magnification or self.setup is None:
+            return "", ""
+        obj = self.setup.scope.turret.objective
+        suffix = _("objective.uncertain") if self.objective.uncertain else ""
+        total = self.setup.total_magnification
+        if total:
+            return f"{total:g}×", (obj.label + suffix) if obj else ""
+        if obj:
+            return obj.label + suffix, ""
+        return "", ""
+
     def _preview_um_per_px(self, preview_width: int) -> float | None:
         """Micrometres per pixel *of the preview*, not of a capture.
 
@@ -2829,6 +2968,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # on, which is the honest place to charge it.
         self._offer_scale_bar(s.preview.shape[1])
         self.view.set_frame(s.preview, s.peaking)
+        self._offer_present(s)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.
@@ -3006,6 +3146,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._seal_tile_stack()
             except Exception:
                 pass               # closing must never be blocked
+        # Reached from Ctrl-C too, which never passes through closeEvent,
+        # and an open presentation window would keep the process alive.
+        if self.present_window is not None:
+            self.present_window.close()
         self.timelapse.stop()
         self.session.stop()
         self.pipeline.stop()
@@ -3077,6 +3221,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 event.ignore()
                 return
             _log.warning("closing while still running: %s", ", ".join(busy))
+        # The audience's window follows the operator's. Left open it
+        # would keep the application alive headless, because Qt only
+        # quits when the last window closes.
+        if self.present_window is not None:
+            self.present_window.close()
         # `shutdown` waits for the write queue, and is reached from here
         # and from Ctrl-C both.
         self.shutdown()
