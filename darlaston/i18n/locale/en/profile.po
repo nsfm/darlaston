@@ -12,16 +12,16 @@ msgstr "Measure this camera"
 #. calibration nobody runs.
 msgid "profile.body"
 msgstr ""
-"These measuremeants help darlaston figure out how your camera scales "
-"images at different resolutions, and how precisely it allows us to "
-"control exposure."
+"These measurements help darlaston learn how your camera scales images "
+"at different resolutions, and how precisely its exposure can be "
+"controlled."
 
 #. Stage one. Needs detail: matching has nothing to work with otherwise.
 msgid "profile.stage.geometry"
 msgstr ""
-"1. Field of view. We need detail to measure against, so put a slide "
-"in and focus it, or close the field diaphragm down so there is a sharp "
-"edge in view."
+"1. Field of view. The measurement needs detail to work against, so put "
+"a slide in and focus it, or close the field diaphragm down so there is "
+"a sharp edge in view."
 
 #. Stage two. Needs the opposite.
 msgid "profile.stage.response"

@@ -72,7 +72,7 @@ msgid "perf.preview.full.label"
 msgstr "Full"
 
 msgid "perf.preview.full.detail"
-msgstr "Highest preview quality; may affect framerate."
+msgstr "Highest preview quality; may affect frame rate."
 
 msgid "perf.preview.fast.label"
 msgstr "Fast"

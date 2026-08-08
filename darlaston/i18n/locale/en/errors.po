@@ -28,8 +28,8 @@ msgstr "The camera reported an error."
 
 msgid "error.code.e_unexpected"
 msgstr ""
-"The camera refused a setting while it was running. This is a bug, "
-"please report it!"
+"The camera refused a setting while it was running. This is a bug in "
+"darlaston. Please report it."
 
 msgid "error.code.e_notimpl"
 msgstr "This camera model does not support that feature."
@@ -44,27 +44,27 @@ msgstr "The system is out of memory."
 
 msgid "error.code.e_invalidarg"
 msgstr ""
-"The camera rejected an argument. This is a bug, please report "
-"it!"
+"The camera rejected an argument. This is a bug in darlaston. Please "
+"report it."
 
 msgid "error.code.e_pointer"
 msgstr ""
-"The camera was handed a null pointer. This is a bug, please "
-"report it!"
+"The camera was handed a null pointer. This is a bug in darlaston. "
+"Please report it."
 
 msgid "error.code.e_fail"
 msgstr "The camera reported a generic failure."
 
 msgid "error.code.e_wrong_thread"
 msgstr ""
-"The camera was called from the wrong thread. This is a bug, "
-"please report it!"
+"The camera was called from the wrong thread. This is a bug in "
+"darlaston. Please report it."
 
 msgid "error.code.e_gen_failure"
 msgstr ""
 "The camera stopped responding. This is almost always physical: try a "
 "different USB 3 port, reseat the cable, or avoid a hub. The link can also "
-"drop under a long session."
+"drop during a long session."
 
 msgid "error.code.e_busy"
 msgstr ""
@@ -83,7 +83,7 @@ msgid "error.code.e_unreach"
 msgstr "The camera is unreachable over the network."
 
 msgid "error.code.e_cancelled"
-msgstr "The operation was cancelled."
+msgstr "The operation was canceled."
 
 #. No vendor SDK installed at all.
 msgid "error.sdk_missing.heading"
@@ -135,15 +135,15 @@ msgid "error.no_camera.heading"
 msgstr "No {what} found"
 
 msgid "error.no_camera.detail"
-msgstr "The software is working, but we can't find your camera."
+msgstr "darlaston is running, but cannot see your camera."
 
 msgid "error.no_camera.step.plugged"
 msgstr "Check that the camera is plugged in."
 
 msgid "error.no_camera.step.cable"
 msgstr ""
-"Try a different USB port, and a different cable. Ensure you're using a USB 3.0 "
-"cable; older cables may fail or lead to slower preview and capture."
+"Try another USB port and cable. It should be USB 3: older cables fit, "
+"but fail or slow the preview."
 
 msgid "error.no_camera.step.wait"
 msgstr "Some cameras take a few seconds after being plugged in."
@@ -193,7 +193,7 @@ msgstr "No camera available"
 msgid "error.passed_over.detail"
 msgid_plural "error.passed_over.detail"
 msgstr[0] ""
-"One camera was detected, but was set it to be ignored."
+"One camera was detected, but it is set to be ignored."
 msgstr[1] ""
 "{count} cameras were detected, but they were set to be ignored."
 

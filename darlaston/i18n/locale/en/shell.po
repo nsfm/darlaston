@@ -20,7 +20,7 @@ msgstr "retrying in {seconds}s"
 msgid "shell.preview.tooltip"
 msgstr ""
 "Preview resolution. Captures are always full resolution.\n"
-"Smaller previews improve framerate."
+"Smaller previews improve frame rate."
 
 #. One entry in the resolution list: pixel dimensions and megapixels.
 msgid "shell.preview.resolution"
@@ -37,7 +37,7 @@ msgstr "uncapped"
 msgid "shell.rate.fps"
 msgstr "{fps} fps"
 
-#. The live counters: frames analysed, and how many were dropped.
+#. The live counters: frames analyzed, and how many were dropped.
 msgid "shell.numbers.live"
 msgstr "{fps} fps   dropped {dropped} ({percent}%)"
 
@@ -184,9 +184,9 @@ msgstr "reset"
 
 msgid "shell.wb.reset.tooltip"
 msgstr ""
-"Disable white balance correction"
+"Disable white balance correction."
 
-#. The colour patch beside the buttons. It shows the *light*, not the
+#. The color patch beside the buttons. It shows the *light*, not the
 #. correction: a lamp turned down reads orange, and turning it up walks
 #. the patch toward white while you watch.
 msgid "shell.wb.swatch.tooltip"

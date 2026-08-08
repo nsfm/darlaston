@@ -231,6 +231,12 @@ section h2 {
 
 /* ---- comparison ---- */
 
+/* This section has no h2: the table speaks for itself. The kicker takes
+   the heading's breathing room instead. */
+#compare .kicker {
+  margin-bottom: 24px;
+}
+
 .table-scroll {
   overflow-x: auto;
   border: 1px solid var(--line);

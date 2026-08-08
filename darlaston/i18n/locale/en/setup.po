@@ -75,11 +75,10 @@ msgstr ""
 "What turns an objective's magnification into a focal length:\n"
 "f = tube / M, which is the focal length written into every capture.\n"
 "\n"
-"160 is the DIN finite standard and what most pre-1990 stands use. It is "
-"engraved on the objective, under the\n"
-"magnification. An infinity\n"
-"stand has no tube length as such, so put its tube *lens* focal length\n"
-"here instead: 165 Zeiss, 180 Olympus, 200 Nikon and Leica."
+"160 is the DIN finite standard and what most pre-1990 stands use.\n"
+"It is engraved on the objective, under the magnification.\n"
+"An infinity stand has no tube length as such, so put its tube *lens*\n"
+"focal length here instead: 165 Zeiss, 180 Olympus, 200 Nikon and Leica."
 
 msgid "setup.scope.condenser.label"
 msgstr "Condenser"
@@ -239,7 +238,7 @@ msgstr "Serial"
 
 msgid "setup.camera.serial.tooltip"
 msgstr ""
-"Read from the camera. This is how it recognises itself between sessions."
+"Read from the camera. This is how it recognizes itself between sessions."
 
 #. In place of the serial, for a camera that has never been plugged in.
 msgid "setup.camera.serial.state.unseen"
@@ -284,7 +283,7 @@ msgstr "Remove microscope"
 #. sentence says so: it is what makes this safe to answer yes to.
 msgid "setup.scopes.remove.detail"
 msgstr ""
-"Remove {name}?"
+"Remove {name}? Its calibration files stay on disk."
 
 #. ---- the Cameras window -------------------------------------------------
 #. There is no picker here on purpose. Which camera is in front of you is
@@ -363,7 +362,7 @@ msgstr ""
 "These names are older than digital sensors and are not measurements: a "
 "1 inch sensor is 13.2 mm across, not 25.4."
 
-#. {pitch} micrometres, {across} by {down} pixels.
+#. {pitch} micrometers, {across} by {down} pixels.
 msgid "setup.camera.sensor.derived"
 msgstr "{across} × {down} sensor, so {pitch} µm per pixel."
 

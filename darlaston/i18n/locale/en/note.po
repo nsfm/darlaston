@@ -10,7 +10,7 @@ msgstr "banking a blank field…"
 
 #. A slice was rejected because the view moved during the exposure.
 msgid "note.slice_discarded"
-msgstr "slice discarded, it moved. Hold still and it will retake"
+msgstr "slice discarded, it moved. Hold still and it will be retaken"
 
 #. {n} is the slice number. The first one also says what to do next.
 msgid "note.slice_landed"
@@ -52,7 +52,7 @@ msgid "note.tile_merging"
 msgstr "that tile is still merging, one moment"
 
 msgid "note.synthesising"
-msgstr "synthesising from the depth map…"
+msgstr "synthesizing from the depth map…"
 
 msgid "note.arranging_plate"
 msgstr "arranging the plate…"
@@ -107,7 +107,7 @@ msgstr "discarded, the stage moved"
 
 #. While waiting for the operator to point at a neutral patch.
 msgid "note.wb.point"
-msgstr "point at something grey"
+msgstr "point at something gray"
 
 msgid "note.stack_settling"
 msgid_plural "note.stack_settling"

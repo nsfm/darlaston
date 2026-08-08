@@ -24,7 +24,7 @@ msgid "map.mosaic.tooltip"
 msgstr ""
 "Start a mosaic: every capture becomes a tile in a session folder,\n"
 "placed on the map at its tracked position. Steer for 15–25% overlap\n"
-"between neighbours. The readout says how much you have."
+"between neighbors. The readout says how much you have."
 
 msgid "map.undo.action"
 msgstr "Undo"
@@ -48,7 +48,7 @@ msgid_plural "map.mosaic.no_overlap"
 msgstr[0] "mosaic · {count} tile · no overlap, back up"
 msgstr[1] "mosaic · {count} tiles · no overlap, back up"
 
-#. {percent} is how much the current view overlaps its best neighbour.
+#. {percent} is how much the current view overlaps its best neighbor.
 msgid "map.mosaic.overlap"
 msgid_plural "map.mosaic.overlap"
 msgstr[0] "mosaic · {count} tile · overlap {percent}%"

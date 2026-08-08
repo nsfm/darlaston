@@ -1,6 +1,6 @@
 # The calibration panel and its rail button.
 
-#. The rail row that summarises calibration and opens the panel.
+#. The rail row that summarizes calibration and opens the panel.
 msgid "calib.button.label"
 msgstr "calibration"
 

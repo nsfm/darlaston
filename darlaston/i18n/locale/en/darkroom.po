@@ -3,7 +3,7 @@
 #. ---- depth renders ------------------------------------------------------
 #. One finished stack, and everything its depth map can be turned into. Each
 #. render has a name for the checkbox and one line saying what you get. In
-#. microscopy an artefact is a spurious feature introduced by preparation,
+#. microscopy an artifact is a spurious feature introduced by preparation,
 #. so that word is kept out of a list of pictures somebody is being invited
 #. to trust.
 
@@ -14,7 +14,7 @@ msgstr "Render depth"
 #. have to survive translation.
 msgid "darkroom.render.heading"
 msgstr ""
-"<b>{name}</b><br>Everything here is synthesised from the stack's depth map."
+"<b>{name}</b><br>Everything here is synthesized from the stack's depth map."
 
 msgid "darkroom.render.action.render"
 msgstr "Render"
@@ -45,13 +45,13 @@ msgstr "Printable mesh"
 
 #. model.ply is a filename and stays as it is.
 msgid "darkroom.render.mesh.detail"
-msgstr "model.ply, watertight, colour per vertex"
+msgstr "model.ply, watertight, color per vertex"
 
 msgid "darkroom.render.sirds.label"
 msgstr "Autostereogram"
 
 msgid "darkroom.render.sirds.detail"
-msgstr "a Magic Eye of the subject"
+msgstr "depth hidden in a pattern; let your eyes unfocus and the subject appears"
 
 msgid "darkroom.render.pull.label"
 msgstr "Focus pull"
@@ -145,7 +145,7 @@ msgid "darkroom.arrange.rosette.label"
 msgstr "Rosette"
 
 msgid "darkroom.arrange.rosette.detail"
-msgstr "radiating from a centre, sizes balanced"
+msgstr "radiating from a center, sizes balanced"
 
 msgid "darkroom.arrange.spiral.label"
 msgstr "Spiral"

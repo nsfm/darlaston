@@ -63,7 +63,7 @@ msgstr "Center cross"
 
 msgid "menu.capture.guides.cross.tooltip"
 msgstr ""
-"Independent of the grid: centring a specimen and composing a frame are "
+"Independent of the grid: centering a specimen and composing a frame are "
 "different jobs."
 
 msgid "menu.capture.white_balance"
@@ -72,7 +72,7 @@ msgstr "Write white balance"
 msgid "menu.capture.white_balance.tooltip"
 msgstr ""
 "Off writes a neutral file: the sensor's own channels, untouched.\n"
-"Use for polarised interference colour, fluorescence or stained\n"
+"Use for polarized interference color, fluorescence or stained\n"
 "sections, where no part of the field is neutral by nature."
 
 msgid "menu.capture.calibration"
@@ -113,7 +113,7 @@ msgstr "Scale bar"
 
 msgid "menu.capture.scale_bar.tooltip"
 msgstr ""
-"Draw a labelled bar on the photograph.\n"
+"Draw a labeled bar on the photograph.\n"
 "Never on the raw, and never unless the scale is known."
 
 msgid "menu.capture.scale_bar.style"
