@@ -271,6 +271,29 @@ class Settings:
     #: A mosaic never asks, whatever this says. Forty tiles is forty
     #: questions, and worse, forty different answers stitched together.
     stack_halo_mode: str = "off"
+    #: Hold the picture at a sensible brightness on its own. On by
+    #: default, and silently inert on a camera that offers neither
+    #: control, which `CameraInfo` already reports as None rather than as
+    #: a zero width range.
+    auto_exposure: bool = True
+    #: Move gain only, leaving exposure wherever the operator put it.
+    #: Worth having for its own sake -- a fixed exposure is one less
+    #: variable across a session -- and necessary on a camera whose
+    #: exposure response is not monotonic, where a loop that hunts on
+    #: exposure never settles.
+    auto_exposure_lock_time: bool = False
+    #: How much of the remaining error the loop takes per step, as a
+    #: multiplier on the measured damping. Below one is calmer, above is
+    #: more eager. Exposed because how twitchy a picture is allowed to
+    #: look while somebody is working under it is a matter of taste, and
+    #: because a lamp on a rheostat and one on a stable supply want
+    #: different answers.
+    auto_exposure_reactivity: float = 1.0
+    #: Frame rate the live view is expected to hold. Exposure is spent
+    #: freely up to this, and gain takes over past it -- except where the
+    #: mode cannot reach it anyway, in which case exposure is free up to
+    #: the frame period the sensor does manage.
+    auto_exposure_target_fps: float = 30.0
     #: How the live preview is scaled to the window. This is a real trade
     #: and the right answer depends on the subject and the machine, which is
     #: why it is here rather than decided once in the code.

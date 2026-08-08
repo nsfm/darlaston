@@ -201,8 +201,13 @@ class MockCamera(CameraBackend):
             self._thread = None
 
     def _loop(self, on_frame: Callable[[Frame], None], res: Resolution) -> None:
-        interval = 1.0 / self._fps
         while self._running.is_set():
+            # A sensor cannot deliver frames faster than it integrates them,
+            # so the rate is the slower of the readout and the exposure.
+            # Without this the mock hands out 30 fps at a two-second
+            # exposure, and auto-exposure -- whose whole job is to trade
+            # exposure against frame rate -- has nothing to push against.
+            interval = max(1.0 / self._fps, self._exposure_us / 1e6)
             t0 = time.perf_counter()
             buf = self._pool.acquire()
             if buf is None:
