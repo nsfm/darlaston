@@ -251,3 +251,9 @@ msgstr ""
 "Leave the exposure time where you set it and move only gain. Useful\n"
 "for a camera whose time steps are uneven, where the loop would\n"
 "otherwise hunt."
+
+#. Shown once if drawing the bar over the live view throws. It is
+#. decoration inside the handler that puts every frame on screen, so it
+#. stands down rather than taking the picture with it.
+msgid "note.scale_bar.failed"
+msgstr "The live scale bar stopped. The picture is unaffected."

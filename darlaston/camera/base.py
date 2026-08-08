@@ -43,6 +43,37 @@ class Resolution:
         return f"{self.width}x{self.height} ({self.megapixels:.2f} MP)"
 
 
+#: Most pixels worth previewing, in megapixels. A preview is looked at on
+#: a display holding about two megapixels and processed every frame by the
+#: focus metric, the tracker and the levels, all of which scale with the
+#: count. Above this the extra pixels reach neither the eye nor a faster
+#: answer, and on this sensor the 20 MP mode reads out at 12 fps whatever
+#: else is true, which takes the whole interface down with it.
+PREVIEW_MAX_MP = 6.0
+
+
+def preferred_preview(resolutions):
+    """The mode to open on, for a camera nobody has expressed a view about.
+
+    The largest that stays under the ceiling, because sharper is better
+    until it costs frame rate, and the smallest otherwise so a camera
+    offering nothing small still gets its least bad option rather than its
+    worst. On the ToupTek that picks 2736 wide over 5440; on a UVC camera
+    whose largest mode is 1080p it picks that, which is also the largest.
+
+    The default matters more than it looks. The chooser is one small
+    control on a crowded rail, and a new owner has no reason to suspect
+    that everything feeling slow is a preview four times larger than the
+    screen showing it.
+    """
+    modes = list(resolutions or ())
+    if not modes:
+        return None
+    fits = [r for r in modes if r.megapixels <= PREVIEW_MAX_MP]
+    return max(fits, key=lambda r: r.megapixels) if fits else \
+        min(modes, key=lambda r: r.megapixels)
+
+
 @dataclass(frozen=True)
 class CameraInfo:
     model: str

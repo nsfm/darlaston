@@ -477,3 +477,18 @@ def _shadow_style(img, m, length, unit, x0, x1, y1, below, face, plain):
 
 _STYLES = {"adaptive": _adaptive, "plate": _plate, "scrim": _scrim,
            "ruler": _ruler, "caps": _caps, "shadow": _shadow_style}
+
+
+
+# A cached transparent tile, painted over the live view by the widget
+# instead of into the frame, was tried and does not work. Recovering the
+# alpha by rendering the same bar over black and over white -- untouched
+# pixels differ by the full range, opaque ones not at all -- is exact for
+# most of the styles and wrong for `adaptive`, which reads the corner it
+# is about to sit in and picks ink that contrasts with it. Over black it
+# draws light and over white it draws dark, so the two renders disagree
+# about the mark itself rather than only about what is behind it, and the
+# difference is meaningless. Any fix means either dropping adaptive from
+# the live view, which is the default style, or teaching every style to
+# report coverage, which is a larger change than the cost justifies now
+# that the frame buffer is reused: see `main._live_overlay_buffer`.

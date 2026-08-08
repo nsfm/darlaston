@@ -20,6 +20,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..camera.base import CameraBackend, CameraState
@@ -35,6 +36,7 @@ from ..cpu import apply_thread_budget
 from .. import __version__, log
 from ..live.focus import Illumination, Region
 from ..live import balance
+from ..camera.base import preferred_preview
 from ..live.cell import Newest
 from ..live import exposure as exposure_ctl
 from ..process import scalebar
@@ -478,6 +480,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.strip = StatusBar()
         self.strip.preview.currentIndexChanged.connect(self._on_preview_res)
+        self.strip.resolutions_ready.connect(self._choose_preview_resolution)
         self.strip.rate.currentIndexChanged.connect(self._on_rate)
 
         col = QtWidgets.QVBoxLayout()
@@ -550,6 +553,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.auto_exposure = QtWidgets.QPushButton(_("shell.auto_exposure"))
         self.auto_exposure.setCheckable(True)
         self.auto_exposure.setProperty("role", "seg")
+
         self.auto_exposure.toggled.connect(self._on_auto_exposure)
         self.auto_exposure_lock = QtWidgets.QPushButton(
             _("shell.auto_exposure.lock"))
@@ -977,10 +981,19 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._ae_held_shown = (held, on)
         self.auto_exposure.setEnabled(not held)
+        # Brass lettering when there is something to do, which the rail
+        # already means by this: off and available reads as an offer, on
+        # reads as filled brass with dark lettering, and held reads as
+        # neither. `_invite` rather than a fixed property, because Qt
+        # caches the stylesheet match and a switch that never repolishes
+        # never changes.
+        _invite(self.auto_exposure, not on and not held)
         self.auto_exposure.setToolTip(
             _("shell.auto_exposure.held") if held
             else _("shell.auto_exposure.tooltip"))
         self.auto_exposure_lock.setEnabled(on and not held)
+        _invite(self.auto_exposure_lock,
+                on and not held and not self.auto_exposure_lock.isChecked())
         self.auto_exposure_lock.setToolTip(
             _("shell.auto_exposure.lock.tooltip"))
 
@@ -1089,6 +1102,51 @@ class MainWindow(QtWidgets.QMainWindow):
         if moved.gain_pct != state.gain_pct:
             self.gain.setValue(moved.gain_pct)
 
+    def _choose_preview_resolution(self, resolutions) -> None:
+        """Open in a mode worth previewing, and in the one last chosen.
+
+        The chooser is a small control on a crowded rail and the default
+        matters more than it looks: a new owner has no reason to suspect
+        that everything feeling slow is a preview four times the size of
+        their screen. So the camera's own answer decides it rather than
+        whichever mode happens to be first.
+
+        A remembered width wins over the default, and is matched by width
+        rather than by index because an index means nothing across a
+        different camera or a changed mode list. One that no longer exists
+        is ignored, not repaired.
+        """
+        if not resolutions:
+            return
+        want = None
+        profile = getattr(self.setup, "camera", None) if self.setup else None
+        remembered = int(getattr(profile, "preview_width", 0) or 0)
+        if remembered:
+            want = next((r for r in resolutions if r.width == remembered),
+                        None)
+        if want is None:
+            want = preferred_preview(resolutions)
+        if want is None:
+            return
+        at = self.strip.preview.findData(want.index)
+        if at >= 0:
+            self.strip.preview.setCurrentIndex(at)   # applies through the slot
+
+    def _remember_preview_resolution(self, index: int) -> None:
+        """Keep the choice with the camera, since the modes are its own."""
+        if self.setup is None or not self.setup.camera.serial:
+            return
+        info = self.session.status.info
+        mode = next((r for r in (info.resolutions if info else ())
+                     if r.index == index), None)
+        if mode is None or self.setup.camera.preview_width == mode.width:
+            return
+        from dataclasses import replace
+        self.setup.camera = replace(self.setup.camera,
+                                    preview_width=int(mode.width))
+        self.library.file_camera(self.setup.camera)
+        self.library.save()
+
     def _on_preview_res(self, at: int) -> None:
         index = self.strip.preview.itemData(at)
         if index is None or not self.session.status.is_live:
@@ -1096,6 +1154,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # The scene scale changes with the mode, so tracked positions in the
         # old mode's pixels no longer measure anything.
         self.session.set_preview_resolution(int(index))
+        self._remember_preview_resolution(int(index))
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
@@ -2536,6 +2595,54 @@ class MainWindow(QtWidgets.QMainWindow):
         elif not sensor_pitch(self.setup, info):
             self.strip.set_note(_("note.scale_bar.no_pitch"))
 
+    def _shown_preview(self, preview):
+        """The frame as it goes to the view, with the bar on it if asked.
+
+        Decoration, drawn inside the handler that puts every frame on
+        screen, so a fault in it must not take the frame with it. It
+        already has once: a missing import raised before the view was ever
+        reached and the preview went black while everything reading the
+        pipeline carried on as though nothing were wrong, which is a
+        confusing way to find a one line mistake. Reported once, then left
+        off, so the picture keeps arriving.
+        """
+        if not self.settings.scale_bar_live:
+            return preview
+        try:
+            um = self._preview_um_per_px(preview.shape[1])
+            if not um:
+                return preview
+            shown = self._live_overlay_buffer(preview)
+            scalebar.draw(shown, um, **self.settings.bar_style(live=True))
+            return shown
+        except Exception:
+            self.settings.scale_bar_live = False
+            _log.exception("the live scale bar failed and is now off")
+            self.strip.set_note(_("note.scale_bar.failed"))
+            return preview
+
+    def _live_overlay_buffer(self, preview) -> "np.ndarray":
+        """A reusable copy of the frame, for drawing furniture into.
+
+        The bar cannot go straight into `preview`: the rest of the window
+        keeps that frame -- the balance sample, the tile thumbnail, the
+        style window's own preview -- and those want the photograph rather
+        than the photograph with a ruler on it. So it needs a copy, and
+        the copy was being allocated every frame.
+
+        Allocating is nearly all of the cost. Measured at 5440 wide, which
+        is 60 MB a frame: a fresh copy is 24.9 ms and writing into a
+        buffer already there is 4.3 ms, on a budget of 33. At the 2736
+        preview it is 0.8 ms either way, which is the other half of why
+        this hurt so much more at the larger mode.
+        """
+        buf = getattr(self, "_bar_buf", None)
+        if buf is None or buf.shape != preview.shape or \
+                buf.dtype != preview.dtype:
+            buf = self._bar_buf = np.empty_like(preview)
+        np.copyto(buf, preview)
+        return buf
+
     def _set_scale_bar_live(self, on: bool) -> None:
         self.settings.scale_bar_live = bool(on)
         self.settings.save()
@@ -2737,13 +2844,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # photograph rather than the photograph with furniture on it. One
         # extra copy of 6.65 MB per frame, paid only while the toggle is
         # on, which is the honest place to charge it.
-        shown = s.preview
-        if self.settings.scale_bar_live:
-            um = self._preview_um_per_px(s.preview.shape[1])
-            if um:
-                shown = s.preview.copy()
-                scalebar.draw(shown, um,
-                              **self.settings.bar_style(live=True))
+        shown = self._shown_preview(s.preview)
         self.view.set_frame(shown, s.peaking)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture

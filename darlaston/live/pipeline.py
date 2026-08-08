@@ -46,6 +46,11 @@ _log = logging.getLogger(__name__)
 #: computing the levels less often than they are drawn shows a stale
 #: histogram, and more often is work nobody ever sees.
 INSTRUMENT_DIVISOR = 3
+#: Width the stage tracker correlates at, in pixels. The 2736 preview
+#: divided by four lands here, and that grid is the one the tracker's own
+#: measurements were taken on; larger previews are reduced further to meet
+#: it rather than handing phase correlation more pixels than it can use.
+TRACK_WIDTH = 684
 
 
 @dataclass(frozen=True)
@@ -518,7 +523,20 @@ class LivePipeline:
         # true 4x4 average, and is aspect-correct as a bonus, which the
         # square 512 was not. Shrinking the grid further is a trap: 256
         # square is 7.125x and measured *worse* than what it replaced.
-        small = cv2.resize(gray, (gray.shape[1] // 4, gray.shape[0] // 4),
+        # A *size*, not a fraction. Dividing the preview by four gives
+        # 684 wide at the 2736 mode, which is the grid the note above was
+        # measured on, and 1360 at the 5440 mode -- four times the pixels
+        # into a phase correlation that gains nothing from them. Measured
+        # at 5440: 38.0 ms of a 143.9 ms frame, on a camera whose frame
+        # period there is 83 ms. The correlation does not want more
+        # picture because the preview has more picture.
+        #
+        # Still an integer factor, so it stays the true NxN average the
+        # note calls for, and never coarser than four, so no mode is
+        # tracked on less than it is today.
+        step = max(4, int(round(gray.shape[1] / TRACK_WIDTH)))
+        small = cv2.resize(gray, (gray.shape[1] // step,
+                                  gray.shape[0] // step),
                            interpolation=cv2.INTER_AREA)
         key_offset, offset, confidence = self._track(small, gray.shape)
         with self._lock:
