@@ -23,6 +23,8 @@ _*darlaston*_ is compatible with most USB microscope cameras (Toup-family and ge
 - **Focus and exposure assist** - sharpness tracking and a detailed histogram help you capture the best shots possible.
 - **Timelapses** - see how your specimen changes over time.
 - **Scale bars** - calculate the size of your specimens based on your current optical setup.
+- **Presentation mode** - a second window made for audiences: just the picture, with a scale bar, magnification, your name, and the slide subject. Hold the view during slide changes and point out details with a click.
+- **Live streaming** - stream the presentation straight to OBS or any browser on your network. Your viewers get the picture and its captions while your controls stay private.
 - **Creative depthworks** - turn your focus stacks into into wigglegrams, focus pulls, turntables, stereo pairs, red/cyan anaglyphs, autostereograms, printable meshes, and more.
 
 ### Compared to Other Tools
@@ -39,6 +41,7 @@ _*darlaston*_ is compatible with most USB microscope cameras (Toup-family and ge
 | Measurements     | Yes                    | Yes      | No              | No                     |
 | Stage Mapping    | Yes                    | Partial  | No              | No                     |
 | Depth Mapping    | Yes                    | No       | Yes             | Yes                    |
+| Live Streaming   | Yes                    | No       | No              | No                     |
 
 ## Installation
 

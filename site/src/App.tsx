@@ -43,6 +43,14 @@ const FEATURES = [
     body: "See how your specimen changes over time.",
   },
   {
+    title: "Presentation mode",
+    body: "A second window made for audiences: just the picture, with a scale bar, magnification, your name, and the slide subject. Hold the view during slide changes and point out details with a click. No other tool does this either.",
+  },
+  {
+    title: "Live streaming",
+    body: "Stream the presentation straight to OBS or any browser on your network. Your viewers get the picture and its captions while your controls stay private. Made for microscopists who stream.",
+  },
+  {
     title: "Creative depthworks",
     body: "Turn focus stacks into wigglegrams, focus pulls, turntables, stereo pairs, anaglyphs, autostereograms, printable meshes, and more.",
   },
@@ -88,6 +96,7 @@ const COMPARISON: { row: string; cells: Cell[] }[] = [
     cells: [yes, { text: "Partial", cls: "partial" }, no, no],
   },
   { row: "Depth mapping", cells: [yes, no, yes, yes] },
+  { row: "Live streaming", cells: [yes, no, no, no] },
 ];
 
 export default function App() {
