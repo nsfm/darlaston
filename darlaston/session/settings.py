@@ -362,6 +362,12 @@ class Settings:
     #: the explanation operators keep giving.
     present_screen_width: float = 0.0
     present_screen_unit: str = "cm"  # cm | in | m | ft
+    #: Where the network stream listens when it is turned on. The
+    #: switch itself is deliberately not remembered: a program used on
+    #: an institution's network must never open a port because of what
+    #: happened last week. Turning it on is one menu click, per session,
+    #: on purpose.
+    present_stream_port: int = 8089
     #: Where the presentation window last sat, as Qt geometry bytes in
     #: hex. At an event the second screen is the same projector all day,
     #: and a window that reopens on it is one less thing to arrange in

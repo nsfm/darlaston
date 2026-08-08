@@ -476,6 +476,16 @@ class MainWindow(QtWidgets.QMainWindow):
             _("menu.present.screen"), self._edit_present_screen)
         self.present_screen_action.setToolTip(
             _("menu.present.screen.tooltip"))
+        present.addSeparator()
+        # Off at every launch, deliberately: a port is opened by a
+        # person, on the day, never by a remembered preference.
+        self.streamer = None
+        self.present_stream_action = present.addAction(
+            _("menu.present.stream"))
+        self.present_stream_action.setToolTip(
+            _("menu.present.stream.tooltip"))
+        self.present_stream_action.setCheckable(True)
+        self.present_stream_action.toggled.connect(self._toggle_stream)
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -2779,6 +2789,38 @@ class MainWindow(QtWidgets.QMainWindow):
     def _hold_present(self, on: bool) -> None:
         if self.present_window is not None:
             self.present_window.set_held(on)
+        if self.streamer is not None:
+            self.streamer.set_held(on)
+
+    def _toggle_stream(self, on: bool) -> None:
+        """Serve the presentation on the LAN, or stop. The address is
+        said out loud when it starts: a port this program opened must
+        never be something the operator has to discover."""
+        if not on:
+            if self.streamer is not None:
+                self.streamer.stop()
+                self.streamer = None
+            # The address was a claim about the present tense, so it
+            # comes down with the server -- but only if it is still the
+            # note being shown, because something newer may have said
+            # something more important since.
+            if self.strip._note == getattr(self, "_stream_note", None):
+                self.strip.set_note("")
+            return
+        from .stream import Streamer
+        try:
+            self.streamer = Streamer(self.settings.present_stream_port,
+                                     parent=self)
+        except OSError:
+            self.streamer = None
+            self.strip.set_note(_("note.present.stream.failed",
+                                  port=self.settings.present_stream_port))
+            self.present_stream_action.setChecked(False)
+            return
+        if self.present_hold_action.isChecked():
+            self.streamer.set_held(True)
+        self._stream_note = _("note.present.stream", url=self.streamer.url)
+        self.strip.set_note(self._stream_note)
 
     def _set_present_choice(self, attr: str, value: str) -> None:
         setattr(self.settings, attr, value)
@@ -2811,37 +2853,53 @@ class MainWindow(QtWidgets.QMainWindow):
         closing is a mishap; the viewfinder going black is not allowed.
         """
         w = self.present_window
-        if w is None or not w.isVisible():
+        window_up = w is not None and w.isVisible()
+        streaming = self.streamer is not None and self.streamer.wants_frames()
+        if not window_up:
             UI_METER.skip("presentation")
+        if not streaming:
+            UI_METER.skip("stream")
+        if not window_up and not streaming:
             return
         try:
             st = self.settings
             # The scale travels whether or not a bar is drawn from it:
             # the on-screen magnification reads it too.
             um = self._preview_um_per_px(s.preview.shape[1])
-            w.view.set_scale(um)
             # The photograph's opacity, not the live view's: on the
             # operator's screen the bar is a reminder under the work,
             # on the audience's it is one of the two answers the window
             # exists to give.
-            w.view.set_bar(st.bar_style() if st.present_scale_bar and um
-                           else None)
-            w.view.set_screen_scale(self._present_screen_scale(w))
-            w.view.set_fill(st.present_fill)
-            w.view.set_caption_size(st.present_caption_size)
-            w.view.set_caption_opacity(st.present_caption_opacity)
-            w.view.set_magnification(self._present_magnification())
+            bar = st.bar_style() if st.present_scale_bar and um else None
             subject = (self.subject.subject, self.subject.slide_note) \
                 if st.present_subject else ("", "")
-            w.view.set_subject(*subject)
             header = (st.present_header_title, st.present_header_subtitle) \
                 if st.present_header else ("", "")
-            w.view.set_header(*header)
-            w.view.set_live(st.present_live)
-            w.set_frame(s.preview)
+            views = ([w.view] if window_up else []) \
+                + ([self.streamer.view] if streaming else [])
+            for view in views:
+                view.set_scale(um)
+                view.set_bar(bar)
+                view.set_fill(st.present_fill)
+                view.set_caption_size(st.present_caption_size)
+                view.set_caption_opacity(st.present_caption_opacity)
+                view.set_magnification(self._present_magnification())
+                view.set_subject(*subject)
+                view.set_header(*header)
+                view.set_live(st.present_live)
+            if window_up:
+                # Only the window's screen is measurable; the stream is
+                # watched on screens nobody here can measure, and its
+                # view is never told otherwise.
+                w.view.set_screen_scale(self._present_screen_scale(w))
+                w.set_frame(s.preview)
+            if streaming:
+                self.streamer.frame(s.preview)
         except Exception:
             _log.exception("the presentation window failed and was closed")
-            w.close()
+            if w is not None:
+                w.close()
+            self.present_stream_action.setChecked(False)
 
     def _present_screen_scale(self, w) -> float | None:
         """Millimetres one of the presentation window's pixels covers on
@@ -3259,6 +3317,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # and an open presentation window would keep the process alive.
         if self.present_window is not None:
             self.present_window.close()
+        if self.streamer is not None:
+            self.streamer.stop()
+            self.streamer = None
         self.timelapse.stop()
         self.session.stop()
         self.pipeline.stop()

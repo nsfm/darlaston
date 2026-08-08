@@ -126,3 +126,11 @@ msgid "note.scale_bar.no_optics"
 msgstr ""
 "No scale bar yet: the objective and magnification are unknown. Set them "
 "under Setup > Microscopes."
+
+#. Announced the moment the stream starts: a port this program opened
+#. must never be something the operator has to discover.
+msgid "note.present.stream"
+msgstr "Serving the presentation at {url}"
+
+msgid "note.present.stream.failed"
+msgstr "Port {port} is already in use, so the stream did not start."

@@ -211,6 +211,17 @@ msgstr ""
 "Tell the window how wide the audience's picture really is,\n"
 "and it can say how large things appear on that screen."
 
+#. A network service, so it is off at every launch and the address is
+#. announced when it starts.
+msgid "menu.present.stream"
+msgstr "Serve on the network"
+
+msgid "menu.present.stream.tooltip"
+msgstr ""
+"Serve the presentation as live video on your local network.\n"
+"OBS reads it as a browser or media source, and any browser on the "
+"network can simply open the address."
+
 #. A toggle and a window, the same shape as white balance above it. In
 #. Capture rather than in Files, because Files is about where photographs
 #. go and this is about what is on them.
