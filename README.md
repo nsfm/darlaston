@@ -6,26 +6,43 @@ Originally built for photographing diatom arrangements, _*darlaston*_ is a tool 
 
 Named for **Herbert William Hutton Darlaston** (1867-1949), who prepared nearly a thousand microscope slides in his first year at the bench only to give most of them away. He continued his work for the next fifty years under the promise _Every Slide Perfect_.
 
-## What is it?
+## Features
 
 <p align="center">
   <img src="assets/darlaston_ui.jpg" alt="darlaston UI screenshot" width="100%">
 </p>
 
-_*darlaston*_ is compatible with most USB microscope cameras and offers a full suite of photomicrography utilities:
+_*darlaston*_ is compatible with most USB microscope cameras (Toup-family and generic) and offers a full suite of photomicrography utilities:
 
-- **Captures** 12-bit RAW, including 76 EXIF tags to ensure your work is properly documented and compatible with traditional photography workflows.
-- **Assists focus and exposure**, with sharpness tracking and a histogram that helps you avoid blown-out shots.
-- **Tracks the stage**, building a slide map you can reference and navigate to help plan large captures.
-- **Stitches mosaics**, helping you to capture super high resolution images.
-- **Stacks focus** with an easy workflow that detects focus changes and captures images automatically
-- **Composes the two**, letting you create focus-stacked mosaics without the hassle of jumping between tools.
-- **Takes timelapses**, so you can see how your specimen changes over time.
-- **Lets you have fun with depth maps** from focus stacks, converting them into wigglegrams, focus pulls, turntables, stereo pairs, red/cyan anaglyphs, autostereograms, printable meshes, and more.
+- **12-bit RAW** - the only photomicrography tool that gives you RAW photos with extended dynamic range for postprocessing in Lightroom, Darktable or other apps.
+- **Comprehensive EXIF** - optics tagging ensures your work is properly documented, including subject metadata and author copyrights.
+- **Stage mapping** - tracks your movements and builds a live minimap of your slide to help you plan captures.
+- **Mosaic stitching** - to capture super high resolution images larger than your field of view.
+- **Focus stacking** - with an easy workflow that detects focus changes and takes shots automatically.
+- **Focus stacked mosaics** - combine both focus stacking and mosaic stitching in a single pass, seamlessly.
+- **Focus and exposure assist** - sharpness tracking and a detailed histogram help you capture the best shots possible.
+- **Timelapses** - see how your specimen changes over time.
+- **Scale bars** - calculate the size of your specimens based on your current optical setup.
+- **Creative depthworks** - turn your focus stacks into into wigglegrams, focus pulls, turntables, stereo pairs, red/cyan anaglyphs, autostereograms, printable meshes, and more.
+
+### Compared to Other Tools
+
+|                  | _*darlaston*_          | ToupView | Helicon         | Zerene                 |
+| ---------------- | ---------------------- | -------- | --------------- | ---------------------- |
+| Runs On          | Mac OS, Windows, Linux | Windows  | Mac OS, Windows | Mac OS, Windows, Linux |
+| Cost             | Free                   | Free     | $200            | $89 to $289            |
+| Mosaic Stitching | Yes                    | Yes      | Yes             | No                     |
+| Focus Stacking   | Yes                    | Yes      | Yes             | Yes                    |
+| Stack + Stitch   | Yes                    | No       | No              | No                     |
+| RAW Output       | Yes                    | No       | Yes (plugins)   | No                     |
+| Camera Control   | Yes                    | Yes      | Yes (+$75)      | No                     |
+| Measurements     | Yes                    | Yes      | No              | No                     |
+| Stage Mapping    | Yes                    | Partial  | No              | No                     |
+| Depth Mapping    | Yes                    | No       | Yes             | Yes                    |
 
 ## Installation
 
-[Grab the latest release from here](https://github.com/nsfm/darlaston/releases) and follow the provided installation instructions.
+We support Mac OS, Windows, and Linux. [Grab the latest release from Github](https://github.com/nsfm/darlaston/releases) and follow the provided installation instructions for your platform.
 
 To install from source for development, clone the repo and run `make install` followed by `make run`.
 
