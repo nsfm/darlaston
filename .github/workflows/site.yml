@@ -1,0 +1,60 @@
+name: site
+
+# The shopfront rides the same rhythm as the release workflow: every push
+# to main deploys. The downloads section asks the GitHub API for the
+# latest release at page load, so the site never goes stale between
+# deploys -- rebuilding on every push is about keeping the copy and
+# screenshots current, not the version numbers.
+#
+# Pull requests only build when they touch the site, and never deploy:
+# an app PR has no business ringing this bell, and a site PR proves it
+# compiles without shipping anything.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["site/**", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+concurrency:
+  # Deploys land in commit order; a superseded PR build is wasted work.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

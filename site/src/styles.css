@@ -1,0 +1,335 @@
+/* The palette is darlaston/ui/theme.py, verbatim. The site is the
+   instrument's own shopfront and should not invent a second identity. */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  --bg: #101210;
+  --panel: #191c19;
+  --sunk: #0b0d0b;
+  --line: #2a2e29;
+  --ink: #e4e7e0;
+  --dim: #757a72;
+  --brass: #c89b4a;
+  --brass-lit: #d7ad60;
+  --brass-deep: #ab8339;
+  --good: #6fa96f;
+  --bad: #d0605e;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--brass);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--brass-lit);
+}
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---- header ---- */
+
+header {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 0;
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  z-index: 10;
+}
+header .container {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+header img {
+  height: 26px;
+  display: block;
+}
+header nav {
+  margin-left: auto;
+  display: flex;
+  gap: 22px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+}
+header nav a {
+  color: var(--dim);
+}
+header nav a:hover {
+  color: var(--brass-lit);
+}
+
+/* ---- hero ---- */
+
+.hero {
+  padding: 88px 0 56px;
+  text-align: center;
+}
+.hero .wordmark {
+  width: min(420px, 80vw);
+  margin: 0 auto 28px;
+  display: block;
+}
+.hero h1 {
+  font-size: clamp(26px, 4vw, 38px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  max-width: 720px;
+  margin: 0 auto 16px;
+}
+.hero p.sub {
+  color: var(--dim);
+  max-width: 640px;
+  margin: 0 auto 36px;
+}
+.cta-row {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 64px;
+}
+.btn {
+  display: inline-block;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 15px;
+  padding: 12px 26px;
+  border: 1px solid var(--brass-deep);
+  border-radius: 4px;
+  color: var(--brass);
+  background: transparent;
+  transition: all 0.15s ease;
+}
+.btn:hover {
+  border-color: var(--brass-lit);
+  color: var(--brass-lit);
+  background: color-mix(in srgb, var(--brass) 8%, transparent);
+}
+.btn.primary {
+  background: var(--brass);
+  color: var(--sunk);
+  border-color: var(--brass);
+  font-weight: 500;
+}
+.btn.primary:hover {
+  background: var(--brass-lit);
+  border-color: var(--brass-lit);
+  color: var(--sunk);
+}
+.screenshot {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--sunk);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+.screenshot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ---- sections ---- */
+
+section {
+  padding: 72px 0;
+  border-top: 1px solid var(--line);
+}
+.kicker {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin-bottom: 10px;
+}
+section h2 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 28px;
+}
+
+/* ---- story ---- */
+
+.story {
+  max-width: 720px;
+  color: var(--dim);
+}
+.story strong {
+  color: var(--ink);
+}
+.story em.promise {
+  color: var(--brass);
+  font-style: italic;
+}
+
+/* ---- features ---- */
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.feature {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 22px;
+}
+.feature h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--brass-lit);
+}
+.feature p {
+  font-size: 15px;
+  color: var(--dim);
+}
+
+/* ---- comparison ---- */
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 15px;
+  background: var(--panel);
+}
+th,
+td {
+  padding: 10px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+thead th {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  color: var(--dim);
+  font-weight: 400;
+  background: var(--sunk);
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+td.yes {
+  color: var(--good);
+}
+td.no {
+  color: var(--bad);
+}
+td.partial,
+td.cost {
+  color: var(--dim);
+}
+th.us,
+td.us {
+  color: var(--brass-lit);
+  background: color-mix(in srgb, var(--brass) 6%, transparent);
+}
+td.us.yes {
+  color: var(--good);
+}
+
+/* ---- downloads ---- */
+
+.downloads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.dl-card {
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 18px 20px;
+  transition: border-color 0.15s ease;
+}
+.dl-card:hover {
+  border-color: var(--brass-deep);
+}
+.dl-card .platform {
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.dl-card .detail {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  color: var(--dim);
+}
+.dl-meta {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+  color: var(--dim);
+}
+.dl-meta a {
+  color: var(--brass);
+}
+
+/* ---- footer ---- */
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 40px 0 56px;
+  font-size: 14px;
+  color: var(--dim);
+}
+footer .container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 40px;
+  justify-content: space-between;
+}
+footer p {
+  max-width: 560px;
+}

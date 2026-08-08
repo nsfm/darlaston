@@ -30,6 +30,13 @@ calibration/
 # that is not committed renders as a broken image for every reader.
 !assets/*.png
 
+# Site art, same reason again: brand assets are source, not photographs.
+!site/public/*.png
+!site/public/*.jpg
+
+# The site's dependencies. Its build output is already covered by dist/.
+site/node_modules/
+
 # Written by setuptools-scm at build time, from the git tags.
 darlaston/_version.py
 
