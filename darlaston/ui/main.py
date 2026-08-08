@@ -194,6 +194,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ae_fps = 0.0
         self._ae_rate_mark: tuple[int, float] | None = None
         self._ae_readout = exposure_ctl.Readout()
+        #: The levels reading this loop last acted on. It must never act
+        #: twice on one measurement: the histogram is recomputed every few
+        #: frames and reused in between, so acting per frame applies the
+        #: same correction several times over, which is dead time in the
+        #: loop and oscillates exactly as dead time does.
+        self._ae_levels_seq = -1
         self._last_preview = None
         #: The live focus metric as of the frame the trigger last looked
         #: at. A stack has no absolute Z, so this number is the only thing
@@ -1051,6 +1057,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._auto_exposure_allowed():
             self._ae_hurry = True      # resume from a known event, not drift
             return
+        # One step per observation. Measured on a simulated sensor: with
+        # three frames of dead time the exposure swings 1448x, and acting
+        # only once per fresh reading takes that to 1.00x. The pipeline
+        # supplies three frames of it on its own, by design, because the
+        # levels are wanted at the rate they are looked at rather than at
+        # frame rate.
+        fresh = getattr(signals, "levels_seq", None)
+        if fresh is not None:
+            if fresh == self._ae_levels_seq:
+                return
+            self._ae_levels_seq = fresh
+
         limits = self._auto_exposure_limits()
         if limits is None or not limits.supported:
             return

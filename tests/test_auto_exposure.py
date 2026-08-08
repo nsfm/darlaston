@@ -281,3 +281,49 @@ def test_changing_preview_mode_forgets_the_old_readout(window):
     win.strip.preview.setCurrentIndex(0)
     if win.session.status.is_live:
         assert win._measured_frame_period_us() == 0.0
+
+
+# ---- one step per observation ----------------------------------------------
+
+def _levelled(win, level=0.02, seq=1, when=0.0, levels_seq=1):
+    s = _signals(win, level, seq, when)
+    s.levels_seq = levels_seq
+    return s
+
+
+def test_it_acts_once_per_reading_not_once_per_frame(window, monkeypatch):
+    """The pipeline takes the levels every few frames and hands out the
+    same array in between, so acting per frame applies one measurement's
+    correction several times over. That is dead time, and dead time
+    oscillates: measured on a simulated sensor at three frames of it, the
+    exposure swings 1448x against 1.00x when the loop acts once per
+    reading. Nate saw it as the picture pumping at the 5 k preview.
+    """
+    win = window()
+    _with_camera(win, monkeypatch)
+    win.settings.auto_exposure = True
+    win._ae_hurry = True
+
+    win._auto_expose(_levelled(win, levels_seq=7))
+    once = _at(win)
+
+    # Two more frames carrying the very same reading.
+    win._auto_expose(_levelled(win, seq=2, when=0.1, levels_seq=7))
+    win._auto_expose(_levelled(win, seq=3, when=0.2, levels_seq=7))
+    assert _at(win) == once, "acted more than once on one measurement"
+
+    # A fresh reading, and it moves again.
+    win._auto_expose(_levelled(win, seq=4, when=0.3, levels_seq=8))
+    assert _at(win) != once
+
+
+def test_signals_without_a_levels_count_still_work(window, monkeypatch):
+    """The field is defaulted so anything constructing signals directly
+    keeps working; the loop must not refuse to run for want of it."""
+    win = window()
+    _with_camera(win, monkeypatch)
+    win.settings.auto_exposure = True
+    win._ae_hurry = True
+    before = _at(win)
+    win._auto_expose(_signals(win, 0.02))          # no levels_seq at all
+    assert _at(win) != before
