@@ -1,4 +1,5 @@
 import Downloads from "./Downloads";
+import Tour from "./Tour";
 
 const GITHUB = "https://github.com/nsfm/darlaston";
 
@@ -127,10 +128,7 @@ export default function App() {
             </a>
           </div>
           <div className="screenshot">
-            <img
-              src={asset("darlaston_ui.jpg")}
-              alt="The darlaston interface: live camera view with stage map, histogram, and capture controls"
-            />
+            <Tour />
           </div>
         </div>
 
