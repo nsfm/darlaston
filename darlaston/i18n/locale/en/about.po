@@ -21,7 +21,7 @@ msgstr ""
 "made so many, so well, you can still find them today, over a hundred "
 "years later."
 
-#. The typefaces are named because their licence asks for attribution.
+#. The typefaces are named because their license asks for attribution.
 msgid "about.licence"
 msgstr ""
 "<i>darlaston</i> is provided freely to use, share, and modify under the "

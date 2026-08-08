@@ -22,21 +22,21 @@ msgstr "Notice"
 msgid "photographer.notice.placeholder"
 msgstr "left empty, no copyright tag is written at all"
 
-#. ---- licences -----------------------------------------------------------
+#. ---- licenses -----------------------------------------------------------
 #. Offered because most microscopy that gets shared is shared under one of
-#. these, and typing a licence string from memory is how you get it wrong.
+#. these, and typing a license string from memory is how you get it wrong.
 #. Each has a name for the menu and the terms the notice ends with. The
-#. Creative Commons names and version numbers are the licences' own and must
+#. Creative Commons names and version numbers are the licenses' own and must
 #. not be translated; the words around them may be.
 
-#. No licence chosen. Lower case, because it is an absence rather than a
+#. No license chosen. Lower case, because it is an absence rather than a
 #. name.
 msgid "photographer.licence.none.label"
 msgstr "none"
 
 #. The whole notice. {year} and {name} are the year and the photographer,
-#. {terms} the licence's own words from below. A notice is matched back to
-#. its licence by what it ends with, so {terms} has to stay last.
+#. {terms} the license's own words from below. A notice is matched back to
+#. its license by what it ends with, so {terms} has to stay last.
 msgid "photographer.notice.detail"
 msgstr "{year} {name}. {terms}"
 

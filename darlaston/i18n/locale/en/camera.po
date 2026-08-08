@@ -11,7 +11,8 @@ msgstr "Which camera is on the microscope?"
 #. cameras: because hiding them would eventually hide the right one.
 msgid "camera.pick.body"
 msgstr ""
-"Every camera darlaston can see is listed here."
+"Every camera darlaston can see is listed here, even ones that may not "
+"be microscope cameras."
 
 msgid "camera.pick.size"
 msgstr "{width}×{height} ({mp} MP)"

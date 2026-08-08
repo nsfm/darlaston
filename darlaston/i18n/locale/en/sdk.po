@@ -51,7 +51,7 @@ msgstr ""
 #. is shown.
 msgid "sdk.status.opened"
 msgstr ""
-"Opened their website. Please unzip the driver into {where}"
+"Opened their website. Please unzip the driver into {where}."
 
 #. {host} is the site the archive comes from.
 msgid "sdk.status.contacting"

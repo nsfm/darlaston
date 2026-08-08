@@ -158,7 +158,7 @@ msgid "capture.files.scale_bar.style.shadow"
 msgstr "Shadow (white, soft drop shadow)"
 
 #. The scale bar window, opened from Capture. Its own window rather than a
-#. row in Files, because every choice in it is a taste judgement and the
+#. row in Files, because every choice in it is a taste judgment and the
 #. preview is the feature.
 msgid "capture.bar.title"
 msgstr "Scale bar"

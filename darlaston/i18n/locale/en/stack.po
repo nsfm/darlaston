@@ -34,9 +34,9 @@ msgstr "Render depth"
 msgid "stack.render.tooltip"
 msgstr ""
 "Everything the depth map can make: a looping wobble, a focus\n"
-"pull, a lit turntable, a stereo pair, an anaglyph, a Magic\n"
-"Eye, a Darlaston Inferred Contrast relief and a printable\n"
-"mesh, all written beside the stack."
+"pull, a lit turntable, a stereo pair, an anaglyph, an\n"
+"autostereogram, a Darlaston Inferred Contrast relief and a\n"
+"printable mesh, all written beside the stack."
 
 msgid "stack.options.tooltip"
 msgstr "Options for merging the stack into one image."
@@ -124,7 +124,7 @@ msgstr "gentle (layered subjects)"
 msgid "stack.output.heading"
 msgstr "Output"
 
-#. DNG is a file format and bayer is the sensor's colour filter pattern;
+#. DNG is a file format and bayer is the sensor's color filter pattern;
 #. both stay as they are.
 msgid "stack.output.bayer.label"
 msgstr "raw bayer DNG (small)"

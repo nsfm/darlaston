@@ -59,10 +59,10 @@ msgid "stitch.note.plan"
 msgid_plural "stitch.note.plan"
 msgstr[0] ""
 "{count} tile. Positions come from the manifest and are refined seam by "
-"seam; illumination is levelled from the tiles themselves."
+"seam; illumination is leveled from the tiles themselves."
 msgstr[1] ""
 "{count} tiles. Positions come from the manifest and are refined seam by "
-"seam; illumination is levelled from the tiles themselves."
+"seam; illumination is leveled from the tiles themselves."
 
 #. Registration is the pass that refines each tile's position from the
 #. overlap, before anything is drawn.
