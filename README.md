@@ -54,7 +54,7 @@ This software is provided freely to use, share, and modify under the GPLv3. See 
 
 ### On the ToupTek SDK
 
-The SDK ships with no license or copyright notice. That's too ambiguous for us to include the SDK with this tool, so users must install the SDK themselves from [ToupTek's download centre](https://www.touptekphotonics.com/download/?category=SDK).
+The SDK ships with no license or copyright notice so unfortunately we can't include it with this tool. Users must install the SDK themselves by following instructions in-app, or directly from [ToupTek's download center](https://www.touptekphotonics.com/download/?category=SDK).
 
 ## Acknowledgements
 
