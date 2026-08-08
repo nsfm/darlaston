@@ -21,6 +21,8 @@ DNG stays exactly what the sensor recorded.
 """
 from __future__ import annotations
 
+import functools
+
 import cv2
 import numpy as np
 
@@ -299,7 +301,8 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
          style: str = DEFAULT_STYLE, face: str = DEFAULT_FACE,
          corner: str = DEFAULT_CORNER, size: str = DEFAULT_SIZE,
          label_at: str = DEFAULT_LABEL, plain_units: bool = False,
-         opacity: float = 1.0, margin: float = 0.035) -> bool:
+         opacity: float = 1.0, margin: float = 0.035,
+         ink: tuple[int, int, int] | None = None) -> bool:
     """Draw into the bottom-right of `image`, in place. Did it draw?
 
     This used to refuse when the turret belief was unconfirmed, on the
@@ -321,6 +324,12 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
     if geom is None:
         return False
     fn = _STYLES.get(style) or _STYLES[DEFAULT_STYLE]
+    if ink is not None and fn is _adaptive:
+        # Only `adaptive` has an opinion to override: it is the one style
+        # that reads what it is about to cover. See `tile`, which needs
+        # that decision made once and held, rather than measured per
+        # render off a canvas it chose for other reasons.
+        fn = functools.partial(_adaptive, ink=tuple(int(c) for c in ink))
     face = face if face in FACES else DEFAULT_FACE
     alpha = min(1.0, max(MIN_OPACITY, float(opacity)))
 
@@ -348,7 +357,8 @@ def draw(image: np.ndarray, um_per_px: float | None, *,
 
 # ---- the styles ------------------------------------------------------------
 
-def _adaptive(img, m, length, unit, x0, x1, y1, below, face, plain):
+def _adaptive(img, m, length, unit, x0, x1, y1, below, face, plain,
+              ink=None):
     """No furniture at all: read the corner and pick ink that contrasts.
 
     The default, because it is the only one that adds nothing to the
@@ -362,9 +372,10 @@ def _adaptive(img, m, length, unit, x0, x1, y1, below, face, plain):
     px, wt = int(round(0.85 * 30 * unit)), max(1, int(round(1.6 * unit)))
     tw, th = measure(text, face, px, wt)
     org = _org(x0 + (length - tw) // 2, y1, thick, int(10 * unit), th, below)
-    lo, hi = sorted((org[1] - th, y1 + 2))
-    region = img[max(0, lo):hi, x0:x1]
-    ink = _INK_DARK if float(region.mean()) > 120 else _INK_LIGHT
+    if ink is None:
+        lo, hi = sorted((org[1] - th, y1 + 2))
+        region = img[max(0, lo):hi, x0:x1]
+        ink = _INK_DARK if float(region.mean()) > 120 else _INK_LIGHT
     cv2.rectangle(img, (x0, y1 - thick), (x1, y1), ink, -1)
     stamp(img, text, face, px, org, ink, wt)
 
@@ -480,15 +491,103 @@ _STYLES = {"adaptive": _adaptive, "plate": _plate, "scrim": _scrim,
 
 
 
-# A cached transparent tile, painted over the live view by the widget
-# instead of into the frame, was tried and does not work. Recovering the
-# alpha by rendering the same bar over black and over white -- untouched
-# pixels differ by the full range, opaque ones not at all -- is exact for
-# most of the styles and wrong for `adaptive`, which reads the corner it
-# is about to sit in and picks ink that contrasts with it. Over black it
-# draws light and over white it draws dark, so the two renders disagree
-# about the mark itself rather than only about what is behind it, and the
-# difference is meaningless. Any fix means either dropping adaptive from
-# the live view, which is the default style, or teaching every style to
-# report coverage, which is a larger change than the cost justifies now
-# that the frame buffer is reused: see `main._live_overlay_buffer`.
+#: Ink for a bar over a light corner, and over a dark one. Named here
+#: because `tile` has to make the choice `adaptive` would have made, and
+#: it makes it off the real picture rather than off a synthetic canvas.
+INK_ON_LIGHT = _INK_DARK
+INK_ON_DARK = _INK_LIGHT
+
+
+def tile(shape: tuple[int, int], um_per_px: float | None, *,
+         light_ground: bool = False, **style):
+    """Render the bar once, on nothing. Returns (BGRA, x, y) with the
+    tile premultiplied and cropped to the mark, or None if there was
+    nothing to draw.
+
+    Painting the styled bar into every live frame costs a redraw of the
+    mark plus, for the tablet styles, a read-modify-write of the region
+    behind it -- per frame, for a picture that changes while the mark does
+    not. The mark only depends on the scale, the style and the size, so it
+    can be rendered once and blitted.
+
+    Getting it out of the renderer without teaching six styles to report
+    their own coverage: draw the same bar over black and over white. A
+    pixel the bar never touched differs by the full range; one it painted
+    opaquely does not differ at all; and one it painted *through* --
+    `scrim`'s tablet, `shadow`'s falloff -- differs by exactly the light
+    it let past. That difference is the transparency, so
+
+        alpha = 1 - (over_white - over_black) / 255
+
+    and since compositing over black leaves `alpha * colour`, the black
+    render *is* the premultiplied colour, with no division to undo.
+
+    This was tried before and abandoned, because `adaptive` reads the
+    corner it is about to sit in: over black it draws light ink and over
+    white it draws dark, so the two renders disagree about the mark rather
+    than about the ground, and subtracting them is meaningless. The fix is
+    to take the decision away from the canvas. The caller knows what is
+    actually under the corner; it passes `light_ground`, both renders use
+    the same ink, and the subtraction means what it says again.
+    """
+    h, w = int(shape[0]), int(shape[1])
+    if h < 8 or w < 8 or not um_per_px or um_per_px <= 0:
+        return None
+    style.pop("ink", None)
+    ink = INK_ON_LIGHT if light_ground else INK_ON_DARK
+
+    # Where the mark will land, before drawing it. The alternative is to
+    # difference the whole canvas and find the mark afterwards, and at
+    # Nate's window size the channel split alone is 28 ms of an 18 MP
+    # deinterleave to describe a few hundred pixels. This is the same
+    # function `draw` places with, so the box cannot disagree with it.
+    geom = _geometry(image_like(h, w), um_per_px, style.get("margin", 0.035),
+                     style.get("corner", DEFAULT_CORNER)
+                     if style.get("corner") in CORNERS else DEFAULT_CORNER,
+                     style.get("size", DEFAULT_SIZE)
+                     if style.get("size") in SIZES else DEFAULT_SIZE,
+                     style.get("label_at", DEFAULT_LABEL)
+                     if style.get("label_at") in LABELS else DEFAULT_LABEL)
+    if geom is None:
+        return None
+    _m, _length, unit, gx0, gx1, gy1, _below = geom
+    pad = int(round(70 * unit))
+    y0, y1 = max(0, gy1 - pad), min(h, gy1 + pad)
+    x0, x1 = max(0, gx0 - pad), min(w, gx1 + pad)
+
+    over_black = np.zeros((h, w, 3), np.uint8)
+    over_white = np.full((h, w, 3), 255, np.uint8)
+    if not draw(over_black, um_per_px, ink=ink, **style):
+        return None
+    draw(over_white, um_per_px, ink=ink, **style)
+    black = over_black[y0:y1, x0:x1]
+    white = over_white[y0:y1, x0:x1]
+
+    # A pixel the bar never touched differs by the full range; one it
+    # painted opaquely does not differ at all; one it painted *through*
+    # differs by exactly the light it let past. Per channel in principle;
+    # in practice every style blends uniformly, so the widest
+    # disagreement is the honest one and taking the maximum keeps a
+    # rounding wobble in one channel from thinning the mark.
+    b, g, r = cv2.split(cv2.absdiff(white, black))
+    alpha = cv2.subtract(255, cv2.max(cv2.max(b, g), r))
+
+    # The box above is generous, because it is derived from the rule and
+    # has to hold whatever furniture the style puts around it. Trim to
+    # what was actually lit, so the per-frame blit is the mark and not the
+    # margin around it. Cheap here and not on the full canvas: this is a
+    # few hundred pixels square.
+    cx, cy, cw, ch = cv2.boundingRect(alpha)
+    if not cw or not ch:
+        return None
+    out = np.empty((ch, cw, 4), np.uint8)
+    # `black` composited over nothing is already the premultiplied colour.
+    out[:, :, :3] = black[cy:cy + ch, cx:cx + cw]
+    out[:, :, 3] = alpha[cy:cy + ch, cx:cx + cw]
+    return out, x0 + cx, y0 + cy
+
+
+def image_like(h: int, w: int) -> np.ndarray:
+    """A stand-in with the right shape, for asking `_geometry` a question
+    without allocating a frame to ask it about."""
+    return np.broadcast_to(np.zeros(3, np.uint8), (h, w, 3))

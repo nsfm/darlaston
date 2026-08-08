@@ -46,6 +46,9 @@ class LiveView(QtWidgets.QWidget):
         #: wanted over the live view, else None. Drawn after the reduction
         #: rather than before it; see `_set_frame`.
         self._bar: tuple[float, dict] | None = None
+        self._tile_key = None
+        self._tile = None
+        self._tile_buf = None
         self._balance_rect: tuple[float, float, float, float] | None = None
         self._balancing = False
         #: The balance box is shown while it is being placed and for a
@@ -117,9 +120,15 @@ class LiveView(QtWidgets.QWidget):
     #: field and on a darkfield one without being told which.
     BAR_INK_SPLIT = 0.5
 
+    #: How far past the split the corner has to go to change the ink,
+    #: once it has an opinion. Wide, because both answers are legible
+    #: near the middle and the cost of dithering between them is a
+    #: re-render of the tile.
+    BAR_INK_HOLD = 0.12
+
     def _draw_scale_bar(self, p: QtGui.QPainter,
                         target: QtCore.QRectF) -> None:
-        """Paint the bar, rather than compositing it into the picture.
+        """Blit the bar, rather than compositing it into the picture.
 
         Compositing it cost 6.7 ms of every frame at Nate's window size
         and dropped frames all the way back to the driver. Two rounds of
@@ -127,74 +136,72 @@ class LiveView(QtWidgets.QWidget):
         with the area drawn and this window is close to 4K: 1.33 ms at
         1039 px wide, 6.67 ms at 3000.
 
-        Painting is a different order of thing. The rule is a rectangle
-        and the label is a line of text, so the work is a few draw calls
-        over a couple of hundred pixels instead of a blend over a region
-        that grows with the display.
+        The picture changes every frame and the mark does not. It depends
+        on the scale, the style, the window size, and whether the corner
+        it sits in is light, so it is rendered when one of those four
+        changes and blitted the rest of the time. `scalebar.tile` does the
+        rendering, in the real style: this draws the same panel, the same
+        ruler segments, the same drop shadow and the same face a capture
+        would get, which the version this replaces did not.
+        """
+        tile = self._bar_tile(target)
+        if tile is None:
+            return
+        image, x, y = tile
+        p.drawImage(QtCore.QPointF(target.left() + x, target.top() + y),
+                    image)
 
-        The round number still comes from `scalebar.choose`, so what the
-        live bar *measures* is exactly what a capture's bar would measure.
-        What it no longer is, is pixel-identical to it: no panel, no
-        ruler segments, no drop shadow, and the type is the widget's
-        rather than the chosen face. Nate asked for that trade twice, the
-        second time in as many words, against a preview that stutters.
+    def _bar_tile(self, target: QtCore.QRectF):
+        """The rendered mark, cropped to itself, and where it goes.
+
+        Cropping matters. The tile is rendered on a canvas the size of the
+        window so the style's own geometry decides the placement, but the
+        mark occupies a few hundred pixels of it, and blitting the whole
+        canvas per frame would reintroduce the full-area cost this exists
+        to avoid.
         """
         if self._bar is None or self._image is None:
-            return
+            return None
         from ..process import scalebar
 
         um, style = self._bar
         shown = self._image.width()
-        if not shown:
-            return
-        # Micrometres per *displayed* pixel. `um` is quoted per preview
-        # pixel, and the reduction between them is the whole correction:
-        # without it the bar was drawn from the preview's scale onto the
-        # window's pixels, so it changed length whenever the window did.
+        tw, th = int(round(target.width())), int(round(target.height()))
+        if not shown or tw < 8 or th < 8:
+            return None
+        # Micrometres per *target* pixel. `um` is quoted per preview
+        # pixel, and the two reductions between them are the whole
+        # correction: without them the bar was sized in the preview's
+        # scale and laid down in the window's, so it changed length
+        # whenever the window did.
         src = getattr(self, "_src_width", shown) or shown
-        chosen = scalebar.choose(um * (src / float(shown)), shown)
-        if chosen is None:
-            return
-        micrometres, length = chosen
-        if length < 8:
-            return
+        per_target = um * (src / float(shown)) * (shown / float(tw))
+        light = self._corner_is_light(style.get("corner", "br"))
 
-        # `length` is already in displayed pixels, and the image is
-        # blitted one to one, so the only correction left is any
-        # difference between the image and the rectangle it landed in.
-        run = length * (target.width() / float(shown))
-        margin = max(10.0, target.width() * 0.028)
-        thick = max(2.0, target.height() * 0.005)
-        corner = style.get("corner", "br")
-        x = (target.right() - margin - run if corner.endswith("r")
-             else target.left() + margin)
-        y = (target.bottom() - margin if corner.startswith("b")
-             else target.top() + margin + thick)
+        key = (round(per_target, 9), tw, th, light,
+               tuple(sorted((k, str(v)) for k, v in style.items())))
+        if key == self._tile_key:
+            return self._tile
+        self._tile_key = key
+        self._tile = None
 
-        # Read the corner rather than assuming a background. Brightfield
-        # is a bright field with a dark subject and darkfield the reverse,
-        # and one fixed ink is invisible on one of them.
-        ink = QtGui.QColor(20, 20, 18) if self._corner_is_light(corner) \
-            else QtGui.QColor(244, 246, 240)
-        text = scalebar.label(micrometres, style.get("plain_units", False))
-
-        p.save()
-        p.setOpacity(max(0.15, min(1.0, float(style.get("opacity", 1.0)))))
-        p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(ink)
-        p.drawRect(QtCore.QRectF(x, y - thick, run, thick))
-        font = QtGui.QFont(self.font())
-        font.setPixelSize(int(max(11, target.height() * 0.022)))
-        font.setWeight(QtGui.QFont.Weight.DemiBold)
-        p.setFont(font)
-        p.setPen(ink)
-        metrics = QtGui.QFontMetrics(font)
-        ty = (y - thick - 4 if corner.startswith("b")
-              else y + metrics.ascent() + 4)
-        p.drawText(QtCore.QRectF(x, ty - metrics.ascent(), run,
-                                 metrics.height()),
-                   int(QtCore.Qt.AlignmentFlag.AlignCenter), text)
-        p.restore()
+        rendered = scalebar.tile((th, tw), per_target, light_ground=light,
+                                 **style)
+        if rendered is None:
+            return None
+        rgba, x0, y0 = rendered
+        # Held on the instance, not just handed to QImage: the QImage is a
+        # view of this buffer and does not own it, so letting it fall out
+        # of scope hands Qt freed memory to paint from.
+        self._tile_buf = np.ascontiguousarray(rgba)
+        h, w = self._tile_buf.shape[:2]
+        # BGRA in memory, which on a little-endian machine is what Qt
+        # calls ARGB32. Premultiplied already, from `tile`.
+        image = QtGui.QImage(
+            self._tile_buf.data, w, h, 4 * w,
+            QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+        self._tile = (image, x0, y0)
+        return self._tile
 
     #: How often the corner is re-read, in paints. A field does not change
     #: from bright to dark between frames, and reading it is the only part
@@ -220,7 +227,18 @@ class LiveView(QtWidgets.QWidget):
         # Every eighth pixel each way: a field's brightness is not a
         # detail, and this is the one part of the bar that reads an image.
         patch = buf[rows, cols][::8, ::8]
-        self._ink_light = float(patch.mean()) > 255 * self.BAR_INK_SPLIT
+        level = float(patch.mean()) / 255.0
+        # Hysteresis, not a threshold. The answer now decides which of two
+        # tiles is rendered, so a corner sitting near the middle -- a
+        # half-lit field, or a subject drifting through it during a stage
+        # move -- would otherwise flip the ink back and forth and pay the
+        # rebuild each time. It has to cross the band to change its mind.
+        if cached is None:
+            self._ink_light = level > self.BAR_INK_SPLIT
+        elif cached:
+            self._ink_light = level > self.BAR_INK_SPLIT - self.BAR_INK_HOLD
+        else:
+            self._ink_light = level > self.BAR_INK_SPLIT + self.BAR_INK_HOLD
         return self._ink_light
 
     def _label_box(self, p: QtGui.QPainter, box: QtCore.QRectF,
@@ -398,6 +416,7 @@ class LiveView(QtWidgets.QWidget):
     def set_scale_bar(self, um_per_px, style) -> None:
         """Draw a bar over the live view, or stop. See `_set_frame`."""
         self._bar = None if not um_per_px else (float(um_per_px), style)
+        self._tile_key = None
 
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect

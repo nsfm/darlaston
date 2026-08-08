@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from PySide6 import QtCore
 
 from darlaston.camera.base import PREVIEW_MAX_MP, Resolution, preferred_preview
 from darlaston.ui import theme
@@ -96,12 +97,11 @@ class _Canvas:
 def test_the_bar_is_painted_and_never_touches_the_picture(window):
     """Compositing it into pixels cost 10.7 ms a frame at preview size and
     6.7 ms at display size, because the work scales with the area drawn
-    and this window is close to 4K. Painting is 0.14 ms: the rule is a
-    rectangle and the label is a line of text.
+    and this window is close to 4K.
 
-    What it costs is being pixel-identical to the bar a capture carries.
-    What it keeps is the measurement, which comes from the same
-    `scalebar.choose` either way.
+    Rendering it once and blitting it is 0.08 ms, and it is the styled bar
+    rather than a stand-in for one. The picture changes every frame and
+    the mark does not.
     """
     from PySide6 import QtCore
 
@@ -508,3 +508,91 @@ def test_the_source_width_is_recorded_for_the_bar(window):
     win.view._set_frame(np.zeros((912, 1368, 3), np.uint8), None)
     assert win.view._src_width == 1368
     assert win.view._image.width() < 1368, "the frame was not reduced"
+
+
+def test_the_bar_is_rendered_once_and_reused(window):
+    """Nate asked for the real style back, rather than the simplified mark
+    the fast version drew. It comes back by rendering the styled bar once
+    and blitting it, so the reuse is the whole point of the change."""
+    win = window()
+    win.view.resize(1200, 800)
+    win.view.set_scale_bar(0.49, win.settings.bar_style(live=True))
+    win.view._set_frame(np.random.default_rng(1).integers(
+        30, 90, (912, 1368, 3), dtype=np.uint8), None)
+
+    rect = QtCore.QRectF(0, 0, 1200, 800)
+    first = win.view._bar_tile(rect)
+    assert first is not None, "nothing was rendered"
+    image, x, y = first
+    assert image.width() < 1200, "the tile was not cropped to the mark"
+    assert win.view._bar_tile(rect) is first, "it re-rendered unnecessarily"
+
+    # ...but not across a resize, where the mark genuinely changes.
+    assert win.view._bar_tile(QtCore.QRectF(0, 0, 900, 600)) is not first
+
+
+def test_every_style_survives_the_round_trip(window):
+    """The alpha comes out of two renders differenced, which is exact for
+    a uniform blend and would quietly produce nothing for a style that
+    did something else. Each of the six is checked because the cost of
+    finding out in the app is a bar that is invisible."""
+    from darlaston.process import scalebar
+
+    window()
+    for style in scalebar.STYLES:
+        rendered = scalebar.tile((400, 800), 0.6, style=style)
+        assert rendered is not None, f"{style} rendered nothing"
+        rgba, x, y = rendered
+        assert 0 <= x and 0 <= y, f"{style} landed off the canvas"
+        assert rgba.shape[1] < 800, f"{style} was not cropped to its mark"
+        alpha = rgba[:, :, 3]
+        assert alpha.max() > 200, f"{style} came out transparent"
+        # Premultiplied: no channel may exceed its own alpha. In int, not
+        # uint8, where a fully opaque 255 plus the rounding allowance
+        # wraps to zero and fails everything.
+        assert (rgba[:, :, :3].max(axis=2).astype(int)
+                <= alpha.astype(int) + 1).all(), (
+            f"{style} is not premultiplied")
+
+
+def test_adaptive_takes_the_ink_it_is_given(window):
+    """The reason the cached tile did not work before. `adaptive` reads the
+    corner it is about to cover, so over black and over white it drew
+    opposite ink and the difference between the two renders described the
+    mark rather than the ground."""
+    from darlaston.process import scalebar
+
+    window()
+    dark, _, _ = scalebar.tile((400, 800), 0.6, style="adaptive",
+                               light_ground=False)
+    light, _, _ = scalebar.tile((400, 800), 0.6, style="adaptive",
+                                light_ground=True)
+    lit = dark[:, :, :3][dark[:, :, 3] > 250]
+    inked = light[:, :, :3][light[:, :, 3] > 250]
+    assert lit.mean() > 200, "a bar for a dark corner came out dark"
+    assert inked.mean() < 60, "a bar for a light corner came out light"
+
+
+def test_the_ink_holds_its_mind_near_the_middle(window):
+    """The corner's brightness now decides which of two tiles is rendered,
+    so a field sitting near the split would dither between them and pay a
+    re-render each way. Both inks are legible there; neither is worth the
+    thrash."""
+    win = window()
+    win.view.resize(600, 400)
+    win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
+
+    def settle(level):
+        win.view._set_frame(np.full((400, 600, 3), level, np.uint8), None)
+        for _ in range(win.view.BAR_INK_EVERY + 1):
+            win.view._corner_is_light("br")
+        return win.view._corner_is_light("br")
+
+    win.view._ink_light = None
+    assert settle(240) is True
+    # Below the split, but not below the band: it holds.
+    assert settle(int(255 * 0.45)) is True
+    assert settle(int(255 * 0.30)) is False
+    # ...and symmetrically on the way back up.
+    assert settle(int(255 * 0.55)) is False
+    assert settle(int(255 * 0.70)) is True
