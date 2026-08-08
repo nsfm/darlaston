@@ -184,14 +184,13 @@ def test_a_gap_does_not_count_as_a_slow_frame(window):
     assert win._ae_fps == 0.0
 
 
-def test_the_readout_estimate_subtracts_its_own_exposure(window):
-    """A long exposure is itself a reason a frame is slow, so leaving it
-    in lets the loop read its own output as headroom and walk exposure up
-    against nothing."""
+def test_an_unlearned_readout_reads_zero(window):
+    """Subtracting the exposure from the measured period was the first
+    answer here and it is what produced the light show. There is nothing
+    to report until a frame arrives that exposure was not holding up."""
     win = window()
-    win.exposure.setValue(win._us_to_slider(50_000))         # 50 ms
-    win._ae_fps = 10.0                                       # 100 ms period
-    assert win._measured_frame_period_us() == pytest.approx(50_000, abs=2_000)
+    win._ae_fps = 10.0
+    assert win._measured_frame_period_us() == 0.0
 
 
 def test_an_unmeasured_rate_lets_the_target_govern(window):
@@ -222,3 +221,63 @@ def test_a_fault_stands_down_rather_than_stopping_the_preview(window,
     # And having stood down, it stays down rather than raising again on
     # every frame that follows.
     win._auto_expose_guarded(_signals(win))
+
+
+# ---- the readout figure, across a mode change -------------------------------
+
+def test_the_readout_is_learned_from_quiet_frames_only(window):
+    """The 5 k preview reads out at 12 fps whatever the exposure, so a
+    long exposure there must not be read as a slow sensor."""
+    win = window()
+    win._ae_fps = 0.0
+    win._ae_rate_mark = None
+    win.exposure.setValue(win._us_to_slider(8_000))
+    win._note_frame_rate(_signals(win, seq=0, when=0.0))
+    win._note_frame_rate(_signals(win, seq=12, when=1.0))       # 12 fps
+    assert win._measured_frame_period_us() == pytest.approx(83_000, rel=0.05)
+
+    # Now a long exposure, which is itself why the frames are slow.
+    win.exposure.setValue(win._us_to_slider(400_000))
+    win._note_frame_rate(_signals(win, seq=14, when=1.8))
+    win._note_frame_rate(_signals(win, seq=16, when=2.6))
+    assert win._measured_frame_period_us() == pytest.approx(83_000, rel=0.05)
+
+
+def test_the_ceiling_holds_still_as_exposure_rises(window, monkeypatch):
+    """The light show: a ceiling that falls as exposure rises has an
+    unstable crossing at half the frame period, and the loop chatters over
+    it swinging gain in and out."""
+    win = window()
+    win._ae_fps = 0.0
+    win._ae_rate_mark = None
+    win.exposure.setValue(win._us_to_slider(8_000))
+    win._note_frame_rate(_signals(win, seq=0, when=0.0))
+    win._note_frame_rate(_signals(win, seq=12, when=1.0))
+
+    # Hold the camera at 12 fps throughout and vary only the exposure,
+    # which is the situation on the 5 k preview: the readout is what makes
+    # the frames slow, and a longer exposure under it changes nothing.
+    seen = set()
+    seq, when = 12, 1.0
+    for us in (8_000, 20_000, 40_000, 43_000, 60_000, 82_000):
+        win.exposure.setValue(win._us_to_slider(us))
+        seq, when = seq + 12, when + 1.0
+        win._note_frame_rate(_signals(win, seq=seq, when=when))
+        seen.add(int(win._measured_frame_period_us()))
+    assert len(seen) == 1, f"the readout figure moved: {sorted(seen)}"
+
+
+def test_changing_preview_mode_forgets_the_old_readout(window):
+    """The two modes here differ by seven times, so a stale figure would
+    hold the ceiling badly wrong until it was relearned."""
+    win = window()
+    win._ae_fps = 0.0
+    win._ae_rate_mark = None
+    win.exposure.setValue(win._us_to_slider(8_000))
+    win._note_frame_rate(_signals(win, seq=0, when=0.0))
+    win._note_frame_rate(_signals(win, seq=12, when=1.0))
+    assert win._measured_frame_period_us() > 0
+
+    win.strip.preview.setCurrentIndex(0)
+    if win.session.status.is_live:
+        assert win._measured_frame_period_us() == 0.0

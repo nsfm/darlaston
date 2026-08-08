@@ -193,6 +193,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ae_hurry = True
         self._ae_fps = 0.0
         self._ae_rate_mark: tuple[int, float] | None = None
+        self._ae_readout = exposure_ctl.Readout()
         self._last_preview = None
         #: The live focus metric as of the frame the trigger last looked
         #: at. A stack has no absolute Z, so this number is the only thing
@@ -1016,24 +1017,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ae_fps = rate if self._ae_fps <= 0 else (
             min(self._ae_fps, rate) if rate < self._ae_fps
             else self._ae_fps * 0.8 + rate * 0.2)
+        self._ae_readout.observe(1e6 / self._ae_fps,
+                                 self._slider_to_us(self.exposure.value()))
 
     def _measured_frame_period_us(self) -> float:
-        """How long this mode is actually taking per frame.
-
-        Measured rather than assumed, because the point of the ceiling is
-        to stop spending gain to buy frame rate the mode cannot deliver:
-        at full resolution this sensor reads out at 12 fps whatever the
-        exposure, so an 83 ms exposure there is free. A mode already
-        faster than the target contributes nothing and the target governs.
-
-        Exposure is subtracted out. A long exposure is itself one reason a
-        frame is slow, so leaving it in would let the loop read its own
-        output as headroom and walk the exposure up unopposed.
-        """
-        if self._ae_fps <= 0.1:
-            return 0.0
-        period = 1e6 / self._ae_fps
-        return max(0.0, period - self._slider_to_us(self.exposure.value()))
+        """How long this mode takes per frame when exposure is not the
+        limit. See `exposure.Readout`, which explains why that
+        qualification is the whole thing rather than a nicety."""
+        return self._ae_readout.us
 
     def _auto_expose_guarded(self, signals) -> None:
         """Never at the cost of the picture.
@@ -1073,7 +1064,8 @@ class MainWindow(QtWidgets.QMainWindow):
         moved = exposure_ctl.step(
             state, limits, level,
             reactivity=float(self.settings.auto_exposure_reactivity),
-            hurry=hurry)
+            hurry=hurry,
+            clipped=exposure_ctl.clipped_share(signals.histogram))
         if moved == state:
             return
 
@@ -1096,6 +1088,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
+        # The readout figure describes a mode that is no longer running,
+        # and the two here differ by seven times: a stale one would hold
+        # the ceiling far too high or far too low until it was relearned.
+        self._ae_readout.reset()
+        self._ae_fps = 0.0
+        self._ae_rate_mark = None
+        self._ae_hurry = True
 
     def _push_turret(self) -> None:
         """Hand the detector the turret, the stand's sign and its signatures."""

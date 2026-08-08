@@ -74,6 +74,28 @@ DAMPING_UP = 0.20
 #: Never move further than this in one step while tracking, in stops. A
 #: single noisy measurement should not be able to swing the picture.
 MAX_STEP_STOPS = 1.0
+#: A metered level at or above this is pinned rather than measured. The
+#: error then reads log2(0.88 / 1.0), a fifth of a stop, whether the truth
+#: is one stop or eight, so damping it creeps out of a catastrophe.
+#:
+#: Keyed on the level rather than on a share of the frame at full scale,
+#: which is what it used to be and which cannot be given one value: a
+#: darkfield subject occupying two percent of the frame is entirely blown
+#: at a share the same threshold calls trivial on brightfield, and the
+#: unbinned 5 k preview reports a far larger share than the binned 2736
+#: mode does for the very same scene, because binning averages clipped
+#: pixels down with their neighbours. The level is free of both.
+SATURATED_LEVEL = 0.995
+#: A share of the frame at full scale past which nothing more can be
+#: learned, and the full stride applies. Only ever sizes the step; it no
+#: longer decides whether to take one.
+CLIP_SATURATED = 0.25
+#: How far to pull down per step while clipped. Deliberately larger than
+#: MAX_STEP_STOPS: the usual limit exists so one noisy reading cannot
+#: swing the picture, and a quarter of the frame at full scale is not a
+#: noisy reading. Recovery from eight stops over takes under a second at
+#: thirty frames.
+CLIP_STOPS = 2.0
 
 
 @dataclass(frozen=True)
@@ -97,6 +119,55 @@ class Limits:
     def supported(self) -> bool:
         return self.exposure_us[1] > self.exposure_us[0] or \
             self.gain_pct[1] > self.gain_pct[0]
+
+
+class Readout:
+    """How long a frame takes when the exposure is not what is holding it.
+
+    A frame costs max(readout, exposure), so a measured period reports the
+    readout only while exposure is the shorter of the two. That sounds
+    like a detail and is the difference between a stable ceiling and a
+    light show.
+
+    Subtracting the exposure from the measured period instead -- which is
+    the obvious way to answer "how much of this frame was readout" --
+    makes the ceiling a *falling* function of exposure, and that has an
+    unstable fixed point at half the period. On a 5440 wide preview
+    reading out at 12 fps: at a 40 ms exposure the ceiling computes to 43
+    and invites a longer one, at 43 ms it computes to 40 and forbids it.
+    The loop chatters across the crossing and swings gain in and out to
+    compensate, which is what Nate saw. None of it appears at 30 fps,
+    where the target governs the ceiling and the measurement never gets a
+    say.
+
+    So: learn only from frames where exposure was not binding, and
+    otherwise keep what was learned. A mode change is adopted at once in
+    either direction, because a binned preview genuinely is faster and
+    waiting for an average to concede it would hold the ceiling too high.
+    """
+
+    #: Exposure must be under this share of the frame period before the
+    #: period is taken to be measuring readout rather than exposure.
+    QUIET = 0.9
+
+    def __init__(self) -> None:
+        self._us = 0.0
+
+    @property
+    def us(self) -> float:
+        return self._us
+
+    def observe(self, period_us: float, exposure_us: float) -> None:
+        if period_us <= 0:
+            return
+        if exposure_us >= period_us * self.QUIET:
+            return                       # exposure is what made it slow
+        self._us = float(period_us)
+
+    def reset(self) -> None:
+        """After a resolution change, when the old figure is about a mode
+        that is no longer running."""
+        self._us = 0.0
 
 
 @dataclass(frozen=True)
@@ -133,6 +204,14 @@ def target_for(illumination: str | None = None) -> float:
     return target
 
 
+def clipped_share(hist: np.ndarray) -> float:
+    """Fraction of the frame sitting at full scale."""
+    if hist.size == 0:
+        return 0.0
+    total = float(hist.sum())
+    return float(hist[-1]) / total if total > 0 else 0.0
+
+
 def error_stops(level: float, target: float) -> float:
     """How far off we are, in stops. Positive means too dark.
 
@@ -145,7 +224,8 @@ def error_stops(level: float, target: float) -> float:
 
 def step(state: State, limits: Limits, level: float,
          target: float = TARGET,
-         reactivity: float = 1.0, hurry: bool = False) -> State:
+         reactivity: float = 1.0, hurry: bool = False,
+         clipped: float = 0.0) -> State:
     """One iteration. Returns the state unchanged if nothing needs doing.
 
     `reactivity` scales the damping, for an operator who wants the loop
@@ -153,9 +233,23 @@ def step(state: State, limits: Limits, level: float,
     and is meant for known events rather than measured ones: changing
     objective loses four to sixteen times the light, and the objective
     selector knows it happened before the histogram does.
+
+    `clipped` is the share of the frame at full scale, and it overrides
+    the metered level when there is enough of it. It has to, because a
+    blown frame reads 1.0 no matter how far over it is: the level says a
+    fifth of a stop and the truth may be eight, so the only honest signal
+    left is how much of the picture has been destroyed.
     """
     if not limits.supported:
         return state
+
+    if level >= SATURATED_LEVEL:
+        # Nothing to damp and nothing to deadband. The reading is not a
+        # measurement of the error, it is a report that the error cannot
+        # be measured, so the step is sized by how much of the frame has
+        # gone rather than by a number that has stopped moving.
+        reach = min(1.0, clipped / CLIP_SATURATED) if clipped > 0 else 0.25
+        return _apply(state, limits, 2.0 ** -(CLIP_STOPS * max(reach, 0.25)))
 
     err = error_stops(level, target)
     if abs(err) < DEADBAND_STOPS and not hurry:
@@ -278,11 +372,27 @@ def bright_level(hist: np.ndarray, within_pct: float = 90.0,
     """
     if hist.size == 0 or hist.sum() <= 0:
         return 0.0
+
+    # The split can fail *low*, and that failure drives the loop the wrong
+    # way. When a sparse subject saturates, its pixels all land in the top
+    # bin, Otsu finds no gap there and splits the background instead --
+    # which after a lamp has been thrown up is broad and bright -- and then
+    # reports the upper half of the background as the bright population.
+    # Measured on a darkfield specimen at 2% coverage: 0.627 while
+    # thoroughly blown, read as underexposed, gain pushed further up, and
+    # the picture pumping between bright and dark. Nate saw it at the 5 k
+    # preview, which is unbinned; the 2736 mode averages clipped pixels
+    # down with their neighbours and hides it.
+    #
+    # A plain high percentile fails low too, but on the opposite case: a
+    # subject too sparse to reach it. Neither fails high, so the larger of
+    # the two is right in both.
+    plain = _quantile(hist, 99.0)
     cut = _otsu_split(hist)
     upper = hist[cut + 1:]
     share = float(upper.sum()) / float(hist.sum())
     if cut >= len(hist) - 2 or share < min_share:
-        return _quantile(hist, 99.5)
+        return max(plain, _quantile(hist, 99.5))
 
     lo = (cut + 1) / float(len(hist) - 1)
     level = lo + _quantile(upper, within_pct) * (1.0 - lo)
@@ -290,8 +400,8 @@ def bright_level(hist: np.ndarray, within_pct: float = 90.0,
     dark = _quantile(lower, 50.0) * lo if lower.sum() > 0 else 0.0
     if level - dark < MIN_SEPARATION:
         # One population, cut arbitrarily. Nothing here to meter separately.
-        return _quantile(hist, 99.5)
-    return level
+        return max(plain, _quantile(hist, 99.5))
+    return max(plain, level)
 
 
 def measure_hist(hist: np.ndarray, illumination: str | None = None,
