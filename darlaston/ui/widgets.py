@@ -98,26 +98,6 @@ class LiveView(QtWidgets.QWidget):
         # QImage does not copy, so keep the buffer alive on the instance.
         self._buf = np.ascontiguousarray(rgb)
 
-        # The scale bar goes on *here*, after the reduction, rather than
-        # onto the frame before it. Drawn at preview size it cost 10.7 ms
-        # of every frame on this thread -- a third of a 30 fps budget for
-        # a decoration -- because it needs a copy of the frame first (the
-        # rest of the window keeps the undecorated one) and because its
-        # opacity blend converts a region that scales with the frame. At
-        # display size there are seven times fewer pixels and the copy is
-        # already made: the reduction above hands back a fresh array.
-        #
-        # The cost is that the live bar is no longer laid out identically
-        # to the one a capture carries, since it is placed in display
-        # pixels rather than sensor pixels. It still measures correctly,
-        # which is the part that matters, and Nate chose this trade
-        # explicitly over a preview that stutters.
-        if self._bar is not None and self._buf.size:
-            um, style = self._bar
-            if self._buf is rgb and rgb.base is None:
-                self._buf = rgb.copy()      # never draw on the caller's
-            from ..process import scalebar
-            scalebar.draw(self._buf, um * (w / float(tw)), **style)
         self._image = QtGui.QImage(self._buf.data, tw, th,
                                    self._buf.strides[0],
                                    QtGui.QImage.Format.Format_BGR888)
@@ -125,6 +105,109 @@ class LiveView(QtWidgets.QWidget):
         if peaking is not None:
             self._peaking = self._peaking_overlay(peaking, (tw, th))
         self.update()
+
+    #: Ink for the bar, as a fraction of full scale either side of mid.
+    #: Sampled from the corner it sits in, so it reads on a brightfield
+    #: field and on a darkfield one without being told which.
+    BAR_INK_SPLIT = 0.5
+
+    def _draw_scale_bar(self, p: QtGui.QPainter,
+                        target: QtCore.QRectF) -> None:
+        """Paint the bar, rather than compositing it into the picture.
+
+        Compositing it cost 6.7 ms of every frame at Nate's window size
+        and dropped frames all the way back to the driver. Two rounds of
+        making that cheaper both underdelivered, because the cost scales
+        with the area drawn and this window is close to 4K: 1.33 ms at
+        1039 px wide, 6.67 ms at 3000.
+
+        Painting is a different order of thing. The rule is a rectangle
+        and the label is a line of text, so the work is a few draw calls
+        over a couple of hundred pixels instead of a blend over a region
+        that grows with the display.
+
+        The round number still comes from `scalebar.choose`, so what the
+        live bar *measures* is exactly what a capture's bar would measure.
+        What it no longer is, is pixel-identical to it: no panel, no
+        ruler segments, no drop shadow, and the type is the widget's
+        rather than the chosen face. Nate asked for that trade twice, the
+        second time in as many words, against a preview that stutters.
+        """
+        if self._bar is None or self._image is None:
+            return
+        from ..process import scalebar
+
+        um, style = self._bar
+        shown_um = um * (self._image.width() and
+                         self._buf.shape[1] / self._image.width() or 1.0)
+        chosen = scalebar.choose(shown_um, self._image.width())
+        if chosen is None:
+            return
+        micrometres, length = chosen
+        if length < 8:
+            return
+
+        scale = target.width() / max(self._image.width(), 1)
+        run = length * scale
+        margin = max(10.0, target.width() * 0.028)
+        thick = max(2.0, target.height() * 0.005)
+        corner = style.get("corner", "br")
+        x = (target.right() - margin - run if corner.endswith("r")
+             else target.left() + margin)
+        y = (target.bottom() - margin if corner.startswith("b")
+             else target.top() + margin + thick)
+
+        # Read the corner rather than assuming a background. Brightfield
+        # is a bright field with a dark subject and darkfield the reverse,
+        # and one fixed ink is invisible on one of them.
+        ink = QtGui.QColor(20, 20, 18) if self._corner_is_light(corner) \
+            else QtGui.QColor(244, 246, 240)
+        text = scalebar.label(micrometres, style.get("plain_units", False))
+
+        p.save()
+        p.setOpacity(max(0.15, min(1.0, float(style.get("opacity", 1.0)))))
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(ink)
+        p.drawRect(QtCore.QRectF(x, y - thick, run, thick))
+        font = QtGui.QFont(self.font())
+        font.setPixelSize(int(max(11, target.height() * 0.022)))
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        p.setFont(font)
+        p.setPen(ink)
+        metrics = QtGui.QFontMetrics(font)
+        ty = (y - thick - 4 if corner.startswith("b")
+              else y + metrics.ascent() + 4)
+        p.drawText(QtCore.QRectF(x, ty - metrics.ascent(), run,
+                                 metrics.height()),
+                   int(QtCore.Qt.AlignmentFlag.AlignCenter), text)
+        p.restore()
+
+    #: How often the corner is re-read, in paints. A field does not change
+    #: from bright to dark between frames, and reading it is the only part
+    #: of drawing the bar that touches a number of pixels rather than a
+    #: handful of shapes.
+    BAR_INK_EVERY = 15
+
+    def _corner_is_light(self, corner: str) -> bool:
+        """Is the corner the bar sits in bright? Read from the reduced
+        frame, which is already to hand, and only now and then."""
+        buf = self._buf
+        if buf is None or not buf.size:
+            return True
+        self._ink_age = getattr(self, "_ink_age", 0) + 1
+        cached = getattr(self, "_ink_light", None)
+        if cached is not None and self._ink_age < self.BAR_INK_EVERY:
+            return cached
+        self._ink_age = 0
+        h, w = buf.shape[:2]
+        ph, pw = max(1, h // 6), max(1, w // 5)
+        rows = slice(h - ph, h) if corner.startswith("b") else slice(0, ph)
+        cols = slice(w - pw, w) if corner.endswith("r") else slice(0, pw)
+        # Every eighth pixel each way: a field's brightness is not a
+        # detail, and this is the one part of the bar that reads an image.
+        patch = buf[rows, cols][::8, ::8]
+        self._ink_light = float(patch.mean()) > 255 * self.BAR_INK_SPLIT
+        return self._ink_light
 
     def _label_box(self, p: QtGui.QPainter, box: QtCore.QRectF,
                    text: str) -> None:
@@ -386,6 +469,7 @@ class LiveView(QtWidgets.QWidget):
                 p.drawImage(target.topLeft(), self._peaking)
 
             self._draw_guides(p, target)
+            self._draw_scale_bar(p, target)
 
             # The measured region, drawn so it is never a mystery what the focus
             # number refers to.

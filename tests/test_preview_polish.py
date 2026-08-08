@@ -70,45 +70,112 @@ def test_a_camera_profile_starts_with_no_opinion():
     assert CameraProfile(serial="x").preview_width == 0
 
 
-# ---- the live scale bar's cost -----------------------------------------------
+# ---- the live scale bar, painted rather than composited ---------------------
 
-def test_the_bar_is_drawn_after_the_reduction_not_before(window):
-    """It used to go onto the frame at preview size, which cost 10.7 ms of
-    every frame on the interface thread: the rest of the window keeps the
-    frame undecorated so it needed a copy first, and the bar's opacity
-    blend then worked over a region scaling with the frame.
+class _Canvas:
+    """A painter and the surface under it.
 
-    Drawn on the reduced image instead it is 1.33 ms, and the copy is
-    gone entirely because the reduction already hands back a fresh array.
-    The trade, which Nate chose knowingly, is that the live bar is laid
-    out in display pixels and so is no longer pixel-identical to the one a
-    capture carries. It still measures correctly.
+    The surface has to outlive the painter, and a helper that returns only
+    the painter lets the pixmap be collected while Qt is still drawing on
+    it, which segfaults rather than raising.
     """
+
+    def __init__(self, view):
+        from PySide6 import QtGui
+        self.pixmap = QtGui.QPixmap(view.size())
+        self.painter = QtGui.QPainter(self.pixmap)
+
+    def __enter__(self):
+        return self.painter
+
+    def __exit__(self, *_exc):
+        self.painter.end()
+        return False
+
+
+def test_the_bar_is_painted_and_never_touches_the_picture(window):
+    """Compositing it into pixels cost 10.7 ms a frame at preview size and
+    6.7 ms at display size, because the work scales with the area drawn
+    and this window is close to 4K. Painting is 0.14 ms: the rule is a
+    rectangle and the label is a line of text.
+
+    What it costs is being pixel-identical to the bar a capture carries.
+    What it keeps is the measurement, which comes from the same
+    `scalebar.choose` either way.
+    """
+    from PySide6 import QtCore
+
     win = window()
+    win.view.resize(600, 400)
     frame = np.full((400, 600, 3), 120, np.uint8)
-    win.view.resize(300, 200)
-
-    win.view.set_scale_bar(None, None)
-    win.view._set_frame(frame, None)
-    plain = win.view._buf.copy()
-
     win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
     win.view._set_frame(frame, None)
-    assert win.view._buf.shape == plain.shape, "the bar changed the size"
-    assert not np.array_equal(win.view._buf, plain), "no bar was drawn"
-    assert (frame == 120).all(), "the frame itself was drawn into"
+
+    # The buffer the view hands to Qt is the picture, undecorated.
+    assert np.array_equal(win.view._buf, frame)
+
+    with _Canvas(win.view) as p:
+        win.view._draw_scale_bar(p, QtCore.QRectF(0, 0, 600, 400))
 
 
-def test_turning_the_bar_off_stops_drawing_it(window):
+def test_the_bar_measures_what_a_capture_would_measure(window):
+    """The round number is the shared part. A live bar that said a
+    different number from the photograph would be worse than none."""
+    from darlaston.process import scalebar
+
     win = window()
-    frame = np.full((400, 600, 3), 120, np.uint8)
-    win.view.resize(300, 200)
+    win.view.resize(600, 400)
     win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
-    win.view._set_frame(frame, None)
-    with_bar = win.view._buf.copy()
+    win.view._set_frame(np.full((400, 600, 3), 120, np.uint8), None)
+    # Same helper the capture path uses, on the shown image's scale.
+    assert scalebar.choose(2.0, 600) is not None
+
+
+def test_no_bar_is_painted_when_none_is_wanted(window):
+    from PySide6 import QtCore
+
+    win = window()
+    win.view.resize(600, 400)
     win.view.set_scale_bar(None, None)
-    win.view._set_frame(frame, None)
-    assert not np.array_equal(win.view._buf, with_bar)
+    win.view._set_frame(np.full((400, 600, 3), 120, np.uint8), None)
+    with _Canvas(win.view) as p:
+        win.view._draw_scale_bar(p, QtCore.QRectF(0, 0, 600, 400))
+    assert win.view._bar is None
+
+
+def test_the_ink_follows_the_corner_it_sits_in(window):
+    """Brightfield is a bright field with a dark subject and darkfield the
+    reverse. One fixed ink is invisible on one of them."""
+    win = window()
+    win.view.resize(600, 400)
+    win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
+
+    win.view._ink_light = None
+    win.view._set_frame(np.full((400, 600, 3), 240, np.uint8), None)
+    assert win.view._corner_is_light("br") is True
+
+    win.view._ink_light = None
+    win.view._set_frame(np.full((400, 600, 3), 8, np.uint8), None)
+    assert win.view._corner_is_light("br") is False
+
+
+def test_the_corner_is_not_re_read_every_paint(window):
+    """The only part of drawing the bar that reads pixels rather than
+    drawing shapes, and a field does not change brightness between
+    frames."""
+    win = window()
+    win.view.resize(600, 400)
+    win.view.set_scale_bar(2.0, win.settings.bar_style(live=True))
+    win.view._ink_light = None
+    win.view._set_frame(np.full((400, 600, 3), 240, np.uint8), None)
+    assert win.view._corner_is_light("br") is True
+
+    # The picture goes dark, but the cached answer holds for a while.
+    win.view._set_frame(np.full((400, 600, 3), 8, np.uint8), None)
+    assert win.view._corner_is_light("br") is True
+    for _ in range(win.view.BAR_INK_EVERY + 1):
+        win.view._corner_is_light("br")
+    assert win.view._corner_is_light("br") is False
 
 
 def test_a_failing_bar_does_not_take_the_preview_with_it(window,
