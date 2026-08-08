@@ -2864,11 +2864,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return ""
         suffix = _("objective.uncertain") if self.objective.uncertain else ""
         total = self.setup.total_magnification
+        # Whole numbers: a 6.3x objective through a 1.2x changer is
+        # 7.56x on paper, and nobody at a table says "seven point five
+        # six". The precise figure still drives every measurement; this
+        # is the spoken form.
         if total:
-            return f"{total:g}×{suffix}"
+            return f"{total:.0f}×{suffix}"
         obj = self.setup.scope.turret.objective
         if obj:
-            return f"{obj.magnification:g}×{suffix}"
+            return f"{obj.magnification:.0f}×{suffix}"
         return ""
 
     def _preview_um_per_px(self, preview_width: int) -> float | None:

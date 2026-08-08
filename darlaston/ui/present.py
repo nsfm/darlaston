@@ -385,11 +385,15 @@ class PresentView(QtWidgets.QWidget):
         ink.setAlphaF(0.92 * dim)
         p.setFont(f)
         x = edge - width
+        # The marks centre on the digits' own height, not on the line
+        # box: a glyph sat on the baseline reads as hanging below type
+        # whose visual middle is half the cap height up.
+        glyph_top = y + m.ascent() - (m.capHeight() + side) / 2.0
         for name, text in segments:
             glyph = _glyph(name, base.name(), side)
             p.save()
             p.setOpacity(0.92 * dim)
-            p.drawPixmap(int(x), int(y + m.ascent() - side), glyph)
+            p.drawPixmap(int(x), int(round(glyph_top)), glyph)
             p.restore()
             x += side + pad
             p.setPen(ink)
