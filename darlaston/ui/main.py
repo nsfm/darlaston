@@ -2835,6 +2835,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.calibration.busy and not self.capture.busy:
             self.opportunist.observe(s)
         self._auto_expose_guarded(s)
+        # Blankness is only read by the stack trigger, so it is only worth
+        # computing while a stack is open. Pushed from here rather than
+        # tracked through the session's several beginnings and ends.
+        self.pipeline.set_blank_watch(self.stack_session is not None)
         self.view.set_focus_rect(s.focus_rect)
         self.view.set_remaining(s.coverage_remaining, s.focus_rect)
         self.focus.set_coverage(s.coverage, s.coverage_complete)

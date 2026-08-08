@@ -286,3 +286,110 @@ def test_an_origin_reset_between_frames_still_works():
     feed(40)
     where = p.stage_position()
     assert where is None or max(abs(where[0]), abs(where[1])) < 1.0
+
+
+# ---- blankness, only while it is being asked about --------------------------
+
+def test_blankness_is_not_computed_when_nothing_is_asking():
+    """Its one live consumer is the stack trigger, which uses it to avoid
+    firing a slice on empty glass, and that runs only during a stack.
+
+    The opportunist looks like a second consumer and is not: `observe` is
+    advisory and reads the stage offset alone, and its own banking
+    measures blankness on the raw frame rather than on this. So outside a
+    stack this was 2.5 ms of every frame answering a question nobody
+    asked.
+    """
+    from darlaston.live.pipeline import LivePipeline
+    from darlaston.camera.buffers import Frame
+
+    p = LivePipeline(on_signals=lambda _s: None)
+    seen = []
+    frame = Frame(data=np.full((400, 600, 3), 128, np.uint8), seq=1,
+                  timestamp=0.0, exposure_us=8000, gain_pct=100,
+                  binned=True, _pool=None)
+
+    p.set_blank_watch(False)
+    p._analyse(frame)                    # lets the detector be built
+    p._blank = _Counting(seen)
+    p._analyse(frame)
+    assert seen == [], "blankness computed with nothing asking for it"
+
+    p.set_blank_watch(True)
+    p._analyse(frame)
+    assert seen == [True], "blankness not computed when the trigger wants it"
+
+
+class _Counting:
+    def __init__(self, log):
+        self._log = log
+
+    def looks_blank(self, _gray, white=255):
+        self._log.append(True)
+        return False
+
+
+def test_the_verdict_reads_false_rather_than_stale_when_unwatched():
+    """A frame carrying last week's answer would be worse than one
+    carrying no answer, since the trigger reads it as a veto."""
+    from darlaston.live.pipeline import LivePipeline
+    from darlaston.camera.buffers import Frame
+
+    got = []
+    p = LivePipeline(on_signals=lambda s: got.append(s.looks_blank))
+    frame = Frame(data=np.full((400, 600, 3), 250, np.uint8), seq=1,
+                  timestamp=0.0, exposure_us=8000, gain_pct=100,
+                  binned=True, _pool=None)
+    p.set_blank_watch(False)
+    p._analyse(frame)
+    assert got and got[-1] is False
+
+
+# ---- the colour the preview arrives in --------------------------------------
+
+def test_the_stream_states_its_byte_order():
+    """Nate's amber pseudoscorpion previewed blue while its captures came
+    out right.
+
+    The SDK header: "0 => RGB, 1 => BGR, default value: 1(Win), 0(macOS,
+    Linux, Android)". Everything downstream reads BGR, so on Linux and
+    macOS the ISP handed us RGB and red and blue swapped. Captures were
+    unaffected because they go through grab_raw and our own demosaic
+    rather than the ISP, which is exactly the pattern that let it survive.
+
+    No test could have caught it from the picture: the synthetic camera
+    writes one value to all three channels, so a channel swap is invisible
+    to it. This asserts the option is *stated* instead.
+    """
+    from darlaston.camera import toupcam
+
+    assert toupcam._BYTEORDER_BGR == 0x2a
+    src = (toupcam.__file__ and
+           __import__("pathlib").Path(toupcam.__file__).read_text())
+    # Set on the streaming path and on the ISP grab it is compared against.
+    assert src.count("_BYTEORDER_BGR, 1") == 2
+
+
+def test_the_synthetic_camera_cannot_see_a_channel_swap():
+    """Recorded so the gap is known rather than rediscovered.
+
+    If the mock ever grows colour, it becomes able to catch this class of
+    fault and this test should be replaced by one that does.
+    """
+    from darlaston.camera.mock import MockCamera
+
+    cam = MockCamera(fps=30.0)
+    cam.open()
+    got = []
+    cam.start_stream(lambda f: got.append(np.array(f.data[:8, :8])))
+    for _ in range(60):
+        if got:
+            break
+        __import__("time").sleep(0.02)
+    cam.stop_stream()
+    cam.close()
+    assert got, "the synthetic camera delivered no frame"
+    patch = got[0]
+    assert (patch[..., 0] == patch[..., 2]).all(), (
+        "the mock now has distinguishable channels: it can catch a red "
+        "and blue swap, so test the picture rather than the option")

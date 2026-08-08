@@ -147,6 +147,8 @@ class LivePipeline:
         self._peaking_enabled = False
         self._region = Region.CENTRE
         self._blank = None
+        #: Whether anything wants the blankness verdict. See `_analyse`.
+        self._blank_watch = False
         self._still_for = 0
         #: The working white balance, and its lookup. Gains rather than a
         #: mode: "off" is unity, so nothing downstream has to special-case
@@ -234,6 +236,17 @@ class LivePipeline:
             # The absolute score is not comparable between regions, so a peak
             # remembered from the old one would be meaningless.
             self._trace = FocusTrace()
+
+    def set_blank_watch(self, on: bool) -> None:
+        """Compute the blankness verdict, for as long as it is wanted.
+
+        Pushed every frame by the window rather than tracked through the
+        stack session's several beginnings and ends, so it cannot drift
+        out of step with the thing it describes. The one frame of lag that
+        costs is harmless: the trigger it feeds needs several settled
+        frames before it fires at all.
+        """
+        self._blank_watch = bool(on)
 
     def set_peaking(self, enabled: bool) -> None:
         with self._lock:
@@ -622,7 +635,18 @@ class LivePipeline:
         if self._blank is None:
             from .blank import BlankDetector
             self._blank = BlankDetector()
-        blank = self._blank.looks_blank(small)
+        # Only while somebody is asking. The one live consumer is the
+        # stack trigger, which uses it to avoid firing a slice on empty
+        # glass, and that runs only during a stack. The opportunist looked
+        # like a second consumer and is not: its `observe` is advisory and
+        # reads the stage offset alone, the auto-grab-on-blank having been
+        # removed as unworkable a while ago, and its own banking measures
+        # blankness on the raw frame rather than this.
+        #
+        # About 2 ms of a 23 ms frame, spent on every frame of every
+        # session to answer a question nothing was asking outside a stack.
+        blank = (self._blank.looks_blank(small) if self._blank_watch
+                 else False)
 
         mark = self.meter.since("blank check", mark)
 
