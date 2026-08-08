@@ -66,7 +66,7 @@ const COMPARISON: { row: string; cells: Cell[] }[] = [
     row: "Cost",
     cells: [
       { text: "Free", cls: "yes" },
-      { text: "Free", cls: "cost" },
+      { text: "Free", cls: "yes" },
       { text: "$200", cls: "cost" },
       { text: "$89 to $289", cls: "cost" },
     ],
@@ -166,7 +166,6 @@ export default function App() {
         <section id="compare">
           <div className="container">
             <div className="kicker">Compared to other tools</div>
-            <h2>Never compromise on quality, or your wallet</h2>
             <div className="table-scroll">
               <table>
                 <thead>
