@@ -130,7 +130,7 @@ msgstr ""
 #. Announced the moment the stream starts: a port this program opened
 #. must never be something the operator has to discover.
 msgid "note.present.stream"
-msgstr "Serving the presentation at {url}"
+msgstr "Streaming the presentation at {url}"
 
 msgid "note.present.stream.failed"
 msgstr "Port {port} is already in use, so the stream did not start."

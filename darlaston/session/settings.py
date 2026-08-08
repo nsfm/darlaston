@@ -368,6 +368,10 @@ class Settings:
     #: happened last week. Turning it on is one menu click, per session,
     #: on purpose.
     present_stream_port: int = 8089
+    #: Send the stream bare, with no captions, for streamers who build
+    #: their own titles in OBS. The projector keeps its captions either
+    #: way; this describes only the wire.
+    present_stream_clean: bool = False
     #: Where the presentation window last sat, as Qt geometry bytes in
     #: hex. At an event the second screen is the same projector all day,
     #: and a window that reopens on it is one less thing to arrange in

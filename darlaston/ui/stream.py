@@ -33,7 +33,7 @@ from PySide6 import QtCore, QtGui
 
 from ..i18n import _
 from .present import PresentView
-from .widgets import UI_METER
+from .widgets import POINTER_S, UI_METER
 
 _log = logging.getLogger(__name__)
 
@@ -127,6 +127,31 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path in ("/still", "/still.jpg"):
+            # One photograph, freshly rendered: waiting for the next
+            # publish counts as an audience, so the interface starts
+            # feeding the moment somebody asks.
+            with self.server.cond:
+                self.server.clients += 1
+                seen = self.server.generation
+            try:
+                jpeg, _seen = self.server.next_after(seen, timeout=2.0)
+                if jpeg is None:
+                    jpeg = self.server.jpeg
+            finally:
+                with self.server.cond:
+                    self.server.clients -= 1
+            if jpeg is None:
+                self.send_error(503)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(jpeg)))
+            self.send_header("Content-Disposition",
+                             'inline; filename="darlaston.jpg"')
+            self.end_headers()
+            self.wfile.write(jpeg)
+            return
         if self.path != "/stream":
             self.send_error(404)
             return
@@ -189,6 +214,13 @@ class Streamer(QtCore.QObject):
         self._stale = QtCore.QTimer(self)
         self._stale.setInterval(1000)
         self._stale.timeout.connect(self._check_stale)
+        #: Re-renders while the presenter's ring blooms, because the
+        #: ring animates whether or not frames are arriving -- a held
+        #: picture being pointed at is the whole use case.
+        self._pointer_until = 0.0
+        self._animate = QtCore.QTimer(self)
+        self._animate.setInterval(33)
+        self._animate.timeout.connect(self._animate_tick)
         self._encoder.start()
         self._listener.start()
         self._stale.start()
@@ -231,6 +263,20 @@ class Streamer(QtCore.QObject):
         otherwise frozen."""
         self.view.set_held(held)
         self._push()
+
+    def pointer(self, fx: float, fy: float) -> None:
+        """The presenter's ring, published immediately and then
+        re-rendered on a timer until it has faded -- the stream's frames
+        cannot be trusted to arrive while the picture is held."""
+        self.view.set_pointer(fx, fy)
+        self._push()
+        self._pointer_until = time.monotonic() + POINTER_S + 0.2
+        self._animate.start()
+
+    def _animate_tick(self) -> None:
+        self._push()
+        if time.monotonic() > self._pointer_until:
+            self._animate.stop()
 
     def _push(self) -> None:
         """Render the view as it stands and hand it to the encoder.
@@ -287,6 +333,7 @@ class Streamer(QtCore.QObject):
 
     def stop(self) -> None:
         self._stale.stop()
+        self._animate.stop()
         with self._frame_cond:
             self._closed = True
             self._frame_cond.notify_all()

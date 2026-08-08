@@ -486,6 +486,17 @@ class MainWindow(QtWidgets.QMainWindow):
             _("menu.present.stream.tooltip"))
         self.present_stream_action.setCheckable(True)
         self.present_stream_action.toggled.connect(self._toggle_stream)
+        # For streamers who build their own titles in OBS: the wire
+        # carries the bare picture while the projector stays dressed.
+        self.present_stream_clean_action = present.addAction(
+            _("menu.present.stream_clean"))
+        self.present_stream_clean_action.setToolTip(
+            _("menu.present.stream_clean.tooltip"))
+        self.present_stream_clean_action.setCheckable(True)
+        self.present_stream_clean_action.setChecked(
+            self.settings.present_stream_clean)
+        self.present_stream_clean_action.toggled.connect(
+            lambda on: self._set_present("present_stream_clean", on))
 
         self.waiting = WaitingPage()
         self.waiting.use_synthetic.connect(self._switch_to_synthetic)
@@ -495,6 +506,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view = LiveView()
         self.view.region_drawn.connect(self._on_custom_region)
         self.view.balance_region_drawn.connect(self._on_balance_region)
+        self.view.pointed.connect(self._on_pointed)
         self.histogram = Histogram()
         self.focus = FocusGroup()
         self.focus.peaking_toggled.connect(self._on_peaking)
@@ -2792,6 +2804,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.streamer is not None:
             self.streamer.set_held(on)
 
+    def _on_pointed(self, at: tuple) -> None:
+        """Ctrl+click on the operator's preview: a ring blooms at the
+        same spot on every audience face. The pointer that works over a
+        stream, where a finger at the projector cannot reach."""
+        fx, fy = at
+        if self.present_window is not None and self.present_window.isVisible():
+            self.present_window.view.set_pointer(fx, fy)
+        if self.streamer is not None and self.streamer.wants_frames():
+            self.streamer.pointer(fx, fy)
+
     def _toggle_stream(self, on: bool) -> None:
         """Serve the presentation on the LAN, or stop. The address is
         said out loud when it starts: a port this program opened must
@@ -2878,15 +2900,21 @@ class MainWindow(QtWidgets.QMainWindow):
             views = ([w.view] if window_up else []) \
                 + ([self.streamer.view] if streaming else [])
             for view in views:
+                # The clean feed: a bare picture for streamers who build
+                # their own titles in OBS, while the projector next to
+                # the microscope keeps its captions.
+                clean = (streaming and view is self.streamer.view
+                         and st.present_stream_clean)
                 view.set_scale(um)
-                view.set_bar(bar)
+                view.set_bar(None if clean else bar)
                 view.set_fill(st.present_fill)
                 view.set_caption_size(st.present_caption_size)
                 view.set_caption_opacity(st.present_caption_opacity)
-                view.set_magnification(self._present_magnification())
-                view.set_subject(*subject)
-                view.set_header(*header)
-                view.set_live(st.present_live)
+                view.set_magnification(
+                    "" if clean else self._present_magnification())
+                view.set_subject(*(("", "") if clean else subject))
+                view.set_header(*(("", "") if clean else header))
+                view.set_live(False if clean else st.present_live)
             if window_up:
                 # Only the window's screen is measurable; the stream is
                 # watched on screens nobody here can measure, and its

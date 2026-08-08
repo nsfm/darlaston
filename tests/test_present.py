@@ -7,6 +7,7 @@ feed, and a fault on the audience's face never reaches the operator's.
 """
 from __future__ import annotations
 
+import time
 import types
 
 import numpy as np
@@ -16,6 +17,7 @@ from PySide6 import QtCore, QtGui, QtTest
 from darlaston.session.settings import Settings
 from darlaston.ui.present import (HeaderDialog, PresentView, PresentWindow,
                                   ScreenDialog)
+from darlaston.ui.widgets import LiveView
 
 
 def _frame(level: int, w: int = 600, h: int = 400) -> np.ndarray:
@@ -267,6 +269,86 @@ def test_the_cursor_hides_when_it_sits_still(qapp):
     view.mouseMoveEvent(move)
     assert view.cursor().shape() == QtCore.Qt.CursorShape.ArrowCursor
     assert view._cursor.isActive(), "the quiet timer did not restart"
+
+
+def test_the_pointer_blooms_where_the_operator_pointed(qapp):
+    view = PresentView()
+    view.resize(600, 400)
+    view.set_frame(_frame(120))
+    before = _pixels(view)
+    view.set_pointer(0.25, 0.75)
+    after = _pixels(view)
+    changed = np.any(before != after, axis=2)
+    assert changed.sum() > 30, "no ring was drawn"
+    ys, xs = np.nonzero(changed)
+    assert abs(xs.mean() - 600 * 0.25) < 60
+    assert abs(ys.mean() - 400 * 0.75) < 60
+    assert view._pulse.isActive(), "nothing keeps a held ring animating"
+
+    # And it fades out rather than staying forever.
+    at, _placed = view._pointer
+    view._pointer = (at, time.monotonic() - 10.0)
+    assert np.array_equal(_pixels(view), before), "the ring never faded"
+    assert view._pointer is None
+
+
+def test_the_pointer_follows_the_crop(qapp):
+    """Fill mode shows a crop; the ring must land on the same piece of
+    glass, or vanish with the piece that was cropped away."""
+    view = PresentView()
+    view.resize(600, 400)
+    view.set_fill(True)
+    view.set_frame(_frame(120, w=600, h=300))    # keeps columns 75..525
+    before = _pixels(view)
+    view.set_pointer(0.05, 0.5)                  # column 30: cropped away
+    assert np.array_equal(_pixels(view), before), (
+        "a ring bloomed on glass the audience cannot see")
+    view.set_pointer(0.5, 0.5)                   # dead centre survives
+    changed = np.any(_pixels(view) != before, axis=2)
+    ys, xs = np.nonzero(changed)
+    assert xs.size and abs(xs.mean() - 300) < 60 and abs(ys.mean() - 200) < 60
+
+
+def test_ctrl_click_on_the_preview_is_the_pointer(qapp):
+    view = LiveView()
+    view.resize(600, 400)
+    view._set_frame(np.full((400, 600, 3), 120, np.uint8), None)
+    told = []
+    view.pointed.connect(told.append)
+    QtTest.QTest.mouseClick(
+        view, QtCore.Qt.MouseButton.LeftButton,
+        QtCore.Qt.KeyboardModifier.ControlModifier,
+        QtCore.QPoint(300, 200))
+    assert told and abs(told[0][0] - 0.5) < 0.01
+    assert view._drag_from is None, "the chord also started a drag"
+    # A plain click still means what it always meant.
+    QtTest.QTest.mousePress(view, QtCore.Qt.MouseButton.LeftButton,
+                            QtCore.Qt.KeyboardModifier.NoModifier,
+                            QtCore.QPoint(300, 200))
+    assert view._drag_from is not None
+    QtTest.QTest.mouseRelease(view, QtCore.Qt.MouseButton.LeftButton,
+                              QtCore.Qt.KeyboardModifier.NoModifier,
+                              QtCore.QPoint(300, 200))
+    assert len(told) == 1
+
+
+def test_a_clean_feed_bares_the_wire_not_the_projector(window, monkeypatch):
+    from darlaston.ui.stream import Streamer
+
+    win = window()
+    win.subject.edit.setText("Waterbears")
+    win.present_action.setChecked(True)
+    win.streamer = Streamer(0)
+    monkeypatch.setattr(win.streamer, "wants_frames", lambda: True)
+    s = types.SimpleNamespace(preview=_frame(120, w=160, h=120))
+    win.settings.present_stream_clean = True
+    win._offer_present(s)
+    assert win.streamer.view._subject == ("", "")
+    assert win.present_window.view._subject == ("Waterbears", "")
+
+    win.settings.present_stream_clean = False
+    win._offer_present(s)
+    assert win.streamer.view._subject == ("Waterbears", "")
 
 
 # ---- the window -------------------------------------------------------------

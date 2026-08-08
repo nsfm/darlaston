@@ -214,13 +214,21 @@ msgstr ""
 #. A network service, so it is off at every launch and the address is
 #. announced when it starts.
 msgid "menu.present.stream"
-msgstr "Serve on the network"
+msgstr "Stream to the network"
 
 msgid "menu.present.stream.tooltip"
 msgstr ""
-"Serve the presentation as live video on your local network.\n"
+"Stream the presentation live on your local network.\n"
 "OBS reads it as a browser or media source, and any browser on the "
 "network can simply open the address."
+
+msgid "menu.present.stream_clean"
+msgstr "Hide overlays from the stream"
+
+msgid "menu.present.stream_clean.tooltip"
+msgstr ""
+"Send the bare picture, for building your own titles in OBS.\n"
+"The presentation window keeps its captions either way."
 
 #. A toggle and a window, the same shape as white balance above it. In
 #. Capture rather than in Files, because Files is about where photographs

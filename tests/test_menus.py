@@ -70,7 +70,8 @@ def test_present_faces_the_audience(win):
         "Presentation window", "Hold the picture", "Scale bar",
         "Magnification", "Slide subject", "Live marker", "Header",
         "Set the header…", "Crop to fill", "Caption size",
-        "Caption opacity", "Screen size…", "Serve on the network"]
+        "Caption opacity", "Screen size…", "Stream to the network",
+        "Hide overlays from the stream"]
     # Holding means nothing while there is no audience window.
     assert not win.present_hold_action.isEnabled()
 

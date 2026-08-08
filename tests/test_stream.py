@@ -111,6 +111,30 @@ def test_the_stream_never_learns_a_screen_size(streamer):
     assert streamer.view.size().toTuple() == STREAM_SIZE
 
 
+def test_a_still_is_one_fresh_photograph(streamer):
+    body = _fetch(streamer.url + "still.jpg", 100,
+                  feed=lambda: streamer.frame(_frame(120)))
+    assert body.startswith(b"\xff\xd8"), "not a JPEG"
+
+
+def test_the_pointer_reaches_the_stream_immediately(streamer):
+    streamer.frame(_frame(120))
+    deadline = time.monotonic() + 2.0
+    while streamer._server.generation == 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    before = streamer._server.generation
+    assert before, "the first frame never published"
+    streamer.pointer(0.5, 0.5)
+    deadline = time.monotonic() + 2.0
+    while streamer._server.generation == before \
+            and time.monotonic() < deadline:
+        time.sleep(0.02)
+    # Published without waiting for a camera frame: a held stream still
+    # shows the ring the moment it is placed.
+    assert streamer._server.generation > before
+    assert streamer._animate.isActive(), "nothing animates the bloom"
+
+
 def test_port_zero_reports_the_real_port(streamer):
     assert streamer.port != 0
     assert str(streamer.port) in streamer.url

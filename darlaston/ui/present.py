@@ -22,7 +22,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import _
 from . import icons, theme
-from .widgets import BAD, UI_METER, ScaleBarOverlay
+from .widgets import BAD, POINTER_S, UI_METER, ScaleBarOverlay, draw_pointer
 
 #: Centimetres per unit the screen may be measured in. Projector
 #: screens are quoted in feet or metres and desktop displays in inches
@@ -133,6 +133,18 @@ class PresentView(QtWidgets.QWidget):
         #: frozen picture is the exact lie the marker exists to prevent.
         self._live_lit = True
         self._held = False
+        #: The presenter's ring: (fraction of the source frame each way,
+        #: when it was placed), or None. And the crop the frame is shown
+        #: through, so the ring lands on the same piece of glass however
+        #: the window is being filled.
+        self._pointer: tuple[tuple[float, float], float] | None = None
+        self._crop = (0, 0, 1, 1)
+        #: Repaints the ring while it blooms. Frames usually do this for
+        #: free; the timer is for a held or quiet picture, where pointing
+        #: is half the reason to have held it.
+        self._pulse = QtCore.QTimer(self)
+        self._pulse.setInterval(33)
+        self._pulse.timeout.connect(self._pulse_tick)
         self._cursor = QtCore.QTimer(self)
         self._cursor.setSingleShot(True)
         self._cursor.setInterval(self.CURSOR_MS)
@@ -176,10 +188,12 @@ class PresentView(QtWidgets.QWidget):
             x0, y0 = (w - cw) // 2, (h - ch) // 2
             src = src[y0:y0 + ch, x0:x0 + cw]
             self._src_width = cw
+            self._crop = (x0, y0, cw, ch)
         else:
             target = self._fit(QtCore.QSize(w, h))
             tw, th = max(1, target.width()), max(1, target.height())
             self._src_width = w
+            self._crop = (0, 0, w, h)
         if (tw, th) != src.shape[:2][::-1]:
             src = cv2.resize(src, (tw, th), interpolation=cv2.INTER_LINEAR)
         # QImage does not copy, so the buffer lives on the instance.
@@ -270,6 +284,19 @@ class PresentView(QtWidgets.QWidget):
             self._held = bool(held)
             self.update()
 
+    def set_pointer(self, fx: float, fy: float) -> None:
+        """The presenter's ring, at a fraction of the source frame each
+        way. Deliberately not gated by hold: pointing at a held picture
+        is half the reason it was held."""
+        self._pointer = ((float(fx), float(fy)), time.monotonic())
+        self._pulse.start()
+        self.update()
+
+    def _pulse_tick(self) -> None:
+        if self._pointer is None:
+            self._pulse.stop()
+        self.update()
+
     # ---- painting --------------------------------------------------------
 
     def paintEvent(self, _event) -> None:
@@ -284,7 +311,26 @@ class PresentView(QtWidgets.QWidget):
             p.save()
             p.setClipRect(target)
             self._draw_overlays(p, target)
+            self._draw_pointer(p, target)
             p.restore()
+
+    def _draw_pointer(self, p: QtGui.QPainter, target: QtCore.QRect) -> None:
+        """The ring, mapped through whatever crop the frame is shown
+        with, so it lands on the same piece of glass the operator
+        pointed at -- or nowhere, if that piece was cropped away."""
+        if self._pointer is None or self._src is None:
+            return
+        (fx, fy), placed = self._pointer
+        h, w = self._src.shape[:2]
+        x0, y0, cw, ch = self._crop
+        tx = (fx * w - x0) / max(cw, 1)
+        ty = (fy * h - y0) / max(ch, 1)
+        if not (0.0 <= tx <= 1.0 and 0.0 <= ty <= 1.0):
+            self._pointer = None
+            return
+        if not draw_pointer(p, target, (tx, ty),
+                            time.monotonic() - placed):
+            self._pointer = None
 
     def _draw_overlays(self, p: QtGui.QPainter, target: QtCore.QRect) -> None:
         """The four corners, sized to the picture rather than the window,
