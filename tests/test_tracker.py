@@ -510,3 +510,74 @@ def test_the_window_wakes_the_tracker_for_a_listener(window):
     assert win.pipeline._track_wanted is True
     assert win.slidemap._min_gen > fence, (
         "waking must clear the map and fence the blind gap")
+
+
+def test_corrections_ride_the_generation_fence():
+    """A nudge moves the position and its anchor together; a stale
+    generation's correction describes an origin that no longer exists
+    and must change nothing."""
+    cam, pipe, push, got = _rig()
+    push(); push(); push()
+    gen = got[-1].track_gen
+    before = pipe.stage_position()
+    assert before is not None
+
+    pipe.correct_tracking(gen, delta=(10.0, 4.0))
+    moved = pipe.stage_position()
+    assert moved == pytest.approx((before[0] + 10.0, before[1] + 4.0))
+
+    # The stage has not moved, so the next frames must hold the nudged
+    # position rather than snapping back to the keyframe's old belief.
+    push(); push()
+    held = got[-1].stage_pos
+    assert held == pytest.approx(moved, abs=2.0)
+
+    pipe.correct_tracking(gen - 1, delta=(500.0, 500.0))
+    assert pipe.stage_position() == pytest.approx(held, abs=2.0), (
+        "a stale correction was believed")
+    cam.close()
+
+
+def test_a_refix_plants_the_position_and_drops_the_key():
+    """After a blank crossing the keyframe is of ground from before the
+    gap; a refix plants the position absolutely and the next analysis
+    pass measures from fresh ground rather than jumping back."""
+    cam, pipe, push, got = _rig()
+    push(); push(); push()
+    gen = got[-1].track_gen
+    pipe.correct_tracking(gen, refix=(500.0, 300.0))
+    push(); push()
+    assert got[-1].stage_pos == pytest.approx((500.0, 300.0), abs=2.0), (
+        "the refix did not survive the next frames")
+    cam.close()
+
+
+def test_the_window_says_what_tracking_is_doing(window):
+    """The advisories: lost is said after it is sustained, a gated step
+    is said the moment it happens, and neither is said while the
+    tracker was put to sleep on purpose."""
+    import types
+
+    from darlaston.i18n import _
+
+    win = window()
+    frame = np.full((120, 160, 3), 120, np.uint8)
+
+    def signal(tracking, gated=0):
+        return types.SimpleNamespace(preview=frame, stage_pos=(0.0, 0.0),
+                                     stage_tracking=tracking,
+                                     track_gen=1, track_gated=gated)
+
+    win._keep_tracking(signal(True))
+    assert win.view._advisories == ()
+
+    for _i in range(25):                      # sustained, not instantaneous
+        win._keep_tracking(signal(False))
+    assert _("advice.track.blank") in win.view._advisories
+
+    win._keep_tracking(signal(True, gated=3))
+    assert _("advice.track.fast") in win.view._advisories
+
+    win._track_wanted = False                 # asleep on purpose: quiet
+    win._keep_tracking(signal(False, gated=9))
+    assert win.view._advisories == ()

@@ -88,6 +88,28 @@ class StageTracker:
         the same thing as it not having moved."""
         return self._gated
 
+    def nudge(self, delta: tuple[float, float]) -> None:
+        """Shift the position and its anchor together, by an externally
+        measured correction -- the relocalizer matching the view against
+        the map's own bank. Moving both keeps the keyframe arithmetic
+        consistent: the next `anchor` still measures a true shift from a
+        keyframe whose planted position moved with the belief."""
+        if not self._ever:
+            return
+        self._pos = (self._pos[0] + delta[0], self._pos[1] + delta[1])
+        self._anchor = (self._anchor[0] + delta[0],
+                        self._anchor[1] + delta[1])
+
+    def refix(self, pos: tuple[float, float]) -> None:
+        """Plant the position absolutely: the relocalizer found familiar
+        ground after a blank crossing. Deliberately does not claim a
+        lock -- the next good correlation earns that -- and the caller
+        must drop the keyframe, which belongs to ground from before the
+        crossing."""
+        self._pos = (float(pos[0]), float(pos[1]))
+        self._anchor = self._pos
+        self._ever = True
+
     def _acceptable(self, offset: tuple[float, float], confidence: float,
                     shape: tuple[int, ...]) -> bool:
         if confidence < self.CONFIDENCE:

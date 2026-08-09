@@ -96,6 +96,9 @@ class LiveSignals:
     #: Did this frame's offset actually integrate? False over featureless
     #: ground, where the position is held rather than trusted.
     stage_tracking: bool = False
+    #: Running count of measured-but-rejected tracker steps. The window
+    #: turns a rising count into the "moving too fast" advisory.
+    track_gated: int = 0
     #: Which tracking origin `stage_pos` was measured under. Bumped by
     #: every reset. A consumer that clears on reset must refuse frames
     #: stamped with an older generation: they were measured before the
@@ -194,6 +197,10 @@ class LivePipeline:
         #: bool written by the interface thread and read by the analysis
         #: thread, which is safe for a flag that only gates work.
         self._track_wanted = True
+        #: A relocalizer refix landed: the keyframe belongs to ground
+        #: from before the crossing and must go. Set under the lock by
+        #: the interface thread, consumed under it by analysis.
+        self._refix_pending = False
         self._key: np.ndarray | None = None
         self._key_offset: tuple[float, float] = (0.0, 0.0)
         self._key_pending: np.ndarray | None = None
@@ -338,6 +345,27 @@ class LivePipeline:
         Waking is the caller's moment to reset the origin -- travel while
         blind was never integrated, so old positions are lies."""
         self._track_wanted = bool(wanted)
+
+    def correct_tracking(self, gen: int, delta=None, refix=None) -> None:
+        """A correction from the relocalizer, measured on the interface
+        thread against the map's own bank. Generation-guarded like every
+        cross-thread opinion about position: a correction computed under
+        an origin that has since been reset describes nothing.
+
+        `delta` nudges -- drift measured over trodden ground, position
+        and anchor moving together so the keyframe stays honest.
+        `refix` plants the position absolutely after a blank crossing;
+        the keyframe belongs to ground from before the gap, so the
+        analysis thread drops it at the next pass, the same pattern the
+        reset uses."""
+        with self._lock:
+            if gen != self._track_gen:
+                return
+            if refix is not None:
+                self._xy.refix(refix)
+                self._refix_pending = True
+            elif delta is not None:
+                self._xy.nudge(delta)
 
     def reset_tracking(self) -> None:
         """New origin. Required when the objective changes -- magnification
@@ -615,11 +643,17 @@ class LivePipeline:
         else:
             with self._lock:
                 gen = self._track_gen
+                refixed = self._refix_pending
+                self._refix_pending = False
             if gen != self._track_seen:
                 # An origin was reset since the last frame. The correlation
                 # reference belongs to a scale or a position that no longer
                 # means anything, so it goes rather than being measured from.
                 self._track_seen = gen
+                self._drop_key()
+            elif refixed:
+                # The relocalizer planted a new position; the keyframe is
+                # of ground from before the crossing it just bridged.
                 self._drop_key()
 
             key_offset, offset, confidence = self._track(small, gray.shape)
@@ -785,6 +819,7 @@ class LivePipeline:
             xy_confidence=confidence,
             stage_pos=stage_pos,
             stage_tracking=stage_tracking,
+            track_gated=self._xy.gated,
             # After the sync above, `_track_seen` is the generation this
             # frame's position was measured under -- including the case
             # where a reset landed mid-correlation and the measurement

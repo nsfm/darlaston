@@ -41,6 +41,7 @@ from ..live.cell import Newest
 from ..live import exposure as exposure_ctl
 from ..process import scalebar
 from ..process.metadata import sensor_pitch
+from ..live.relocate import Relocator
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
@@ -164,6 +165,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.pipeline = LivePipeline(self._publish_signals,
                                      illumination=Illumination.BRIGHTFIELD)
+        #: Matches the live view against the slide map's own bank: drift
+        #: correction over trodden ground, recovery over familiar ground.
+        self.relocator = Relocator()
+        self._lost_for = 0
+        self._track_wanted = True
         self.session = CameraSession(make_backend,
                                      self.bridge.status.emit,
                                      self.pipeline.submit,
@@ -2479,6 +2485,52 @@ class MainWindow(QtWidgets.QMainWindow):
         it repaints cleared ground -- the two-press clear."""
         self.slidemap.ignore_before(self.pipeline.reset_tracking())
 
+    def _keep_tracking(self, s: LiveSignals) -> None:
+        """The relocalizer and its advisories, once per frame.
+
+        The map's own bank is a place-recognition database: over trodden
+        ground the tracker is nudged by the measured drift so the map
+        stays rigid, and when tracking is lost -- Darlaston's mounts are
+        too clean between specimens -- the bank is swept until familiar
+        ground reappears and the position rejoins the *same* origin,
+        terrain and pins intact. And none of it is silent any more."""
+        if not self._track_wanted:
+            self.view.set_advisories(())
+            self._gated_seen = s.track_gated
+            return
+        fix = self.relocator.observe(s.preview, s.stage_pos,
+                                     s.stage_tracking,
+                                     self.slidemap.model.snapshots)
+        if fix is not None:
+            if s.stage_tracking and fix.delta is not None:
+                # Drift over familiar ground: position and anchor move
+                # together and the keyframe stays valid.
+                self.pipeline.correct_tracking(s.track_gen,
+                                               delta=fix.delta)
+            else:
+                # Found again after a crossing: plant the position and
+                # let the analysis thread drop the stale keyframe.
+                self.pipeline.correct_tracking(s.track_gen, refix=fix.pos)
+
+        now = time.monotonic()
+        if s.track_gated > getattr(self, "_gated_seen", 0):
+            #: The gate fired: travel arrived too fast to measure and
+            #: was discarded whole. Worth a moment of saying so.
+            self._fast_until = now + 1.5
+        self._gated_seen = s.track_gated
+        self._lost_for = (self._lost_for + 1 if not s.stage_tracking
+                          else 0)
+        lines = []
+        # Sustained, not instantaneous: a single unmatched frame is a
+        # correlation hiccup, not a state worth announcing.
+        if self._lost_for > 20:
+            lines.append(_("advice.track.searching")
+                         if self.relocator.searching
+                         else _("advice.track.blank"))
+        if now < getattr(self, "_fast_until", 0.0):
+            lines.append(_("advice.track.fast"))
+        self.view.set_advisories(lines)
+
     def _sync_track_wanted(self) -> None:
         """Run the tracker only while something consumes its answer: the
         map on screen, a mosaic, a stack in progress, a sweep, or a
@@ -3177,6 +3229,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.opportunist.observe(s)
         self._auto_expose_guarded(s)
         self._sync_track_wanted()
+        self._keep_tracking(s)
         # Blankness is only read by the stack trigger, so it is only worth
         # computing while a stack is open. Pushed from here rather than
         # tracked through the session's several beginnings and ends.
