@@ -42,6 +42,20 @@
       coverage and an honest size estimate, then shoot it - which turns a
       rendering feature into a capture feature. Order and reasoning in the
       doc.
+- [ ] **Centre-cropping the tracker against a bad relay: refuted,
+      recorded so it is not re-proposed.** Benched 2026-08-09
+      (`spike/tracking/relay_bench.py`): a synthetic fixed-to-sensor
+      relay (barrel k1=0.03, radial edge blur) costs ~2% drift at slow
+      cranks, fading to nothing at speed; a 70% centre crop recovers
+      about a third of that; a width-only "square" crop keeps the
+      blurred corners, shrinks the measurable range, gates at slow
+      speeds and lands *worse* than full frame. And on a harsher relay
+      (k1=0.06) the crop's benefit evaporates entirely -- cropping
+      discards correlation statistics exactly when the surviving pixels
+      are noisiest. The Hanning window already tapers the edges, the
+      relocalizer bounds accumulated drift over trodden ground, and the
+      real fix is optical: a proper relay. No setting shipped.
+
 - [ ] **The tracker must not run at a divisor**, recorded so it is not
       re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
       0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
