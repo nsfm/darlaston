@@ -7,7 +7,7 @@
       anywhere on seen ground: 100% of trials on a unique 4×3-field
       synthetic scene, ~3 preview px of error, through 5 µm of defocus,
       on clean glass and textured mounts alike, at 0.15 ms per banked
-      thumb. And the same primitive run *continuously* over trodden
+      thumb. And the same primitive run _continuously_ over trodden
       ground abolishes dead-reckoning drift: a 2% biased re-traversal
       went from 63 px mean error uncorrected to 2 px corrected, which
       also ends the map banking offset duplicate thumbs on revisits.
@@ -96,7 +96,7 @@
       reproduces the loss is a jump arriving between two analysed frames:
       the per-axis gate is 0.35 of each axis's own extent, 638 px in x
       but 426 px in y on a landscape frame, and a gated jump is discarded
-      *whole*. So travel in the 426 to 638 px band survives in x and
+      _whole_. So travel in the 426 to 638 px band survives in x and
       vanishes in y — and dropped frames while cranking fast are exactly
       what makes multi-hundred-pixel inter-frame steps, which is why it
       shows at 25×, where a small field makes the hand fast in pixels.
@@ -115,6 +115,7 @@
       it. The second is a real algorithm and wants a bench before it
       ships. A characterisation test in test_tracker.py pins today's
       behaviour so the fix shows up as a deliberate change.
+
 - [ ] **Measured candidates in waiting** (from the research sweep, each goes
       through `tools/stack_bench.py` before shipping): CombineZP's ramp
       subtraction (monotone-vs-peaked profile test — the only shipped
@@ -249,6 +250,9 @@
 ## Capture features
 
 - [ ] **Inverted brightfield** native in the live view. Display and export transform only; the raw stays linear positive.
+- [ ] **Color swap** an earlier bug swapped R and B, the effect was actually pretty cool.
+- [ ] **Greyscale** to support green filter / high contrast modes
+- [ ] **Mobile formats** Rotate the preview 90 degrees; add crop guides for mobile aspect rations to support content creators.
 
 ## Presentation, deferred by choice
 

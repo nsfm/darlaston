@@ -581,3 +581,27 @@ def test_the_window_says_what_tracking_is_doing(window):
     win._track_wanted = False                 # asleep on purpose: quiet
     win._keep_tracking(signal(False, gated=9))
     assert win.view._advisories == ()
+
+
+def test_a_partial_revisit_never_shrinks_coverage():
+    """Passing partly over an old snapshot used to replace it at the
+    visitor's position, dragging its footprint and orphaning the
+    trailing ground it covered -- the map lost coverage as you crossed
+    it. A refresh now demands near-concentricity; anything less leaves
+    the old postcard exactly where it was."""
+    m = SlideMap()
+    frame = np.full((60, 80, 3), 120, np.uint8)
+    m.observe((0.0, 0.0), frame, True)
+
+    # A tenth of a field away: inside the old refresh radius, decidedly
+    # not concentric. Must neither drag the postcard nor bank a new one.
+    for _ in range(SlideMap.REFRESH_EVERY + 1):
+        m.observe((8.0, 0.0), frame, True)
+    assert len(m.snapshots) == 1
+    assert m.snapshots[0].pos == (0.0, 0.0), "the footprint was dragged"
+
+    # Nearly concentric: the refresh still refreshes.
+    for _ in range(SlideMap.REFRESH_EVERY + 1):
+        m.observe((2.0, 0.0), frame, True)
+    assert len(m.snapshots) == 1
+    assert m.snapshots[0].pos == (2.0, 0.0)

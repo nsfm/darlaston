@@ -241,7 +241,15 @@ class SlideMap:
     SPACING = 0.35
     #: Within this of an existing snapshot, refresh it instead -- revisited
     #: ground shows what is there now, not what was there ten minutes ago.
-    REFRESH = 0.15
+    #: Deliberately tight, because a refresh moves the snapshot to the
+    #: visitor's position: at the old 0.15 a partial pass dragged the
+    #: footprint toward you and orphaned the trailing ground it covered,
+    #: so coverage *shrank* as you crossed your own map. Nate watched it
+    #: happen. At 0.05 the drag is negligible; anything between here and
+    #: SPACING holds the old ground instead, and a slightly stale thumb
+    #: is the cheaper honest cost -- staleness also re-banks a corrected
+    #: position on every revisit, which mostly re-encodes current drift.
+    REFRESH = 0.05
     #: Frames between refreshes, so a parked view is not resizing thumbnails
     #: thirty times a second to overwrite itself with itself.
     REFRESH_EVERY = 24
