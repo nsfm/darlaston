@@ -37,6 +37,13 @@ dependencies = [
     # cv2's own GUI functions; PySide6 is the entire interface.
     "opencv-python-headless>=4.8",
     "PySide6>=6.5",
+    # The fourth dependency, admitted reluctantly and for one job: a CA
+    # bundle that travels with the app. The packaged interpreter trusts
+    # whatever the build machine's Python trusted, and on macOS that was
+    # nothing at all, so the SDK download failed TLS verification on a
+    # server whose chain measures complete. Pure Python, no binary, and
+    # PyInstaller's own hook carries the certificates into the bundle.
+    "certifi",
 ]
 
 [project.optional-dependencies]

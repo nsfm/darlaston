@@ -561,9 +561,18 @@ class StatusBar(QtWidgets.QFrame):
         self.numbers.setText("   ".join(parts))
 
 
-#: Width the explanation column wraps at. Comfortable for prose and
-#: narrow enough that a numbered list still scans.
-_WRAP_W = 440
+#: Characters of prose the explanation column wraps at. A count, not a
+#: pixel width: 440 px was tuned on one machine's font and chopped the
+#: same sentences on an Intel Mac, whose wider glyphs did not fit the
+#: box the Linux font was measured for. Sixty-three of the label's own
+#: characters lands at the same 440 on the reference font and scales
+#: with whatever face and DPI the platform actually renders.
+_WRAP_CHARS = 63
+
+
+def _wrap_width(widget: QtWidgets.QWidget) -> int:
+    """The explanation column's width, in this widget's own metrics."""
+    return widget.fontMetrics().averageCharWidth() * _WRAP_CHARS
 
 
 def _wraps(label: QtWidgets.QLabel) -> None:
@@ -575,7 +584,7 @@ def _wraps(label: QtWidgets.QLabel) -> None:
     beneath. Fixing this by hand is why the first-run page had its own
     explanation written across its own instructions.
     """
-    label.setFixedWidth(_WRAP_W)
+    label.setFixedWidth(_wrap_width(label))
     policy = label.sizePolicy()
     policy.setHeightForWidth(True)
     policy.setVerticalPolicy(QtWidgets.QSizePolicy.Policy.MinimumExpanding)
@@ -730,7 +739,7 @@ class WaitingPage(QtWidgets.QWidget):
 
         holder = QtWidgets.QWidget()
         holder.setStyleSheet("background: transparent;")
-        holder.setMaximumWidth(_WRAP_W)
+        holder.setMaximumWidth(_wrap_width(self.body))
         holder.setLayout(col)
 
         # The buttons sit *outside* the prose column, because they are wider
