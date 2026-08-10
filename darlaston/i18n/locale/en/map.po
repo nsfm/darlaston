@@ -72,3 +72,18 @@ msgstr "holding, nothing to track"
 
 msgid "map.state.tracking"
 msgstr "tracking"
+
+#. The tips marker: one glyph, hover for the sentence. Circled i, the
+#. universal "there is help here" mark.
+msgid "map.tips.mark"
+msgstr "ⓘ"
+
+#. What actually helps tracking, none of it discoverable from the
+#. interface: light and hands.
+msgid "map.tips.tooltip"
+msgstr ""
+"Tracking works best with a short exposure time (under 8 ms if the "
+"light allows),\n"
+"a frame rate of 30 fps or more, and steady stage movement.\n"
+"Motion blur is the enemy: the same movement smears four times as much "
+"at 20 ms as at 5 ms."

@@ -2595,6 +2595,12 @@ class MainWindow(QtWidgets.QMainWindow):
                          else _("advice.track.blank"))
         if now < getattr(self, "_fast_until", 0.0):
             lines.append(_("advice.track.fast"))
+            # The lever that actually helps, said while it is relevant:
+            # blur scales with how long the shutter stays open, so the
+            # same crank that defeats tracking at 12 ms is measurable at
+            # 4 ms. Only offered when the exposure has room to give.
+            if s.stats.get("exposure_us", 0) > 8000:
+                lines.append(_("advice.track.exposure"))
         # Said on the slide map's own status line: that panel is where
         # the eyes already are when tracking misbehaves, and the live
         # view stays a viewfinder rather than a message board.

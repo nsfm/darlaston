@@ -12,6 +12,7 @@ Drive it from a test or from the UI:
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Callable
@@ -286,6 +287,31 @@ class MockCamera(CameraBackend):
         self._vig = (1.0 - 0.16 * r2).astype(np.float32)
         return self._vig
 
+    def _smear(self, img: np.ndarray) -> np.ndarray:
+        """Exposure-time motion blur: the streak is the distance the
+        stage covered while the shutter was open. The same crank smears
+        four times as much at 20 ms as at 5 ms, which is the field
+        observation this exists to reproduce synthetically."""
+        full = _RESOLUTIONS[0]
+        x, y = self.stage_xy
+        lx, ly = getattr(self, "_blur_from", (x, y))
+        self._blur_from = (x, y)
+        dx = (x - lx) / full.pixel_um
+        dy = (y - ly) / full.pixel_um
+        travel = math.hypot(dx, dy)
+        interval = max(1.0 / self._fps, self._exposure_us / 1e6)
+        length = travel * min(1.0, (self._exposure_us / 1e6) / interval)
+        if length < 2.0:
+            return img
+        k = int(min(length, 51.0)) | 1
+        kern = np.zeros((k, k), np.float32)
+        c = k // 2
+        ux, uy = dx / travel, dy / travel
+        cv2.line(kern, (int(round(c - ux * c)), int(round(c - uy * c))),
+                 (int(round(c + ux * c)), int(round(c + uy * c))), 1.0, 1)
+        kern /= max(float(kern.sum()), 1.0)
+        return cv2.filter2D(img, -1, kern)
+
     def _render_gray(self, w: int, h: int) -> np.ndarray:
         """Scene window at the requested size, in the physically right order.
 
@@ -371,9 +397,19 @@ class MockCamera(CameraBackend):
                 else np.concatenate((rows[:, x0:], rows[:, :x0 + w - sw]),
                                     axis=1))
 
+    #: Simulate exposure-time motion blur. Off by default: it changes
+    #: what every moving test sees, and most tests are about something
+    #: else. Probes studying tracking under real hands switch it on --
+    #: the field observation it reproduces is that the same crank tracks
+    #: crisply at 2-5 ms exposure and mushily at 10-20 ms.
+    motion_blur = False
+
     def _render_into(self, buf: np.ndarray, res: Resolution) -> None:
         h, w = res.height, res.width
         img = self._render_gray(w, h)
+
+        if self.motion_blur:
+            img = self._smear(img)
 
         # Illumination falloff, so flat-field correction is exercisable.
         # Cached: it depends only on the frame size, and rebuilding an mgrid

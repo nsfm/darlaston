@@ -557,10 +557,20 @@ class SlideMap:
     # ---- building --------------------------------------------------------
 
     def observe(self, pos: tuple[float, float] | None, preview: np.ndarray,
-                tracking: bool) -> bool:
-        """Offer the current frame. Returns True if the map changed."""
+                tracking: bool, steady: bool = True) -> bool:
+        """Offer the current frame. Returns True if the map changed.
+
+        `steady` is the caller's word that this frame is worth keeping:
+        not smeared by motion blur, and not measured in the shadow of a
+        gated jump, when the position is suspect until the relocalizer
+        has had its chance to corroborate. The map is the relocalizer's
+        reference library as well as a picture -- banking one blurred or
+        misplaced frame does not just draw a smudge, it poisons the very
+        machinery that would have recovered the position. Refusing to
+        paint costs a moment of coverage; painting a lie costs the map.
+        """
         self._since_paint += 1
-        if pos is None or not tracking:
+        if pos is None or not tracking or not steady:
             return False
         w = preview.shape[1]
         if self._last_paint is not None:

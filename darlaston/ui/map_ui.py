@@ -12,6 +12,8 @@ When mosaic mode arrives, captured tiles paint over the reconnaissance layer.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -284,6 +286,10 @@ class SlideMapPanel(QtWidgets.QWidget):
         #: the map is where the eyes already are when tracking misbehaves,
         #: and the fields count this replaced stopped earning the space.
         self._advisory: str | None = None
+        #: The banking quality bar's memory: the gated count last seen,
+        #: and how many tracked frames of holdoff remain after a gate.
+        self._gated_seen = 0
+        self._paint_hold = 0
 
         self.pin_btn = QtWidgets.QPushButton(_("map.pin.action"))
         self.pin_btn.setProperty("role", "seg")
@@ -313,10 +319,19 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.status.setProperty("role", "key")
         self.status.setWordWrap(True)
 
+        # The tips, behind a hover rather than in anyone's way. What
+        # helps tracking is not discoverable from the interface -- it is
+        # a property of light and hands -- so it is worth a sentence
+        # somewhere the eyes already go when tracking misbehaves.
+        self.tips = QtWidgets.QLabel(_("map.tips.mark"))
+        self.tips.setProperty("role", "key")
+        self.tips.setToolTip(_("map.tips.tooltip"))
+
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(4)
         row.addWidget(self.mosaic_btn)
         row.addWidget(self.undo_btn)
+        row.addWidget(self.tips)
         row.addStretch(1)
         row.addWidget(self.pin_btn)
         row.addWidget(self.clear_btn)
@@ -337,6 +352,19 @@ class SlideMapPanel(QtWidgets.QWidget):
         w = int(max(280, min(500, host.width() * 0.34)))
         return w, int(w * 0.58) + 76
 
+    #: Estimated motion blur, in preview pixels, above which a frame is
+    #: not banked. Picked, not measured: bounded by the field observation
+    #: that tracking is crisp at 2-5 ms exposure and mushy at 10-20 ms
+    #: under the same cranking, which brackets the acceptable smear at
+    #: single digits. A synthetic-blur bench could sharpen this number.
+    BLUR_LIMIT = 8.0
+
+    #: Tracked frames to hold painting after a gated jump, while the
+    #: position is suspect. Sized to outlast the relocalizer's continuous
+    #: check cadence (every 8 frames), so a wrong position is corrected
+    #: before the map resumes recording it.
+    GATE_HOLD = 12
+
     # ---- feed ------------------------------------------------------------
 
     def update_live(self, s: LiveSignals) -> None:
@@ -352,7 +380,33 @@ class SlideMapPanel(QtWidgets.QWidget):
         self._pos = pos
         self._frame = (w, h)
         self._tracking = tracking
-        changed = self.model.observe(pos, s.preview, tracking)
+        # The banking quality bar. Two ways a tracked frame can still be
+        # unworthy of the map: it is smeared -- blur is speed times the
+        # fraction of the frame interval the shutter was open, so the
+        # same crank blurs four times as much at 20 ms as at 5 ms, which
+        # is exactly the difference the operator can see in tracking
+        # quality -- or it landed near a gated jump, when the position
+        # is suspect until the relocalizer has had its ~8-frame chance
+        # to corroborate. On glass, one frame banked in that shadow
+        # morphed the map and skewed everything after, because the
+        # wrongly-placed paint is what the relocalizer then matched
+        # against. Refusing costs a beat of coverage on ground the very
+        # next calm frame will cover anyway.
+        stats = s.stats
+        fps = float(stats.get("analysed_fps") or 30.0) or 30.0
+        exposure_us = float(stats.get("exposure_us") or 0.0)
+        speed = (math.hypot(s.xy_offset[0], s.xy_offset[1])
+                 if s.xy_offset is not None else 0.0)
+        blur = speed * exposure_us * fps / 1e6
+        if s.track_gated < self._gated_seen:          # tracker was reset
+            self._gated_seen = s.track_gated
+        if s.track_gated > self._gated_seen:
+            self._gated_seen = s.track_gated
+            self._paint_hold = self.GATE_HOLD
+        elif self._paint_hold and tracking:
+            self._paint_hold -= 1
+        steady = blur <= self.BLUR_LIMIT and not self._paint_hold
+        changed = self.model.observe(pos, s.preview, tracking, steady)
         self.canvas.set_state(pos, (w, h), tracking, changed)
         self.pin_btn.setEnabled(pos is not None)
         self._update_status()

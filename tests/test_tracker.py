@@ -173,6 +173,40 @@ def _rig():
     return cam, pipe, push, got
 
 
+def test_mock_motion_blur_is_opt_in_and_exposure_scaled():
+    """Off by default -- it would change what every moving test sees --
+    and when on, the streak follows the shutter: the same move blurs at
+    a long exposure and stays crisp at a short one."""
+    def frame(exposure_us, blur):
+        cam = MockCamera(fps=30.0)
+        cam.open()
+        cam.motion_blur = blur
+        cam.set_exposure(exposure_us)
+        res = _RESOLUTIONS[2]
+        buf = np.empty((res.height, res.width, 3), np.uint8)
+        cam._render_into(buf, res)          # establishes _blur_from
+        x, y = cam.stage_xy
+        cam.stage_xy = (x + 300.0, y)       # a fast move between frames
+        cam._render_into(buf, res)
+        cam.close()
+        return buf.copy()
+
+    import cv2
+
+    def crispness(img):
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.Laplacian(g, cv2.CV_64F).var()
+
+    # Each blurred frame against its own same-exposure sharp baseline:
+    # the mock folds exposure into brightness, so comparing across
+    # exposures would measure darkness, not smear.
+    r_long = crispness(frame(16000, True)) / crispness(frame(16000, False))
+    r_short = crispness(frame(2000, True)) / crispness(frame(2000, False))
+    assert r_long < 0.6, f"long exposure plus motion must smear ({r_long:.2f})"
+    assert r_short > 1.5 * r_long, \
+        f"the streak must follow the shutter ({r_short:.2f} vs {r_long:.2f})"
+
+
 def test_guard_measures_motion_across_the_capture_gap():
     cam, pipe, push, _ = _rig()
     push(); push(); push()
@@ -459,7 +493,9 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
 
     def signal(gen, pos):
         return types.SimpleNamespace(preview=frame, stage_pos=pos,
-                                     stage_tracking=True, track_gen=gen)
+                                     stage_tracking=True, track_gen=gen,
+                                     track_gated=0, xy_offset=None,
+                                     stats={})
 
     panel.update_live(signal(0, (10.0, 10.0)))
     assert panel.model.terrain.ready, "tracking never painted terrain"
@@ -472,6 +508,52 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
 
     panel.update_live(signal(1, (0.0, 0.0)))
     assert panel.model.terrain.ready, "fresh frames must still paint"
+
+
+def test_the_map_banks_only_what_the_tracker_is_calm_about(qapp):
+    """The banking quality bar, from the on-glass report: during a fast
+    crank the map banked blurred frames, and one frame banked in the
+    shadow of a gated jump -- position suspect, not yet corroborated --
+    morphed the map and skewed everything after, because the misplaced
+    paint is what the relocalizer then matched against."""
+    import types
+
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    frame = np.full((60, 80, 3), 120, np.uint8)
+
+    def signal(pos, offset=None, gated=0, exposure=4000):
+        return types.SimpleNamespace(
+            preview=frame, stage_pos=pos, stage_tracking=True, track_gen=0,
+            track_gated=gated, xy_offset=offset,
+            stats={"analysed_fps": 30.0, "exposure_us": exposure})
+
+    # A fast frame at a long exposure smears; the same speed at a short
+    # exposure does not. 100 px/frame at 30 fps: 12 ms of shutter is
+    # 36 px of streak, 2 ms is 6 px.
+    smeared = SlideMapPanel()
+    smeared.update_live(signal((0.0, 0.0), offset=(100.0, 0.0),
+                               exposure=12000))
+    assert not smeared.model.terrain.ready, "a smeared frame was banked"
+    smeared.update_live(signal((0.0, 0.0), offset=(100.0, 0.0),
+                               exposure=2000))
+    assert smeared.model.terrain.ready, "short exposure must still bank"
+
+    # After a gate, painting holds until the position has had its chance
+    # to be corroborated -- and resumes on its own once it has.
+    held = SlideMapPanel()
+    held.update_live(signal((0.0, 0.0)))
+    assert held.model.terrain.ready
+    fields = held.model.terrain.fields_painted
+    held.update_live(signal((500.0, 0.0), gated=1))
+    for i in range(SlideMapPanel.GATE_HOLD - 1):
+        held.update_live(signal((500.0 + i, 0.0), gated=1))
+    assert held.model.terrain.fields_painted == fields, \
+        "the map painted while the position was suspect"
+    for i in range(4):
+        held.update_live(signal((520.0 + i, 0.0), gated=1))
+    assert held.model.terrain.fields_painted > fields, \
+        "painting never resumed after the holdoff"
 
 
 def test_clearing_the_map_fences_in_the_same_press(window):
@@ -601,6 +683,7 @@ def test_the_window_says_what_tracking_is_doing(window):
     def signal(tracking, gated=0):
         return types.SimpleNamespace(preview=frame, stage_pos=(0.0, 0.0),
                                      stage_tracking=tracking,
+                                     stats={}, xy_offset=None,
                                      track_gen=1, track_gated=gated,
                                      track_small=None)
 
