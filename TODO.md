@@ -1,58 +1,19 @@
-# Next up
+# Research / Bugs
 
-- [ ] **The true-canvas slide map.** The relocalization tier SHIPPED
-      (`live/relocate.py`: continuous drift correction over trodden
-      ground, lost-sweep recovery rejoining the same origin, advisory
-      chips; spikes and numbers in `spike/tracking/`) and survived a
-      278-field freehand circumnavigation of a coverslip rim on real
-      glass with the loop closing cleanly. The remaining half of the
-      idea is Nate's: composite the thumbnails into a real world-space
-      canvas at thumb scale instead of a list of postcards. A 20×15
-      field session is a ~3 MP uint8 canvas, cheaper to paint than
-      compositing hundreds of snapshots per frame; partial updates make
-      the coverage-eating refresh structurally impossible; matching
-      runs against continuous terrain instead of postcard centres; and
-      the canvas is the exportable artifact the finding-aid entry below
-      wants. Design decisions made in advance: feathered newest-wins
-      (averaging ghosts under residual misregistration), a validity
-      mask for the unexplored void, growth by reallocation with margin,
-      snapshots list retained for relocalizer candidate ranking, mosaic
-      tiles ride on top unchanged. Spike first, like the relocalizer.
+- [x] **The true-canvas slide map: SHIPPED.** The map is one
+      world-space picture now (`tracker.Terrain`): premultiplied BGRA
+      at thumbnail scale where alpha is the validity mask, feathered
+      newest-wins painting at 0.3 ms an observation, growth by
+      reallocation with a forty-field ceiling that stops rather than
+      evicts. The view blits one image instead of compositing
+      postcards; the relocalizer matches terrain windows instead of
+      postcard candidates, which the spike measured as removing an
+      1100 px aliasing tail outright (spike/tracking/canvas_spike.py,
+      with its own two traps annotated: window-rounding remainder, and
+      spatial-vs-temporal witness semantics). Coverage-shrink bugs are
+      structurally unrepresentable. The finding-aid entry below now has
+      its artifact: the canvas is the exportable map.
 
-- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional
-      recording - x, y, zoom and focal plane - and every move through it
-      can be perfectly smooth because it is synthesised rather than
-      performed, which is virtual camera work on a slide and is offered
-      because we keep both the mosaic and the depth. The thing that makes
-      it a big feature rather than a small one is circular: a flyby can
-      only be planned over a mosaic that already exists, and the mosaic
-      that should exist depends on the flyby. Plan
-      over the live slide map first - sketch the path, get the minimum
-      coverage and an honest size estimate, then shoot it - which turns a
-      rendering feature into a capture feature. Order and reasoning in the
-      doc.
-- [ ] **Centre-cropping the tracker against a bad relay: refuted,
-      recorded so it is not re-proposed.** Benched 2026-08-09
-      (`spike/tracking/relay_bench.py`): a synthetic fixed-to-sensor
-      relay (barrel k1=0.03, radial edge blur) costs ~2% drift at slow
-      cranks, fading to nothing at speed; a 70% centre crop recovers
-      about a third of that; a width-only "square" crop keeps the
-      blurred corners, shrinks the measurable range, gates at slow
-      speeds and lands *worse* than full frame. And on a harsher relay
-      (k1=0.06) the crop's benefit evaporates entirely -- cropping
-      discards correlation statistics exactly when the surviving pixels
-      are noisiest. The Hanning window already tapers the edges, the
-      relocalizer bounds accumulated drift over trodden ground, and the
-      real fix is optical: a proper relay. No setting shipped.
-
-- [ ] **The tracker must not run at a divisor**, recorded so it is not
-      re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
-      0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
-      2 halves that to 3.5, and routine hand motion at 40x is well past it.
-      A rejected frame does not merely skip -- `advance()` returns without
-      integrating, so the displacement is silently and permanently lost from
-      the accumulated position. It would also double the settle latency
-      before a capture is allowed, 0.27 s to 0.53 s.
 - [ ] **Detection can never land on an empty turret position.** The
       _marking_ shipped: `Turret.capped` exists, the setup editor offers a
       "capped" box on every empty position, and `model_signatures()` predicts
@@ -71,12 +32,7 @@
 - [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a guess rather than a mistake, but a matrix measured from a colour target would be better than assuming sRGB primaries.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture at unity gain. Needs calibration to be verifiable.
 - [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept is wired; the objective _stepper_ and future turret auto-detection are not. When magnification becomes known per objective, positions could be rescaled instead of discarded.
-- [ ] **Spike `Toupcam_CtiEnable`.** `libtoupcam` is a GenTL _consumer_
-      (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings);
-      the call succeeds and is non-destructive. If a third-party GenTL
-      producer makes Basler/IDS/Daheng cameras enumerate through
-      `EnumV2`, that is an industrial-camera backend for one line.
-      Entirely unproven — needs a borrowed camera and an hour.
+- [ ] **Spike `Toupcam_CtiEnable`.** `libtoupcam` is a GenTL _consumer_ (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings); the call succeeds and is non-destructive. If a third-party GenTL producer makes Basler/IDS/Daheng cameras enumerate through `EnumV2`, that is an industrial-camera backend for one line. Entirely unproven — needs a borrowed camera and an hour.
 - [ ] **A retouch brush.** Both commercial stackers' answer to the
       physically-unfixable halo is a human with a brush, and in our
       architecture that is cheap: the aligned slices and the depth map
@@ -88,10 +44,7 @@
       is exactly why Zerene and Helicon both ship the brush instead.
       Wants: a slice picker, a soft round brush, undo, and a live
       before/after. The stack window is where it belongs.
-- [ ] **The slide map as a finding aid.** The other half of the plate
-      idea, still open: export the accumulated map — pins, thumbnails,
-      µm coordinates — as a printable sheet. For a catalogued mount that
-      is an archival artifact, and Victorian mounters drew them by hand.
+- [ ] **The slide map as a finding aid.** The other half of the plate idea, still open: export the accumulated map, pins, thumbnails, µm coordinates, as a printable sheet. For a catalogued mount that is an archival artifact, and Victorian mounters drew them by hand.
 - [ ] **The Y undershoot: mechanism found, fix unshipped.** Probed
       synthetically through the real pipeline (2026-08-08): steady
       tracking is clean on both axes at every speed (worst −0.4%, zero
@@ -133,24 +86,6 @@
       cheap for us since aligned slices + depth map already exist);
       capture-side step-size hint from NA/magnification (3-4 steps per
       DoF is the community rule and we know both numbers).
-- [ ] **Why does a capture-time flat leave 18.7%?** The tiles carried
-      `flat+wb` and still showed strong residual shading. Either the stored
-      flat was built under different lamp/condenser state, or the flat path
-      is not doing what it claims. Measure a fresh flat immediately before a
-      mosaic and re-run the comparison — this is the highest-value open
-      question, because it may indicate a real defect in the calibration
-      path rather than drift.
-- [ ] **Binned capture as a size option.** `grab_raw` hard-codes full
-      resolution. The sensor's own binned modes would give 7.5 MB at
-      2736×1824 and 3.3 MB at 1824×1216, packed — a real choice for survey
-      work where 20 MP per tile is not the point.
-- [ ] **The composite still holds one full canvas.** With the writer fixed,
-      peak is 3.05 GB for 272 MP and the remainder is the uint16 result
-      array plus the registration lumas. Rendering bands on demand into the
-      writer, rather than filling a canvas and then streaming it, would drop
-      it again — and the writer's `rows` callback is already the right shape
-      for it.
-- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all, TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for viewing; the linear DNG stays the right output while it fits.
 - [ ] **Stitch, the rest.** Full-resolution composite streamed band-by-band
       (current default renders at 0.25 scale into RAM; fine to ~10 tiles,
       not at 40). Verify the GBRG→OpenCV demosaic code choice on real glass
@@ -256,8 +191,11 @@
 - [ ] **Color swap** an earlier bug swapped R and B, the effect was actually pretty cool.
 - [ ] **Greyscale** to support green filter / high contrast modes
 - [ ] **Mobile formats** Rotate the preview 90 degrees; add crop guides for mobile aspect rations to support content creators.
+- [ ] **Binned capture as a size option.** `grab_raw` hard-codes full resolution. The sensor's own binned modes would give 7.5 MB at 2736×1824 and 3.3 MB at 1824×1216.
+- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all, TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for viewing; the linear DNG stays the right output while it fits.
+- [ ] **The composite still holds one full canvas.** With the writer fixed peak is 3.05 GB for 272 MP and the remainder is the uint16 result array plus the registration lumas. Rendering bands on demand into the writer, rather than filling a canvas and then streaming it, would drop it again — and the writer's `rows` callback is already the right shape for it.
 
-## Presentation, deferred by choice
+## Presentation
 
 - [ ] **Capture moment.** When the shutter fires, hold the developed capture on the presentation for a couple of seconds with a border pulse. "We just took that" is half the fun of tabling; deferred to keep the first release of the feature calm.
 - [ ] **QR code beside the header.** Visitors ask "where do I find you". Needs either a dependency or a hand-rolled encoder, and neither is earned yet. The /still.jpg endpoint is a natural target once it exists.
@@ -290,3 +228,4 @@
 - [ ] **Gallery and basic develop view.** Browsing what you shot, and a few sliders for developing RAW to jpeg
 - [ ] **Setup card.** "what's your setup?", neofetch style
 - [ ] **Session resumability.** To rescue interrupted mosaics
+- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional recording - x, y, zoom and focal plane - and every move through it can be perfectly smooth because it is synthesised rather than performed, which is virtual camera work on a slide and is offered because we keep both the mosaic and the depth. The thing that makes it a big feature rather than a small one is circular: a flyby can only be planned over a mosaic that already exists, and the mosaic that should exist depends on the flyby. Plan over the live slide map first - sketch the path, get the minimum coverage and an honest size estimate, then shoot it - which turns a rendering feature into a capture feature. Order and reasoning in the doc.

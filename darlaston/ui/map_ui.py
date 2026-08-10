@@ -125,16 +125,20 @@ class _Canvas(QtWidgets.QWidget):
             return
 
         s, _, _ = fit
-        # Terrain: oldest first, so refreshed and newer ground paints on top.
-        for snap in self._model.snapshots:
-            th, tw = snap.thumb.shape[:2]
-            img = QtGui.QImage(snap.thumb.data, tw, th, snap.thumb.strides[0],
-                               QtGui.QImage.Format.Format_BGR888)
-            w, h = snap.size
-            top_left = self._to_widget(fit, snap.pos[0] - w / 2,
-                                       snap.pos[1] - h / 2)
-            p.drawImage(QtCore.QRectF(top_left.x(), top_left.y(),
-                                      w * s, h * s), img)
+        # Terrain: the whole explored slide is one picture now, blitted
+        # in one call. The alpha channel is the validity mask, so the
+        # unexplored void simply is not drawn -- and the paint cost no
+        # longer grows with how much slide has been seen.
+        ground = self._model.terrain
+        if ground.ready:
+            gh, gw = ground.rgba.shape[:2]
+            img = QtGui.QImage(ground.rgba.data, gw, gh,
+                               ground.rgba.strides[0],
+                               QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+            tl = self._to_widget(fit, ground.org[0], ground.org[1])
+            extent = ground.scale * s
+            p.drawImage(QtCore.QRectF(tl.x(), tl.y(),
+                                      gw * extent, gh * extent), img)
 
         # Mosaic tiles over the reconnaissance layer: same terrain, but
         # outlined -- these are the frames that exist on disk.
@@ -381,7 +385,10 @@ class SlideMapPanel(QtWidgets.QWidget):
             # but anything cranked over blank glass is not measured.
             text, colour = _("map.state.holding"), theme.DIM
         else:
-            n = len(self.model.snapshots)
+            # Painted ground in fields -- area, where the old number was
+            # postcards. Honest for the first time: a heavily revisited
+            # region used to count once per postcard however it overlapped.
+            n = int(round(self.model.terrain.fields_painted))
             text = f"tracking · {n} field{'s' if n != 1 else ''} mapped"
             colour = theme.DIM
         self.status.setText(text)

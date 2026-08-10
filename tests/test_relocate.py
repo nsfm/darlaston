@@ -57,7 +57,7 @@ def test_drift_dies_over_trodden_ground(scene):
     truth = (900.0, 700.0)
     believed = (truth[0] + 30.0, truth[1] + 20.0)
     fix, _n = until_fix(r, frame_at(scene, *truth), believed, True,
-                        m.snapshots)
+                        m.terrain)
     assert fix is not None, "a drift-scale error went uncorrected"
     assert np.hypot(fix.pos[0] - truth[0], fix.pos[1] - truth[1]) < 10
     assert fix.delta == pytest.approx(
@@ -72,7 +72,7 @@ def test_a_large_claim_needs_two_witnesses(scene):
     truth = (900.0, 700.0)
     believed = (truth[0] + 300.0, truth[1])
     fix, n = until_fix(r, frame_at(scene, *truth), believed, True,
-                       m.snapshots)
+                       m.terrain)
     assert fix is not None
     assert n > relocate.CONTINUOUS_EVERY, (
         "a 300 px correction was believed on a single match")
@@ -84,7 +84,7 @@ def test_lost_recovers_anywhere_on_familiar_ground(scene):
     r = Relocator()
     truth = (1500.0, 900.0)
     frame = frame_at(scene, *truth)
-    fix, _n = until_fix(r, frame, (0.0, 0.0), False, m.snapshots)
+    fix, _n = until_fix(r, frame, (0.0, 0.0), False, m.terrain)
     assert fix is not None, "the sweep never found familiar ground"
     assert np.hypot(fix.pos[0] - truth[0], fix.pos[1] - truth[1]) < 10
     assert not r.searching, "found, but still says searching"
@@ -93,7 +93,7 @@ def test_lost_recovers_anywhere_on_familiar_ground(scene):
 def test_searching_is_said_while_lost(scene):
     m = bank(scene)
     r = Relocator()
-    r.observe(frame_at(scene, 500, 500), None, False, m.snapshots)
+    r.observe(frame_at(scene, 500, 500), None, False, m.terrain)
     assert r.searching
 
 
@@ -105,7 +105,7 @@ def test_blank_glass_is_never_matched(scene):
     r = Relocator()
     flat = np.full((H, W, 3), 120, np.uint8)
     for _ in range(30):
-        assert r.observe(flat, None, False, m.snapshots) is None
+        assert r.observe(flat, None, False, m.terrain) is None
     assert r.searching
 
 
@@ -119,9 +119,9 @@ def test_a_resumed_position_is_suspect_until_confirmed(scene):
     frame = frame_at(scene, *truth)
     # One lost frame marks the suspicion...
     r.observe(np.full((H, W, 3), 120, np.uint8), (600.0, 300.0), False,
-              m.snapshots)
+              m.terrain)
     # ...then the tracker resumes, confidently wrong by 1100 px.
-    fix, _n = until_fix(r, frame, (600.0, 300.0), True, m.snapshots)
+    fix, _n = until_fix(r, frame, (600.0, 300.0), True, m.terrain)
     assert fix is not None, "a wrong resume was believed without question"
     assert np.hypot(fix.pos[0] - truth[0], fix.pos[1] - truth[1]) < 10
 
@@ -134,22 +134,21 @@ def test_suspicion_of_new_ground_ends(scene):
     r = Relocator()
     unseen = frame_at(scene, SW - W, SH - H)      # far corner, never banked
     r.observe(np.full((H, W, 3), 120, np.uint8), (100.0, 100.0), False,
-              m.snapshots)
+              m.terrain)
     for _ in range(80):
         assert r.observe(unseen, (100.0, 100.0), True,
-                         m.snapshots) is None
+                         m.terrain) is None
     assert r._suspect_sweeps == 0
     assert not r.searching, "still suspicious long after the budget"
 
 
-def test_a_foreign_thumbnail_size_is_skipped(scene):
-    """Snapshots from another preview mode measure another scale; they
-    are filtered rather than matched wrongly. The map is cleared on a
+def test_a_foreign_preview_size_is_refused(scene):
+    """Terrain painted at another preview scale measures another world;
+    it is refused rather than matched wrongly. The map is cleared on a
     mode change, so this is a guard, not a path."""
     m = bank(scene)
-    for s in m.snapshots:
-        s.size = (912, 608)
     r = Relocator()
-    fix, _n = until_fix(r, frame_at(scene, 900, 700), (900.0, 700.0),
-                        True, m.snapshots, tries=20)
+    shrunk = cv2.resize(frame_at(scene, 900, 700), (912, 608))
+    fix, _n = until_fix(r, shrunk, (900.0, 700.0), True, m.terrain,
+                        tries=20)
     assert fix is None

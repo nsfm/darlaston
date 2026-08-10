@@ -2500,7 +2500,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         fix = self.relocator.observe(s.preview, s.stage_pos,
                                      s.stage_tracking,
-                                     self.slidemap.model.snapshots)
+                                     self.slidemap.model.terrain)
         if fix is not None:
             if s.stage_tracking and fix.delta is not None:
                 # Drift over familiar ground: position and anchor move
