@@ -327,11 +327,21 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.tips.setProperty("role", "key")
         self.tips.setToolTip(_("map.tips.tooltip"))
 
+        # The speed gauge: true stage speed in real units, coloured
+        # against the blur limit the current exposure and magnification
+        # set. It trains the hand -- the number is the same arithmetic
+        # the banking bar refuses frames by, read as you move.
+        self.speed = QtWidgets.QLabel("")
+        self.speed.setToolTip(_("map.speed.tooltip"))
+        self._speed_shown: tuple | None = None
+        self.speed.setVisible(False)
+
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(4)
         row.addWidget(self.mosaic_btn)
         row.addWidget(self.undo_btn)
         row.addWidget(self.tips)
+        row.addWidget(self.speed)
         row.addStretch(1)
         row.addWidget(self.pin_btn)
         row.addWidget(self.clear_btn)
@@ -415,6 +425,32 @@ class SlideMapPanel(QtWidgets.QWidget):
         """Refuse frames measured under an origin older than `generation`.
         Handed back by `reset_tracking` at every clear."""
         self._min_gen = int(generation)
+
+    def set_speed(self, um_s: float | None,
+                  limit_um_s: float | None) -> None:
+        """The stage's true speed, coloured against the blur limit.
+
+        Green means the map is banking everything, brass means close to
+        the edge, red means frames are being refused. The zones share
+        their arithmetic with the banking bar, so the gauge never says
+        fine while the map disagrees.
+        """
+        if um_s is None:
+            if self.speed.isVisible():
+                self.speed.setVisible(False)
+                self._speed_shown = None
+            return
+        text = (_("map.speed.mm", v=f"{um_s / 1000:.2f}")
+                if um_s >= 1000 else _("map.speed.um", v=f"{um_s:.0f}"))
+        ratio = (um_s / limit_um_s) if limit_um_s else 0.0
+        tone = (theme.BAD if ratio >= 1.0
+                else theme.BRASS if ratio >= 0.7 else theme.GOOD)
+        if (text, tone) == self._speed_shown:
+            return
+        self._speed_shown = (text, tone)
+        self.speed.setText(text)
+        self.speed.setStyleSheet(f"color: {tone};")
+        self.speed.setVisible(True)
 
     def set_advisory(self, text: str | None) -> None:
         """What tracking wants said, or None when nothing does. Takes

@@ -247,6 +247,10 @@ class LiveView(QtWidgets.QWidget):
         #: frame are different jobs and people want them separately.
         self.framing_grid = "none"
         self.framing_cross = False
+        #: Slide-anchored pips, as normalised (x, y) on the shown frame,
+        #: or None. Computed upstream, where the tracker's position and
+        #: the display orientation both live.
+        self._pips: list | None = None
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
         self.setMinimumSize(480, 320)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
@@ -565,6 +569,12 @@ class LiveView(QtWidgets.QWidget):
         """
         self._bar_overlay.set_scale(um_per_px, style)
 
+    def set_pips(self, points: list | None) -> None:
+        """Slide-anchored dots, already in shown-frame coordinates."""
+        if points != self._pips:
+            self._pips = points
+            self.update()
+
     def set_focus_rect(self, rect) -> None:
         self._focus_rect = rect
 
@@ -649,6 +659,26 @@ class LiveView(QtWidgets.QWidget):
                 p.drawImage(target.topLeft(), self._peaking)
 
             self._draw_guides(p, target)
+
+            # The tracker's belief, made visible: dots pinned to slide
+            # coordinates. While tracking is right they stay glued to the
+            # specimens under them; the moment they slide against the
+            # picture, so did the position. Same double stroke as the
+            # guides, round because the guides are never round.
+            if self._pips:
+                p.save()
+                p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+                p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                for colour, radius in ((QtGui.QColor(0, 0, 0, 90), 4.0),
+                                       (QtGui.QColor(255, 255, 255, 150),
+                                        3.0)):
+                    p.setPen(QtGui.QPen(colour, 1.6))
+                    for nx, ny in self._pips:
+                        p.drawEllipse(QtCore.QPointF(
+                            target.x() + nx * target.width(),
+                            target.y() + ny * target.height()),
+                            radius, radius)
+                p.restore()
 
             pointer = getattr(self, "_pointer", None)
             if pointer is not None:

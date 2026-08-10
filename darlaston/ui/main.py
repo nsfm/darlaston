@@ -333,6 +333,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cross_action.setToolTip(_("menu.capture.guides.cross.tooltip"))
         self.cross_action.toggled.connect(
             lambda on: self._set_framing(cross=on))
+        self.pips_action = guides.addAction(_("menu.capture.guides.pips"))
+        self.pips_action.setCheckable(True)
+        self.pips_action.setChecked(self.settings.framing_pips)
+        self.pips_action.setToolTip(_("menu.capture.guides.pips.tooltip"))
+        self.pips_action.toggled.connect(
+            lambda on: self._set_framing(pips=on))
         # The rendering the operator is working in. Beside the guides
         # because it is the same kind of thing -- how the picture is
         # shown, chosen while shooting -- but unlike them it carries into
@@ -2599,12 +2605,37 @@ class MainWindow(QtWidgets.QMainWindow):
             # blur scales with how long the shutter stays open, so the
             # same crank that defeats tracking at 12 ms is measurable at
             # 4 ms. Only offered when the exposure has room to give.
-            if s.stats.get("exposure_us", 0) > 8000:
+            exposure_us = s.stats.get("exposure_us", 0)
+            if exposure_us > 8000:
                 lines.append(_("advice.track.exposure"))
+            # And the number itself, when the scale is known: the map
+            # stops banking at BLUR_LIMIT pixels of smear, so the same
+            # limit read backwards is the honest speed limit --
+            # magnification and exposure set it, not taste.
+            um = self._preview_um_per_px(s.preview.shape[1])
+            if um and exposure_us:
+                um_s = (self.slidemap.BLUR_LIMIT * um * 1e6) / exposure_us
+                speed = (f"{um_s / 1000:.1f} mm/s" if um_s >= 1000
+                         else f"{um_s:.0f} µm/s")
+                lines.append(_("advice.track.speed", speed=speed))
         # Said on the slide map's own status line: that panel is where
         # the eyes already are when tracking misbehaves, and the live
         # view stays a viewfinder rather than a message board.
         self.slidemap.set_advisory(" · ".join(lines) if lines else None)
+
+        # And the speed gauge: the same blur arithmetic the banking bar
+        # refuses frames by, shown as a live number so the hand learns
+        # the zone instead of discovering the edge.
+        um_px = self._preview_um_per_px(s.preview.shape[1])
+        fps = s.stats.get("analysed_fps", 0.0)
+        exposure_us = s.stats.get("exposure_us", 0)
+        if um_px and fps and s.xy_offset is not None:
+            speed_um_s = math.hypot(s.xy_offset[0], s.xy_offset[1]) * fps * um_px
+            limit = ((self.slidemap.BLUR_LIMIT * um_px * 1e6 / exposure_us)
+                     if exposure_us else None)
+            self.slidemap.set_speed(speed_um_s, limit)
+        else:
+            self.slidemap.set_speed(None, None)
 
     def _sync_track_wanted(self) -> None:
         """Run the tracker only while something consumes its answer: the
@@ -2616,7 +2647,10 @@ class MainWindow(QtWidgets.QMainWindow):
                   or self.mosaic is not None
                   or self.stack_session is not None
                   or self.focus.sweep.isChecked()
-                  or self.timelapse.running)
+                  or self.timelapse.running
+                  # The pips are a consumer too: dots pinned to the
+                  # slide need a tracker awake to pin them.
+                  or self.settings.framing_pips)
         if wanted == getattr(self, "_track_wanted", True):
             return
         self._track_wanted = wanted
@@ -2751,7 +2785,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return context
 
     def _set_framing(self, grid: str | None = None,
-                     cross: bool | None = None) -> None:
+                     cross: bool | None = None,
+                     pips: bool | None = None) -> None:
         """Change a framing guide and remember it.
 
         Saved immediately rather than on some later confirmation, because
@@ -2762,10 +2797,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.framing_grid = grid
         if cross is not None:
             self.settings.framing_cross = bool(cross)
+        if pips is not None:
+            self.settings.framing_pips = bool(pips)
         self.view.framing_grid = self.settings.framing_grid
         self.view.framing_cross = self.settings.framing_cross
         self.view.update()
         self.settings.save()
+
+    #: Pip spacing, as a fraction of the frame width. Half a field: close
+    #: enough that panning always has a few in view, sparse enough that
+    #: they read as landmarks rather than a lattice.
+    PIP_STEP = 0.5
+
+    def _pip_points(self, s, rot: int, mirror: bool) -> list:
+        """Grid nodes of slide space visible in this frame, as normalised
+        points on the *shown* picture -- through the same orientation
+        mapping every other overlay takes."""
+        h, w = s.preview.shape[:2]
+        px, py = s.stage_pos
+        step = self.PIP_STEP * w
+        points = []
+        gx0 = math.floor((px - w / 2) / step)
+        gy0 = math.floor((py - h / 2) / step)
+        for gx in range(gx0, gx0 + math.ceil(w / step) + 2):
+            for gy in range(gy0, gy0 + math.ceil(h / step) + 2):
+                fx = gx * step - px + w / 2
+                fy = gy * step - py + h / 2
+                if 0.0 <= fx <= w and 0.0 <= fy <= h:
+                    nx, ny, _, _ = orient.rect_to_view(
+                        (fx / w, fy / h, 0.0, 0.0), rot, mirror)
+                    points.append((nx, ny))
+        return points
 
     def _set_rendering(self, mode: str) -> None:
         """Change the working rendering and remember it.
@@ -3376,6 +3438,14 @@ class MainWindow(QtWidgets.QMainWindow):
                        if s.peaking is not None else None)
             UI_METER.since("rendering", start)
         self.view.set_frame(shown, peaking)
+        # Slide-anchored pips: the tracker's belief drawn over the
+        # picture. Only while tracking, so a lost position never wears
+        # confident dots.
+        if (self.settings.framing_pips and s.stage_pos is not None
+                and s.stage_tracking):
+            self.view.set_pips(self._pip_points(s, rot, mirror))
+        else:
+            self.view.set_pips(None)
         self._offer_present(s, shown)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture

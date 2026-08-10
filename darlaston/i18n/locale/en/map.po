@@ -87,3 +87,16 @@ msgstr ""
 "a frame rate of 30 fps or more, and steady stage movement.\n"
 "Motion blur is the enemy: the same movement smears four times as much "
 "at 20 ms as at 5 ms."
+
+#. The speed gauge. {v} is already formatted; only the unit needs words.
+msgid "map.speed.mm"
+msgstr "{v} mm/s"
+
+msgid "map.speed.um"
+msgstr "{v} µm/s"
+
+msgid "map.speed.tooltip"
+msgstr ""
+"True stage speed. Green banks everything, red means frames are too "
+"blurred to keep -- the limit follows your magnification and exposure "
+"time."

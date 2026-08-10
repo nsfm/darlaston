@@ -669,6 +669,87 @@ def test_a_refix_plants_the_position_and_drops_the_key():
     cam.close()
 
 
+def test_the_speed_gauge_shares_its_zones_with_the_banking_bar(qapp):
+    """Green banks, red refuses -- the gauge and the banking bar read
+    the same arithmetic, so the gauge can never say fine while the map
+    is quietly dropping frames."""
+    from darlaston.ui import theme
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    panel = SlideMapPanel()
+    panel.set_speed(None, None)
+    assert panel.speed.isHidden()
+
+    panel.set_speed(100.0, 1000.0)              # a tenth of the limit
+    assert not panel.speed.isHidden()
+    assert "µm/s" in panel.speed.text()
+    assert theme.GOOD in panel.speed.styleSheet()
+
+    panel.set_speed(800.0, 1000.0)              # closing on the edge
+    assert theme.BRASS in panel.speed.styleSheet()
+
+    panel.set_speed(1500.0, 1000.0)             # past it: the map refuses
+    assert "mm/s" in panel.speed.text()
+    assert theme.BAD in panel.speed.styleSheet()
+
+
+def test_pips_are_slide_anchored_and_orientation_aware(window):
+    """A pip is a point of slide space: centred on a grid node it sits
+    dead centre, panning right moves it left, and it rides the same
+    orientation mapping as every other overlay."""
+    import types
+
+    win = window()
+    s = types.SimpleNamespace(preview=np.zeros((120, 160, 3), np.uint8),
+                              stage_pos=(0.0, 0.0))
+    pts = [(round(x, 3), round(y, 3)) for x, y in win._pip_points(s, 0, False)]
+    assert (0.5, 0.5) in pts, "a grid node under the centre sits dead centre"
+
+    s.stage_pos = (40.0, 0.0)                  # half a pip step to the right
+    pts = [(round(x, 3), round(y, 3)) for x, y in win._pip_points(s, 0, False)]
+    assert (0.25, 0.5) in pts, "panning right must carry the pip left"
+
+    s.stage_pos = (0.0, 0.0)
+    turned = [(round(x, 3), round(y, 3))
+              for x, y in win._pip_points(s, 90, False)]
+    assert (0.5, 0.5) in turned, "the centre survives any rotation"
+
+
+def test_pips_reach_the_view_only_while_tracking(qapp, window):
+    from darlaston.live.pipeline import LiveSignals
+
+    win = window()
+    got = []
+    win.view.set_pips = lambda p: got.append(p)
+
+    def sig(tracking):
+        return LiveSignals(
+            seq=1, timestamp=1.0, preview=np.zeros((6, 8, 3), np.uint8),
+            histogram=np.zeros(256, np.int32), clipped_fraction=0.0,
+            focus_metric=1.0, focus_fraction_of_peak=1.0,
+            focus_trace=np.zeros(4, np.float32),
+            stage_pos=(0.0, 0.0), stage_tracking=tracking,
+            stats={"analysed_fps": 30.0, "delivered": 1, "dropped": 0,
+                   "exposure_us": 8000, "gain_pct": 100})
+
+    # Fed straight into the slot rather than published: the mock camera's
+    # own live thread also publishes, and racing it for the newest-frame
+    # cell made this test order-dependent under the full suite.
+    import types
+
+    win.settings.framing_pips = True
+    queue = [sig(True)]
+    win._newest = types.SimpleNamespace(take=lambda: queue.pop()
+                                        if queue else None,
+                                        put=lambda v: None, replaced=0)
+    win._on_signals(None)
+    assert got and got[-1], "tracking with pips on must deliver points"
+
+    queue.append(sig(False))
+    win._on_signals(None)
+    assert got[-1] is None, "a lost position must never wear confident dots"
+
+
 def test_the_window_says_what_tracking_is_doing(window):
     """The advisories: lost is said after it is sustained, a gated step
     is said the moment it happens, and neither is said while the

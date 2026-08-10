@@ -22,3 +22,9 @@ msgstr "moving too fast to track"
 #. give: blur scales with shutter time, so this is the lever that helps.
 msgid "advice.track.exposure"
 msgstr "shorter exposure tracks faster motion"
+
+#. {speed} is computed from magnification and exposure: the smear limit
+#. the map banks at, read backwards as a stage speed. Real units, so the
+#. operator can act on it.
+msgid "advice.track.speed"
+msgstr "steady under {speed} at this exposure"
