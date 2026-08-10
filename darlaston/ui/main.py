@@ -39,7 +39,7 @@ from ..live import balance
 from ..camera.base import preferred_preview
 from ..live.cell import Newest
 from ..live import exposure as exposure_ctl
-from ..process import scalebar
+from ..process import scalebar, transform
 from ..process.metadata import sensor_pitch
 from ..live.relocate import Relocator
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
@@ -331,6 +331,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cross_action.setToolTip(_("menu.capture.guides.cross.tooltip"))
         self.cross_action.toggled.connect(
             lambda on: self._set_framing(cross=on))
+        # The rendering the operator is working in. Beside the guides
+        # because it is the same kind of thing -- how the picture is
+        # shown, chosen while shooting -- but unlike them it carries into
+        # the JPEG and the DNG's embedded preview, because a rendering
+        # somebody chose to work in is the photograph they meant to take.
+        # The raw never wears it, and neither does any instrument.
+        looks = capture_menu.addMenu(_("menu.capture.render"))
+        looks.menuAction().setToolTip(_("menu.capture.render.tooltip"))
+        self._render_actions = {}
+        rendering = QtGui.QActionGroup(self)
+        rendering.setExclusive(True)
+        for value, label in (("none", _("menu.capture.render.none")),
+                             ("invert", _("menu.capture.render.invert")),
+                             ("swap", _("menu.capture.render.swap")),
+                             ("grey", _("menu.capture.render.grey"))):
+            act = looks.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(
+                transform.sane(self.settings.display_transform) == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_rendering(v))
+            rendering.addAction(act)
+            self._render_actions[value] = act
         # In the menu rather than the rail: it is set once per illumination
         # style and then left alone. Its *off* state shows in the status
         # bar, because unlike the guides you cannot see this one by looking
@@ -2699,6 +2722,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.update()
         self.settings.save()
 
+    def _set_rendering(self, mode: str) -> None:
+        """Change the working rendering and remember it.
+
+        Saved immediately, like the guides: a habit, not a decision. The
+        next frame through the fan-out picks it up; nothing needs
+        pushing.
+        """
+        self.settings.display_transform = transform.sane(mode)
+        self.settings.save()
+
     def _open_performance(self) -> None:
         PerformanceDialog(self.settings, self._apply_performance, self).exec()
 
@@ -2954,8 +2987,11 @@ class MainWindow(QtWidgets.QMainWindow):
             # menu's check mark follows it rather than remembering.
             self.present_header_action.setChecked(self.settings.present_header)
 
-    def _offer_present(self, s: LiveSignals) -> None:
+    def _offer_present(self, s: LiveSignals, shown: np.ndarray) -> None:
         """Mirror the frame and its captions to the presentation window.
+
+        `shown` is the frame wearing the operator's rendering, because
+        the audience should see what the operator sees.
 
         Shielded the way the live bar is: a fault on this face must not
         take the operator's own preview with it. The audience's window
@@ -3007,9 +3043,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 # watched on screens nobody here can measure, and its
                 # view is never told otherwise.
                 w.view.set_screen_scale(self._present_screen_scale(w))
-                w.set_frame(s.preview)
+                w.set_frame(shown)
             if streaming:
-                self.streamer.frame(s.preview)
+                self.streamer.frame(shown)
         except Exception:
             _log.exception("the presentation window failed and was closed")
             if w is not None:
@@ -3251,8 +3287,23 @@ class MainWindow(QtWidgets.QMainWindow):
         # extra copy of 6.65 MB per frame, paid only while the toggle is
         # on, which is the honest place to charge it.
         self._offer_scale_bar(s.preview.shape[1])
-        self.view.set_frame(s.preview, s.peaking)
-        self._offer_present(s)
+        # The operator's rendering, applied here and not in the pipeline:
+        # everything above this line is an instrument and reads sensor
+        # levels -- the tracker, the relocalizer, the map's terrain, the
+        # balance sample -- and everything below is a picture of the
+        # slide. Toggling a mode must never change what the terrain was
+        # painted from, or the relocalizer would stop recognising ground
+        # it has already seen.
+        look = transform.sane(self.settings.display_transform)
+        if look == "none":
+            UI_METER.skip("rendering")
+            shown = s.preview
+        else:
+            start = time.perf_counter()
+            shown = transform.applied(s.preview, look)
+            UI_METER.since("rendering", start)
+        self.view.set_frame(shown, s.peaking)
+        self._offer_present(s, shown)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.

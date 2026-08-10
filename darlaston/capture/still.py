@@ -23,7 +23,7 @@ import numpy as np
 from ..calib import frames as F
 from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
-from ..process import develop, dng, scalebar
+from ..process import develop, dng, scalebar, transform
 from .writer import WriteQueue
 from ..process.metadata import from_setup, sensor_pitch
 from ..session.settings import Settings, next_sequence
@@ -321,6 +321,15 @@ class StillCapture:
 
             self._on_state("writing")
             path, sequence, when = self._destination(setup, subject)
+            # The rendering the operator was working in when the shutter
+            # fired. The JPEG and the DNG's embedded preview wear it,
+            # because that is the photograph they meant to take; the raw
+            # planes never do, and the `rendering=` comment key records
+            # the intent so a developer can honour it later. Empty when
+            # the picture is straight, like `optovar`: absence means not
+            # in play.
+            look = transform.sane(self._settings.display_transform)
+            look = "" if look == "none" else look
             # A monochrome sensor gets no CFA pattern at all. Roughly a
             # quarter of ToupTek's microscopy range is mono, and labelling
             # greyscale data with a Bayer pattern makes every developer
@@ -357,6 +366,7 @@ class StillCapture:
                                   artist=self._settings.artist,
                                   copyright=self._settings.copyright,
                                   unique_id=_fingerprint(corrected),
+                                  rendering=look,
                                   context=context)
 
             if frames > 1:
@@ -414,6 +424,11 @@ class StillCapture:
                 preview = dng.make_preview(
                     out, bayer=not (mono or decoded), black=black,
                     white=white, neutral=shot)
+                if look:
+                    # A file manager's thumbnail should show the picture
+                    # the operator saw. RGB: make_preview builds it that
+                    # way, unlike everything else in this path.
+                    preview = transform.applied(preview, look, order="rgb")
                 if decoded:
                     # The frame arrives BGR -- that is what OpenCV hands
                     # back, and what the preview and the JPEG below both
@@ -444,6 +459,11 @@ class StillCapture:
                 image = develop.develop(
                     out, pattern=None if (mono or decoded) else pattern,
                     black=black, white=white, neutral=shot)
+                if look:
+                    # Before the scale bar, so the bar is furniture on
+                    # the finished picture rather than part of what gets
+                    # inverted.
+                    image = transform.applied(image, look)
                 # On the photograph, never on the negative. `meta` carries
                 # the micrometres-per-pixel computed from sensor pitch over
                 # total magnification, and `draw` refuses on anything it

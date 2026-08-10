@@ -342,12 +342,12 @@ def test_a_clean_feed_bares_the_wire_not_the_projector(window, monkeypatch):
     monkeypatch.setattr(win.streamer, "wants_frames", lambda: True)
     s = types.SimpleNamespace(preview=_frame(120, w=160, h=120))
     win.settings.present_stream_clean = True
-    win._offer_present(s)
+    win._offer_present(s, s.preview)
     assert win.streamer.view._subject == ("", "")
     assert win.present_window.view._subject == ("Waterbears", "")
 
     win.settings.present_stream_clean = False
-    win._offer_present(s)
+    win._offer_present(s, s.preview)
     assert win.streamer.view._subject == ("Waterbears", "")
 
 
@@ -516,7 +516,7 @@ def test_the_frame_and_the_captions_reach_the_window(window):
     win.subject.slide.setText("Found in moss outside")
     win.settings.present_live = True
     s = types.SimpleNamespace(preview=_frame(120, w=160, h=120))
-    win._offer_present(s)
+    win._offer_present(s, s.preview)
     view = win.present_window.view
     assert view._image is not None
     assert view._subject == ("Waterbears", "Found in moss outside")
@@ -538,7 +538,7 @@ def test_a_present_fault_never_reaches_the_viewfinder(window, monkeypatch):
 
     monkeypatch.setattr(win.present_window.view, "set_frame", boom)
     s = types.SimpleNamespace(preview=_frame(120, w=160, h=120))
-    win._offer_present(s)                          # must not raise
+    win._offer_present(s, s.preview)                          # must not raise
     assert not win.present_window.isVisible()
 
 
@@ -547,10 +547,10 @@ def test_subject_off_means_the_words_come_down(window):
     win.present_action.setChecked(True)
     win.subject.edit.setText("Waterbears")
     s = types.SimpleNamespace(preview=_frame(120, w=160, h=120))
-    win._offer_present(s)
+    win._offer_present(s, s.preview)
     assert win.present_window.view._subject[0] == "Waterbears"
     win.settings.present_subject = False
-    win._offer_present(s)
+    win._offer_present(s, s.preview)
     assert win.present_window.view._subject == ("", "")
 
 

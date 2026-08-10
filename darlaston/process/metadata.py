@@ -208,7 +208,7 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
                app_version: str = "", pixel_um: float | None = None,
                sequence: int | None = None, when=None,
                artist: str = "", copyright: str = "",
-               unique_id: str = "",
+               unique_id: str = "", rendering: str = "",
                context: dict | None = None) -> CaptureMetadata:
     """Build metadata from the live setup."""
 
@@ -237,7 +237,6 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         # was looked at and found to be at unity.
         "optovar": f"{scope.optovar_factor:g}" if scope.optovar else "",
         "illumination": setup.illumination.key,
-        "inverted": "1" if setup.illumination.inverted else "0",
         "relay": cam.relay,
         "total_magnification": f"{total:g}" if total else "",
         # The number a scale bar is drawn from: how much *slide* one
@@ -250,6 +249,12 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         "subject": subject,
         "slide": slide,
         "calibration": calibration,
+        # The rendering the operator worked in -- invert, swap, grey.
+        # The sidecar JPEG and the embedded preview wear it; the raw
+        # planes do not, and this key is how a developer finds out what
+        # was intended. Empty when the picture is straight, so like
+        # `optovar` the key only appears when it says something.
+        "rendering": rendering,
     }
     # Where this frame sat in a larger piece of work. The manifest already
     # says all of it, and the manifest is one file in one folder: move the
