@@ -58,6 +58,14 @@ msgstr "Rule of thirds"
 msgid "menu.capture.guides.grid"
 msgstr "Fine grid"
 
+#. Crop guides for phone-shaped deliverables: the mark shows what a
+#. vertical video or a tall post will keep, by dimming what it will not.
+msgid "menu.capture.guides.reel"
+msgstr "Vertical video (9:16)"
+
+msgid "menu.capture.guides.tall"
+msgstr "Tall post (4:5)"
+
 msgid "menu.capture.guides.cross"
 msgstr "Center cross"
 
@@ -88,6 +96,38 @@ msgid "menu.capture.render.tooltip"
 msgstr ""
 "Applies to the preview, the presentation and the JPEG.\n"
 "The raw file always keeps the sensor's own picture."
+
+#. Which way up the picture hangs. Worn by the live view, the
+#. presentation, the stream and the JPEG; the DNG keeps the sensor's own
+#. pixels and records the turn as the standard EXIF Orientation tag.
+msgid "menu.capture.orient"
+msgstr "Orientation"
+
+msgid "menu.capture.orient.tooltip"
+msgstr ""
+"Applies to the preview, the presentation and the JPEG.\n"
+"The raw file keeps the sensor's own pixels and records the turn as a "
+"tag every viewer honors."
+
+msgid "menu.capture.orient.upright"
+msgstr "Upright"
+
+msgid "menu.capture.orient.right"
+msgstr "Turned right"
+
+msgid "menu.capture.orient.left"
+msgstr "Turned left"
+
+msgid "menu.capture.orient.down"
+msgstr "Upside down"
+
+msgid "menu.capture.orient.mirror"
+msgstr "Mirrored"
+
+msgid "menu.capture.orient.mirror.tooltip"
+msgstr ""
+"Swap left and right, the way an inverted stand does.\n"
+"Applied after the rotation, so it always mirrors what you see."
 
 msgid "menu.capture.white_balance"
 msgstr "Write white balance"

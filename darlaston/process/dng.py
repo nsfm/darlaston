@@ -270,7 +270,7 @@ def write_bayer_streamed(path: Path, rows, height: int, width: int, *,
                          neutral: tuple[float, float, float] = (1.0, 1.0, 1.0),
                          meta: CaptureMetadata | None = None,
                          bits: int = 16, compress: bool = False,
-                         progress=None) -> Path:
+                         orientation: int = 1, progress=None) -> Path:
     """A single-plane DNG written strip by strip, with a preview.
 
     `pattern` of None means the sensor is monochrome: no CFA tags are
@@ -287,7 +287,8 @@ def write_bayer_streamed(path: Path, rows, height: int, width: int, *,
                   photometric=(T.PHOTO_BLACK_IS_ZERO if mono
                                else T.PHOTO_CFA),
                   compression=(T.COMPRESSION_DEFLATE if compress
-                               else T.COMPRESSION_NONE))
+                               else T.COMPRESSION_NONE),
+                  orientation=orientation)
     w.set_preview(preview)
     _our_tags(w, black, white, (1.0, 1.0, 1.0) if mono else neutral, meta)
     if not mono:
@@ -304,7 +305,8 @@ def write_linear_streamed(path: Path, rows, height: int, width: int, *,
                           white: int = 65535,
                           neutral: tuple[float, float, float] = (1.0, 1.0, 1.0),
                           meta: CaptureMetadata | None = None,
-                          compress: bool = False, progress=None) -> Path:
+                          compress: bool = False, orientation: int = 1,
+                          progress=None) -> Path:
     """A demosaiced-but-linear DNG, written strip by strip.
 
     This is the mosaic composite's output, and the reason the writer exists:
@@ -315,7 +317,8 @@ def write_linear_streamed(path: Path, rows, height: int, width: int, *,
     w = DngWriter(path, width, height, samples=3, bits=16,
                   photometric=T.PHOTO_LINEAR_RAW,
                   compression=(T.COMPRESSION_DEFLATE if compress
-                               else T.COMPRESSION_NONE))
+                               else T.COMPRESSION_NONE),
+                  orientation=orientation)
     w.set_preview(preview)
     _our_tags(w, black, white, neutral, meta)
     return w.write(rows, progress=progress)
