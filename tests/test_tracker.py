@@ -575,18 +575,18 @@ def test_the_window_says_what_tracking_is_doing(window):
                                      track_gen=1, track_gated=gated)
 
     win._keep_tracking(signal(True))
-    assert win.view._advisories == ()
+    assert win.slidemap._advisory is None
 
     for _i in range(25):                      # sustained, not instantaneous
         win._keep_tracking(signal(False))
-    assert _("advice.track.blank") in win.view._advisories
+    assert _("advice.track.blank") in win.slidemap._advisory
 
     win._keep_tracking(signal(True, gated=3))
-    assert _("advice.track.fast") in win.view._advisories
+    assert _("advice.track.fast") in win.slidemap._advisory
 
     win._track_wanted = False                 # asleep on purpose: quiet
     win._keep_tracking(signal(False, gated=9))
-    assert win.view._advisories == ()
+    assert win.slidemap._advisory is None
 
 
 def test_coverage_never_shrinks():

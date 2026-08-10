@@ -256,10 +256,19 @@ class Terrain:
         #: refused: a mode change rescales the world, and the window
         #: clears the map when that happens.
         self.size: tuple[int, int] | None = None
+        #: Bumped on every paint, so a view can cache its scaled render
+        #: and rebuild only when the ground actually changed.
+        self.revision = 0
         self._th = 0
         self._ramp: np.ndarray | None = None
         self._painted = 0
         self._grown = 0
+        #: Painted extent in canvas px, (x0, y0, x1, y1) exclusive,
+        #: maintained at paint time. `bounds` used to run np.nonzero
+        #: over the whole alpha channel and was called every repaint --
+        #: milliseconds of bookkeeping per frame, measured by Nate as a
+        #: real frame-rate cost.
+        self._bbox: tuple[int, int, int, int] | None = None
 
     # ---- geometry --------------------------------------------------------
 
@@ -279,15 +288,20 @@ class Terrain:
         return self._painted / max(self.THUMB_W * self._th, 1)
 
     def bounds(self) -> tuple[float, float, float, float] | None:
-        """World extent of the painted ground, or None before any."""
-        if not self.ready:
+        """World extent of the painted ground, or None before any.
+        Read from the bbox kept at paint time: this is called per
+        repaint, and per-repaint work must not scale with the canvas."""
+        if not self.ready or self._bbox is None:
             return None
-        ys, xs = np.nonzero(self.rgba[..., 3])
+        x0, y0, x1, y1 = self._bbox
         s = self.scale
-        return (self.org[0] + float(xs.min()) * s,
-                self.org[1] + float(ys.min()) * s,
-                self.org[0] + float(xs.max() + 1) * s,
-                self.org[1] + float(ys.max() + 1) * s)
+        return (self.org[0] + x0 * s, self.org[1] + y0 * s,
+                self.org[0] + x1 * s, self.org[1] + y1 * s)
+
+    def extent_px(self) -> tuple[int, int, int, int] | None:
+        """The painted bbox in canvas pixels, for a view cropping its
+        render to the ground rather than scaling margin void."""
+        return self._bbox
 
     def _to_canvas(self, world: tuple[float, float]) -> tuple[float, float]:
         s = self.scale
@@ -332,6 +346,10 @@ class Terrain:
         self._grown += 1
         s = self.scale
         self.org = (self.org[0] - left * s, self.org[1] - top * s)
+        if self._bbox is not None:
+            # The painted ground rides the reallocation, bbox included.
+            bx0, by0, bx1, by1 = self._bbox
+            self._bbox = (bx0 + left, by0 + top, bx1 + left, by1 + top)
         return x0 + left, y0 + top
 
     def paint(self, pos: tuple[float, float], preview: np.ndarray) -> bool:
@@ -364,6 +382,11 @@ class Terrain:
         self._painted += int(region.shape[0] * region.shape[1]
                              - np.count_nonzero(painted))
         region[..., 3] = 255
+        box = (x0, y0, x0 + self.THUMB_W, y0 + self._th)
+        self._bbox = box if self._bbox is None else (
+            min(self._bbox[0], box[0]), min(self._bbox[1], box[1]),
+            max(self._bbox[2], box[2]), max(self._bbox[3], box[3]))
+        self.revision += 1
         return True
 
     # ---- matching --------------------------------------------------------

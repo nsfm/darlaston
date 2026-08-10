@@ -2495,9 +2495,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ground reappears and the position rejoins the *same* origin,
         terrain and pins intact. And none of it is silent any more."""
         if not self._track_wanted:
-            self.view.set_advisories(())
+            self.slidemap.set_advisory(None)
             self._gated_seen = s.track_gated
+            UI_METER.skip("relocalizer")
             return
+        start = time.perf_counter()
         fix = self.relocator.observe(s.preview, s.stage_pos,
                                      s.stage_tracking,
                                      self.slidemap.model.terrain)
@@ -2511,6 +2513,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Found again after a crossing: plant the position and
                 # let the analysis thread drop the stale keyframe.
                 self.pipeline.correct_tracking(s.track_gen, refix=fix.pos)
+        UI_METER.since("relocalizer", start)
 
         now = time.monotonic()
         if s.track_gated > getattr(self, "_gated_seen", 0):
@@ -2529,7 +2532,10 @@ class MainWindow(QtWidgets.QMainWindow):
                          else _("advice.track.blank"))
         if now < getattr(self, "_fast_until", 0.0):
             lines.append(_("advice.track.fast"))
-        self.view.set_advisories(lines)
+        # Said on the slide map's own status line: that panel is where
+        # the eyes already are when tracking misbehaves, and the live
+        # view stays a viewfinder rather than a message board.
+        self.slidemap.set_advisory(" · ".join(lines) if lines else None)
 
     def _sync_track_wanted(self) -> None:
         """Run the tracker only while something consumes its answer: the
