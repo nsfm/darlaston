@@ -1,18 +1,64 @@
-# Research / Bugs
+# TODO
 
-- [x] **The true-canvas slide map: SHIPPED.** The map is one
-      world-space picture now (`tracker.Terrain`): premultiplied BGRA
-      at thumbnail scale where alpha is the validity mask, feathered
-      newest-wins painting at 0.3 ms an observation, growth by
-      reallocation with a forty-field ceiling that stops rather than
-      evicts. The view blits one image instead of compositing
-      postcards; the relocalizer matches terrain windows instead of
-      postcard candidates, which the spike measured as removing an
-      1100 px aliasing tail outright (spike/tracking/canvas_spike.py,
-      with its own two traps annotated: window-rounding remainder, and
-      spatial-vs-temporal witness semantics). Coverage-shrink bugs are
-      structurally unrepresentable. The finding-aid entry below now has
-      its artifact: the canvas is the exportable map.
+This document tracks upcoming features, concerns, and ideas.
+
+## Capture features
+
+- [ ] **Mobile formats** Rotate the preview 90 degrees; add crop guides for mobile aspect ratios to support content creators.
+- [ ] **Binned capture as a size option.** `grab_raw` hard-codes full resolution. The sensor's own binned modes would give 7.5 MB at 2736×1824 and 3.3 MB at 1824×1216.
+- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all, TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for viewing; the linear DNG stays the right output while it fits.
+- [ ] **The composite still holds one full canvas.** With the writer fixed peak is 3.05 GB for 272 MP and the remainder is the uint16 result array plus the registration lumas. Rendering bands on demand into the writer, rather than filling a canvas and then streaming it, would drop it again — and the writer's `rows` callback is already the right shape for it.
+- [ ] **Exposure handoff.** Carry the live view's brightness into the capture at unity gain. Needs calibration to be verifiable.
+
+## Camera Support
+
+- [ ] **Sony Camera Remote SDK.**
+- [ ] **Ximea SDK.**
+- [ ] **`Toupcam_CtiEnable` spike.** `libtoupcam` is a GenTL _consumer_ (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings); the call succeeds and is non-destructive. If a third-party GenTL producer makes Basler/IDS/Daheng cameras enumerate through `EnumV2`, this improves camera support.
+- [ ] **Research spike.** What other brands/manufacturers/cameras exist? Need to scrap for additional SDKs, particularly off microscope forums to see what folks are actually using. Should probably inspect the source of `guvcview` and other open source camera controllers to hunt for quirks and unusual camera support.
+
+## Slide mapping
+
+- [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept is wired; the objective _stepper_ and future turret auto-detection are not. When magnification becomes known per objective, positions could be rescaled instead of discarded.
+- [ ] **The slide map as a finding aid.** The other half of the plate idea, still open: export the accumulated map, pins, thumbnails, µm coordinates, as a printable sheet. For a catalogued mount that is an archival artifact, and Victorian mounters drew them by hand.
+- [ ] **The Y undershoot: mechanism found, fix unshipped.** Probed synthetically through the real pipeline (2026-08-08): steady tracking is clean on both axes at every speed (worst −0.4%, zero gating), and defocus wobble up to 8 µm changes nothing. What reproduces the loss is a jump arriving between two analysed frames: the per-axis gate is 0.35 of each axis's own extent, 638 px in x but 426 px in y on a landscape frame, and a gated jump is discarded _whole_. So travel in the 426 to 638 px band survives in x and vanishes in y — and dropped frames while cranking fast are exactly what makes multi-hundred-pixel inter-frame steps, which is why it shows at 25×, where a small field makes the hand fast in pixels. Monotonic, one direction, proportional to how often it trips. Fix candidates, in order of ambition: raise the gate toward the physical half-frame limit (0.45 of the axis buys y 426 → 547 px, cheap, partial); or disambiguate the wraparound — a shift past the gate has exactly two candidates, the measured offset and offset ± the frame extent, and directly comparing overlap agreement at both xtends the measurable range to half the frame and possibly past it. The second is a real algorithm and wants a bench before it ships. A characterisation test in test_tracker.py pins today's behaviour so the fix shows up as a deliberate change.
+
+## Presentation
+
+- [ ] **Capture moment.** When the shutter fires, hold the developed capture on the presentation for a couple of seconds with a border pulse. "We just took that" is half the fun of tabling; deferred to keep the first release of the feature calm.
+- [ ] **QR code beside the header.** Visitors ask "where do I find you". Needs either a dependency or a hand-rolled encoder, and neither is earned yet. The /still.jpg endpoint is a natural target once it exists.
+- [ ] **Auto-hold on a blank field.** The slide leaving the stage could hold the last good frame automatically, piggybacking on the blank detection the stack trigger uses. Needs care in darkfield, where blank is dark rather than bright, and must never fire during ordinary panning.
+- [ ] **Field width readout.** "This view spans 1.3 mm" is the third question visitors ask, is exact from µm/pixel times frame width with no assumptions, and would slot into the magnification line. Low priority while the scale bar answers it indirectly.
+
+## Optics and measurement
+
+- [ ] **Optical profiler.** Stage micrometer plus grid target → µm/pixel, distortion, field curvature, lateral CA, MTF50 centre vs corner, and a computed **usable field fraction** that derives the crop radius instead of leaving it to judgement. Lets users share nice optics setup stats, too.
+- [ ] **Stop the preview during a long timelapse.** A 30 fps preview between shots that are minutes apart is an enormous amount of readout for nothing, and readout is what heats a sensor. Wake the stream only shortly before each frame, and show the last capture in the meantime rather than a live view. Cheap to do: a mode change measured about a second, which is nothing against a minute-long interval. Two things to check first the stage tracker feeds on preview frames, which is fine for a timelapse where nothing moves but means the hold-still guard is unavailable; and stopping a UVC stream may drop the manual exposure and white balance we set on open, so they would need re-applying each time.
+- [ ] **A measured color matrix.** The default is now XYZ→sRGB, but a matrix measured from a color target would be better than assuming sRGB primaries. Though nobody's got a microscopic color target, so this is low priority.
+
+## Unverified
+
+- [ ] **Can the optics out-resolve the binned mode at all?** If the relay is the limit, full resolution records empty magnification. The profiler answers this.
+- [ ] **Do the SDK's FFC/DFC apply in the raw path or only the ISP path?**
+
+## Packaging
+
+- [ ] **Windows testing.** Library naming is handled (`toupcam.dll`, `lib` prefix) and nothing else has been looked at. Does the window frame work? Does capture work at all?
+- [ ] **Microsoft store publishing.** This is a free route to a signed package for Windows users. A github action supports it.
+- [ ] **Apple signing cert.** I need to cough up $100/yr for an Apple signing certificate to avoid the warnings for Mac OS users.
+- [ ] **Mac OS Brew cask.**
+- [ ] **Microsoft signing cert.** This one's $120/yr through Azure signing... maybe worth it if Windows users hate the Microsoft Store.
+- [ ] **Confirm the system thumbnailer is happy.** The preview is in the right place and extracts correctly.
+- [ ] **Snap layouts below half-screen.** The window's minimum width is 766 px and Microsoft's limit for snap layouts is 500, so the half-screen layouts work and the third- and quarter-width ones invoke and then fail to snap. Traced to three constraints in a chain - the rail fixed at 286, the live view's 480 minimum and the waiting page's 458 - so relaxing the live view alone bottoms out at 744 and changes nothing. The one that bites is a third of 1920.
+
+## Later
+
+- [ ] **Gallery and basic develop view.** Browsing what you shot, and a few sliders for developing RAW to jpeg
+- [ ] **Setup card.** "what's your setup?", neofetch style
+- [ ] **Session resumability.** To rescue interrupted mosaics
+- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional recording - x, y, zoom and focal plane - and every move through it can be perfectly smooth because it is synthesised rather than performed, which is virtual camera work on a slide and is offered because we keep both the mosaic and the depth. The thing that makes it a big feature rather than a small one is circular: a flyby can only be planned over a mosaic that already exists, and the mosaic that should exist depends on the flyby. Plan over the live slide map first - sketch the path, get the minimum coverage and an honest size estimate, then shoot it - which turns a rendering feature into a capture feature. Order and reasoning in the doc.
+
+## Objective Swap Detection
 
 - [ ] **Detection can never land on an empty turret position.** The
       _marking_ shipped: `Turret.capped` exists, the setup editor offers a
@@ -29,10 +75,9 @@
       black is the loudest thing the darkness sweep will ever see. The mock
       can occlude the field on demand, so both cases can be simulated as
       soon as there is something to test.
-- [ ] **A measured colour matrix.** The default is now XYZ→sRGB, which is a guess rather than a mistake, but a matrix measured from a colour target would be better than assuming sRGB primaries.
-- [ ] **Exposure handoff.** Carry the live view's brightness into the capture at unity gain. Needs calibration to be verifiable.
-- [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept is wired; the objective _stepper_ and future turret auto-detection are not. When magnification becomes known per objective, positions could be rescaled instead of discarded.
-- [ ] **Spike `Toupcam_CtiEnable`.** `libtoupcam` is a GenTL _consumer_ (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings); the call succeeds and is non-destructive. If a third-party GenTL producer makes Basler/IDS/Daheng cameras enumerate through `EnumV2`, that is an industrial-camera backend for one line. Entirely unproven — needs a borrowed camera and an hour.
+
+## Focus Stacking
+
 - [ ] **A retouch brush.** Both commercial stackers' answer to the
       physically-unfixable halo is a human with a brush, and in our
       architecture that is cheap: the aligned slices and the depth map
@@ -44,34 +89,6 @@
       is exactly why Zerene and Helicon both ship the brush instead.
       Wants: a slice picker, a soft round brush, undo, and a live
       before/after. The stack window is where it belongs.
-- [ ] **The slide map as a finding aid.** The other half of the plate idea, still open: export the accumulated map, pins, thumbnails, µm coordinates, as a printable sheet. For a catalogued mount that is an archival artifact, and Victorian mounters drew them by hand.
-- [ ] **The Y undershoot: mechanism found, fix unshipped.** Probed
-      synthetically through the real pipeline (2026-08-08): steady
-      tracking is clean on both axes at every speed (worst −0.4%, zero
-      gating), and defocus wobble up to 8 µm changes nothing. What
-      reproduces the loss is a jump arriving between two analysed frames:
-      the per-axis gate is 0.35 of each axis's own extent, 638 px in x
-      but 426 px in y on a landscape frame, and a gated jump is discarded
-      _whole_. So travel in the 426 to 638 px band survives in x and
-      vanishes in y — and dropped frames while cranking fast are exactly
-      what makes multi-hundred-pixel inter-frame steps, which is why it
-      shows at 25×, where a small field makes the hand fast in pixels.
-      Monotonic, one direction, proportional to how often it trips.
-
-      Confirm on glass before fixing: crank y hard at 25× and watch
-      "moves too fast to track" in the performance panel — that counter
-      climbing is this mechanism live (each tick is one discarded jump).
-
-      Fix candidates, in order of ambition: raise the gate toward the
-      physical half-frame limit (0.45 of the axis buys y 426 → 547 px,
-      cheap, partial); or disambiguate the wraparound — a shift past the
-      gate has exactly two candidates, the measured offset and offset ±
-      the frame extent, and directly comparing overlap agreement at both
-      extends the measurable range to half the frame and possibly past
-      it. The second is a real algorithm and wants a bench before it
-      ships. A characterisation test in test_tracker.py pins today's
-      behaviour so the fix shows up as a deliberate change.
-
 - [ ] **Measured candidates in waiting** (from the research sweep, each goes
       through `tools/stack_bench.py` before shipping): CombineZP's ramp
       subtraction (monotone-vs-peaked profile test — the only shipped
@@ -185,47 +202,10 @@
       fell" are different claims and only the second is defensible. The
       bench already has a synthetic glow case to measure against.
 
-## Capture features
+## Developer quality-of-live
 
-- [ ] **Inverted brightfield** native in the live view. Display and export transform only; the raw stays linear positive.
-- [ ] **Color swap** an earlier bug swapped R and B, the effect was actually pretty cool.
-- [ ] **Greyscale** to support green filter / high contrast modes
-- [ ] **Mobile formats** Rotate the preview 90 degrees; add crop guides for mobile aspect rations to support content creators.
-- [ ] **Binned capture as a size option.** `grab_raw` hard-codes full resolution. The sensor's own binned modes would give 7.5 MB at 2736×1824 and 3.3 MB at 1824×1216.
-- [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all, TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for viewing; the linear DNG stays the right output while it fits.
-- [ ] **The composite still holds one full canvas.** With the writer fixed peak is 3.05 GB for 272 MP and the remainder is the uint16 result array plus the registration lumas. Rendering bands on demand into the writer, rather than filling a canvas and then streaming it, would drop it again — and the writer's `rows` callback is already the right shape for it.
-
-## Presentation
-
-- [ ] **Capture moment.** When the shutter fires, hold the developed capture on the presentation for a couple of seconds with a border pulse. "We just took that" is half the fun of tabling; deferred to keep the first release of the feature calm.
-- [ ] **QR code beside the header.** Visitors ask "where do I find you". Needs either a dependency or a hand-rolled encoder, and neither is earned yet. The /still.jpg endpoint is a natural target once it exists.
-- [ ] **Auto-hold on a blank field.** The slide leaving the stage could hold the last good frame automatically, piggybacking on the blank detection the stack trigger uses. Needs care in darkfield, where blank is dark rather than bright, and must never fire during ordinary panning.
-- [ ] **Field width readout.** "This view spans 1.3 mm" is the third question visitors ask, is exact from µm/pixel times frame width with no assumptions, and would slot into the magnification line. Low priority while the scale bar answers it indirectly.
-
-## Optics and measurement
-
-- [ ] **Optical profiler.** Stage micrometer plus grid target → µm/pixel, distortion, field curvature, lateral CA, MTF50 centre vs corner, and a computed **usable field fraction** that derives the crop radius instead of leaving it to judgement. Also settles AmScope adapter vs planar relay eyepiece with numbers.
-- [ ] **Stop the preview during a long timelapse.** A 30 fps preview between shots that are minutes apart is an enormous amount of readout for nothing, and readout is what heats a sensor. Wake the stream only shortly before each frame, and show the last capture in the meantime rather than a live view. Cheap to do: a mode change measured about a second, which is nothing against a minute-long interval. Two things to check first the stage tracker feeds on preview frames, which is fine for a timelapse where nothing moves but means the hold-still guard is unavailable; and stopping a UVC stream may drop the manual exposure and white balance we set on open, so they would need re-applying each time.
-
-## Unverified
-
-- [ ] **? Can the optics out-resolve the binned mode at all?** If the relay is the limit, full resolution records empty magnification. The profiler answers this.
-- [ ] **? Do the SDK's FFC/DFC apply in the raw path or only the ISP path?**
-- [ ] **? Sony Camera Remote SDK on Linux for the A6700**, for the second backend.
-- [ ] **? Dead-reckoning drift** across a 40-tile mosaic — is overview anchoring sufficient, or is a brightfield registration pass needed?
-- [ ] **? Snap layouts below half-screen.** The window's minimum width is 766 px and Microsoft's limit for snap layouts is 500, so the half-screen layouts work and the third- and quarter-width ones invoke and then fail to snap. Traced to three constraints in a chain - the rail fixed at 286, the live view's 480 minimum and the waiting page's 458 - so relaxing the live view alone bottoms out at 744 and changes nothing. The one that bites is a third of 1920.
-
-## Packaging
-
-- [ ] **Windows testing.** Library naming is handled (`toupcam.dll`, `lib` prefix) and nothing else has been looked at. Does the window frame work? Does capture work at all?
-- [ ] **Microsoft store publishing.** This is a free route to a signed package for Windows users. A github action supports it.
-- [ ] **Apple signing cert.** I need to cough up $100/yr for an Apple signing certificate to avoid the warnings for Mac OS users.
-- [ ] **Microsoft signing cert.** This one's $120/yr through Azure signing... maybe worth it if Windows users hate the Microsoft Store.
-- [ ] **Confirm the system thumbnailer is happy.** The preview is in the right place and extracts correctly.
-
-## Later
-
-- [ ] **Gallery and basic develop view.** Browsing what you shot, and a few sliders for developing RAW to jpeg
-- [ ] **Setup card.** "what's your setup?", neofetch style
-- [ ] **Session resumability.** To rescue interrupted mosaics
-- [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional recording - x, y, zoom and focal plane - and every move through it can be perfectly smooth because it is synthesised rather than performed, which is virtual camera work on a slide and is offered because we keep both the mosaic and the depth. The thing that makes it a big feature rather than a small one is circular: a flyby can only be planned over a mosaic that already exists, and the mosaic that should exist depends on the flyby. Plan over the live slide map first - sketch the path, get the minimum coverage and an honest size estimate, then shoot it - which turns a rendering feature into a capture feature. Order and reasoning in the doc.
+- [ ] **CLI tools & docs**
+- [ ] **Refactoring**, there are a lot of big files that need breaking down
+- [ ] **Internal docs**, mainly architecture and docgen
+- [ ] **General cleanup sweep** for comments and unused code
+- [ ] **Test suite cleanup**, since it takes ages to run
