@@ -47,7 +47,22 @@ class StageTracker:
     #: 3:2 frame gave x 23% of its own width and y 35% of its height, for
     #: no physical reason -- the measurable range is a property of each
     #: axis separately.
-    MAX_STEP = 0.35
+    #:
+    #: 0.45 leans on a contract with the measurement side: the pipeline
+    #: verifies any shift past 0.35 of an axis against the pixels
+    #: (`_shift_verified` -- the keyframe must reappear where the shift
+    #: says, and no rival offset with enough overlap to testify may
+    #: explain the scene nearly as well) and zeroes the confidence when
+    #: it cannot. So everything this gate sees in the 0.35-0.45 band has
+    #: already shown its work, and the band that used to be y's blind
+    #: spot -- the measured Y undershoot, 426 to 547 preview px -- is
+    #: travel again. Wrapped lies from just past half a frame fail the
+    #: verification floor; the one liar this cannot catch is a jump so
+    #: large its true overlap is a sliver (past ~0.8 of the axis) over
+    #: ground that happens to repeat, and the relocalizer -- which
+    #: recognises places rather than measuring shifts -- is the
+    #: designed recovery for exactly that class.
+    MAX_STEP = 0.45
 
     #: Re-anchor once the view has slid this far from the keyframe, as a
     #: fraction of the correlated image's shorter side. Far enough that the

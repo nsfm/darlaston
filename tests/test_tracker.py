@@ -50,23 +50,28 @@ def test_absurd_jumps_are_rejected():
     assert not locked
 
 
-def test_the_gate_band_is_asymmetric_today():
-    """Characterisation, not endorsement. The per-axis gate is 0.35 of
-    each axis's own extent, so on a landscape track frame a 55 px shift
-    is 24% of x's width and accepted, but 36% of y's height and
-    discarded whole -- the Y undershoot's mechanism, pinned here so the
-    fix shows up as a deliberate change to this file rather than a
-    silent one."""
+def test_the_gate_band_is_no_longer_ys_blind_spot():
+    """The deliberate change the earlier pin existed for. A 55 px shift
+    on the track frame -- 36% of y's height, squarely in the band that
+    used to be discarded whole -- is now accepted on both axes, because
+    the pipeline verifies everything past 0.35 against the pixels
+    before this gate ever sees it. The gate still ends at 0.45: past
+    that sits too close to the half-frame wraparound to trust."""
     shape = (152, 228)                    # the track frame, h x w
     x = StageTracker()
     x.anchor((5.0, 5.0), 0.9, shape)
     _, locked, _ = x.anchor((55.0, 0.0), 0.9, shape)
-    assert locked and x.gated == 0, "x absorbs the band"
+    assert locked and x.gated == 0, "x absorbs the band, as always"
 
     y = StageTracker()
     y.anchor((5.0, 5.0), 0.9, shape)
     _, locked, _ = y.anchor((0.0, 55.0), 0.9, shape)
-    assert not locked and y.gated == 1, "y discards it"
+    assert locked and y.gated == 0, "y absorbs it now too"
+
+    far = StageTracker()
+    far.anchor((5.0, 5.0), 0.9, shape)
+    _, locked, _ = far.anchor((0.0, 70.0), 0.9, shape)   # 0.46 of y
+    assert not locked and far.gated == 1, "past 0.45 stays gated"
 
 
 def test_no_position_until_first_lock():
@@ -372,8 +377,8 @@ def test_the_step_limit_is_per_axis():
     pos, locked = t.advance((0.30 * 1824, 0.0), 0.9, shape)
     assert locked, "a shift well inside the frame width was rejected"
 
-    # 40% of the height is past the limit for y.
-    _, locked = t.advance((0.0, 0.40 * 1216), 0.9, shape)
+    # 46% of the height is past the limit for y.
+    _, locked = t.advance((0.0, 0.46 * 1216), 0.9, shape)
     assert not locked
 
 
@@ -480,24 +485,29 @@ def test_clearing_the_map_fences_in_the_same_press(window):
         "the clear did not fence out frames from the old origin")
 
 
-def test_the_gate_is_a_fraction_of_each_axis():
-    """Documented, not endorsed: on a landscape frame the same jump in
-    pixels survives in x and is discarded whole in y, because the
-    measurable range is a fraction of each axis's own extent. This is
-    the mechanism behind the dead-reckoning undershoot in y -- see the
-    TODO entry -- and this test pins the current behaviour so a fix
-    shows up as a deliberate change here."""
+def test_the_gate_is_a_fraction_of_each_axis_and_y_keeps_500_now():
+    """The dead-reckoning undershoot's pin, deliberately changed. A
+    500 px jump used to survive in x (gate 638) and be discarded whole
+    in y (gate 426); with the verified band the y gate reaches 547 and
+    the same jump survives both axes. The gate is still a fraction of
+    each axis's own extent, so the two still part ways -- just past the
+    band's edge now."""
     shape = (1216, 1824)
     t = StageTracker()
     t.anchor((0.0, 0.0), 0.9, shape)
     _pos, locked, _rekey = t.anchor((500.0, 0.0), 0.9, shape)
-    assert locked, "x should keep a 500 px jump: the gate is 638 there"
+    assert locked, "x keeps a 500 px jump, as it always did"
 
     t = StageTracker()
     t.anchor((0.0, 0.0), 0.9, shape)
     _pos, locked, _rekey = t.anchor((0.0, 500.0), 0.9, shape)
-    assert not locked and t.gated == 1, (
-        "y's gate is 426 px: the same jump is discarded whole")
+    assert locked and t.gated == 0, (
+        "y keeps it too now: 500 px is inside the verified band")
+
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    _pos, locked, _rekey = t.anchor((0.0, 550.0), 0.9, shape)
+    assert not locked and t.gated == 1, "past the band, y still gates"
 
 
 def test_a_blind_tracker_costs_nothing_and_claims_nothing():
