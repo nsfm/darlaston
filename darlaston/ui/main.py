@@ -39,7 +39,7 @@ from ..live import balance
 from ..camera.base import preferred_preview
 from ..live.cell import Newest
 from ..live import exposure as exposure_ctl
-from ..process import scalebar, transform
+from ..process import orient, scalebar, transform
 from ..process.metadata import sensor_pitch
 from ..live.relocate import Relocator
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
@@ -316,7 +316,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # the label goes through the catalogue.
         for value, label in (("none", _("menu.capture.guides.none")),
                              ("thirds", _("menu.capture.guides.thirds")),
-                             ("grid", _("menu.capture.guides.grid"))):
+                             ("grid", _("menu.capture.guides.grid")),
+                             ("reel", _("menu.capture.guides.reel")),
+                             ("tall", _("menu.capture.guides.tall"))):
             act = guides.addAction(label)
             act.setCheckable(True)
             act.setChecked(self.settings.framing_grid == value)
@@ -354,6 +356,35 @@ class MainWindow(QtWidgets.QMainWindow):
                 lambda _c=False, v=value: self._set_rendering(v))
             rendering.addAction(act)
             self._render_actions[value] = act
+        # Which way up the picture hangs. Beside Color because it is the
+        # same kind of choice -- a way of looking, carried into the JPEG
+        # and recorded on the DNG, never touching the data. The mirror is
+        # a separate toggle rather than a fifth rotation, because an
+        # inverted stand mirrors the world at any rotation.
+        turned = capture_menu.addMenu(_("menu.capture.orient"))
+        turned.menuAction().setToolTip(_("menu.capture.orient.tooltip"))
+        self._orient_actions = {}
+        spins = QtGui.QActionGroup(self)
+        spins.setExclusive(True)
+        for value, label in ((0, _("menu.capture.orient.upright")),
+                             (90, _("menu.capture.orient.right")),
+                             (270, _("menu.capture.orient.left")),
+                             (180, _("menu.capture.orient.down"))):
+            act = turned.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(
+                orient.sane_rotation(self.settings.display_rotation) == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_orientation(rotation=v))
+            spins.addAction(act)
+            self._orient_actions[value] = act
+        turned.addSeparator()
+        self.mirror_action = turned.addAction(_("menu.capture.orient.mirror"))
+        self.mirror_action.setCheckable(True)
+        self.mirror_action.setChecked(bool(self.settings.display_mirror))
+        self.mirror_action.setToolTip(_("menu.capture.orient.mirror.tooltip"))
+        self.mirror_action.toggled.connect(
+            lambda on: self._set_orientation(mirror=on))
         # In the menu rather than the rail: it is set once per illumination
         # style and then left alone. Its *off* state shows in the status
         # bar, because unlike the guides you cannot see this one by looking
@@ -1586,8 +1617,12 @@ class MainWindow(QtWidgets.QMainWindow):
         """Where they pointed. Sample there, and take the balance."""
         # The pipeline owns where the balance comes from -- it is the
         # thing that samples there. A second copy here would only be a
-        # fact in two places waiting to disagree.
-        self.pipeline.set_balance_rect(rect)
+        # fact in two places waiting to disagree. Drawn on the turned
+        # picture, sampled on the sensor: the rect travels back through
+        # the orientation before the pipeline sees it.
+        self.pipeline.set_balance_rect(orient.rect_to_sensor(
+            rect, self.settings.display_rotation,
+            self.settings.display_mirror))
         self.strip.set_note("")
         self._refresh_wb()               # the view disarmed itself
         # Show where it was taken, briefly. A rectangle that stays is
@@ -1660,9 +1695,13 @@ class MainWindow(QtWidgets.QMainWindow):
             else _("shell.wb.swatch.tooltip.off"))
 
     def _on_custom_region(self, rect: tuple) -> None:
-        """A box dragged on the image wins over any preset."""
+        """A box dragged on the image wins over any preset. Dragged on
+        the turned picture, measured on the sensor -- the same inverse
+        trip the balance rect takes."""
         self._region = Region.CUSTOM
-        self.pipeline.set_focus_region(Region.CUSTOM, rect)
+        self.pipeline.set_focus_region(Region.CUSTOM, orient.rect_to_sensor(
+            rect, self.settings.display_rotation,
+            self.settings.display_mirror))
         for b in self._region_buttons.values():
             b.setChecked(False)
 
@@ -2732,6 +2771,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.display_transform = transform.sane(mode)
         self.settings.save()
 
+    def _set_orientation(self, rotation: int | None = None,
+                         mirror: bool | None = None) -> None:
+        """Turn the working picture and remember it. Same contract as
+        the rendering: the next frame picks it up."""
+        if rotation is not None:
+            self.settings.display_rotation = orient.sane_rotation(rotation)
+        if mirror is not None:
+            self.settings.display_mirror = bool(mirror)
+        self.settings.save()
+
     def _open_performance(self) -> None:
         PerformanceDialog(self.settings, self._apply_performance, self).exec()
 
@@ -3277,8 +3326,20 @@ class MainWindow(QtWidgets.QMainWindow):
         # computing while a stack is open. Pushed from here rather than
         # tracked through the session's several beginnings and ends.
         self.pipeline.set_blank_watch(self.stack_session is not None)
-        self.view.set_focus_rect(s.focus_rect)
-        self.view.set_remaining(s.coverage_remaining, s.focus_rect)
+        # The pipeline reports rectangles on the sensor's frame; the view
+        # draws them over the turned picture. One mapping, here, and its
+        # inverse where the operator draws a rectangle back (the balance
+        # and focus-region handlers). The coverage panel is an instrument
+        # and keeps the sensor's frame.
+        rot = orient.sane_rotation(self.settings.display_rotation)
+        mirror = bool(self.settings.display_mirror)
+        box = (orient.rect_to_view(s.focus_rect, rot, mirror)
+               if s.focus_rect is not None else None)
+        remaining = s.coverage_remaining
+        if remaining is not None and (rot or mirror):
+            remaining = orient.frame(remaining, rot, mirror)
+        self.view.set_focus_rect(box)
+        self.view.set_remaining(remaining, box)
         self.focus.set_coverage(s.coverage, s.coverage_complete)
         # The bar on the live view, when it is asked for. On a copy, so
         # the frame the rest of the window keeps -- the balance sample,
@@ -3295,14 +3356,20 @@ class MainWindow(QtWidgets.QMainWindow):
         # painted from, or the relocalizer would stop recognising ground
         # it has already seen.
         look = transform.sane(self.settings.display_transform)
-        if look == "none":
+        if look == "none" and not rot and not mirror:
             UI_METER.skip("rendering")
-            shown = s.preview
+            shown, peaking = s.preview, s.peaking
         else:
             start = time.perf_counter()
-            shown = transform.applied(s.preview, look)
+            shown = orient.frame(transform.applied(s.preview, look),
+                                 rot, mirror)
+            # The peaking overlay is drawn over the turned picture, so
+            # it turns with it -- an in-focus edge marked on the wrong
+            # side of the screen would be worse than none.
+            peaking = (orient.frame(s.peaking, rot, mirror)
+                       if s.peaking is not None else None)
             UI_METER.since("rendering", start)
-        self.view.set_frame(shown, s.peaking)
+        self.view.set_frame(shown, peaking)
         self._offer_present(s, shown)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture

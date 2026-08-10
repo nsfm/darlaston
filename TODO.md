@@ -4,18 +4,31 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Capture features
 
-- [ ] **Mobile formats** Rotate the preview 90 degrees; add crop guides for mobile aspect ratios to support content creators.
 - [ ] **Binned capture as a size option.** `grab_raw` hard-codes full resolution. The sensor's own binned modes would give 7.5 MB at 2736×1824 and 3.3 MB at 1824×1216.
 - [ ] **Beyond 4 GB.** A big enough mosaic cannot be a DNG at all, TIFF offsets are 32-bit. BigTIFF or a pyramidal TIFF is the answer for viewing; the linear DNG stays the right output while it fits.
 - [ ] **The composite still holds one full canvas.** With the writer fixed peak is 3.05 GB for 272 MP and the remainder is the uint16 result array plus the registration lumas. Rendering bands on demand into the writer, rather than filling a canvas and then streaming it, would drop it again — and the writer's `rows` callback is already the right shape for it.
 - [ ] **Exposure handoff.** Carry the live view's brightness into the capture at unity gain. Needs calibration to be verifiable.
+- [ ] **Video recording.**
+- [ ] **Real-time EDF (live focus stacking).** ToupView ships live EDF
+      with three selectable algorithms — Maximum Contrast, Weighted
+      Average, and "Stacking" (FFDSSD) — plus auto-alignment for shift,
+      rotation and scale (their FAQ 41 and 59). And they withhold it
+      from ToupLite, so their own Linux and Mac users have never had
+      it. We cover the offline half well (rack-pause capture, measured
+      merge, panels deciding); the live half is a different shape:
+      accumulate a sharpest-so-far composite into the preview while the
+      operator racks, no capture step, alignment tolerant of hand
+      wobble. Their quality is contested in the forums, which is the
+      opening: be visibly better, not merely present. Any algorithm
+      goes through tools/stack_bench.py before shipping, same as every
+      other merge claim. Detail in spike/docs/competitors-toupview.md.
 
 ## Camera Support
 
 - [ ] **Sony Camera Remote SDK.**
 - [ ] **Ximea SDK.**
-- [ ] **`Toupcam_CtiEnable` spike.** `libtoupcam` is a GenTL _consumer_ (`TLOpen`, `IFOpenDevice`, `GENICAM_GENTL64_PATH` in its strings); the call succeeds and is non-destructive. If a third-party GenTL producer makes Basler/IDS/Daheng cameras enumerate through `EnumV2`, this improves camera support.
-- [ ] **Research spike.** What other brands/manufacturers/cameras exist? Need to scrap for additional SDKs, particularly off microscope forums to see what folks are actually using. Should probably inspect the source of `guvcview` and other open source camera controllers to hunt for quirks and unusual camera support.
+- [ ] **Support for older Toup cameras.** Does support fail on the ToupView side or the SDK side? Can we load older SDKs?
+- [ ] **libgphoto** backend for mirrorless cameras.
 
 ## Slide mapping
 
@@ -32,6 +45,18 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Optics and measurement
 
+- [ ] **Measurement tools.** The most-used ToupView feature cluster
+      after capture itself — the forums are full of dedicated calibrate,
+      measure and reset-calibration help threads. Length, angle, radius,
+      area and polygon overlays, calibrated per objective. We already
+      hold the honest half: µm/px from sensor pitch over magnification,
+      written into every file and drawn as the scale bar — but there is
+      no way to _click_ a measurement onto a picture. Table stakes for
+      anyone moving off ToupView. The gallery/develop view is its
+      natural home when that exists, the live view second. Worth saying
+      in comparison copy: their per-objective calibration dies on every
+      reinstall (its own recurring help-thread genre); ours survives by
+      construction. Detail in spike/docs/competitors-toupview.md.
 - [ ] **Optical profiler.** Stage micrometer plus grid target → µm/pixel, distortion, field curvature, lateral CA, MTF50 centre vs corner, and a computed **usable field fraction** that derives the crop radius instead of leaving it to judgement. Lets users share nice optics setup stats, too.
 - [ ] **Stop the preview during a long timelapse.** A 30 fps preview between shots that are minutes apart is an enormous amount of readout for nothing, and readout is what heats a sensor. Wake the stream only shortly before each frame, and show the last capture in the meantime rather than a live view. Cheap to do: a mode change measured about a second, which is nothing against a minute-long interval. Two things to check first the stage tracker feeds on preview frames, which is fine for a timelapse where nothing moves but means the hold-still guard is unavailable; and stopping a UVC stream may drop the manual exposure and white balance we set on open, so they would need re-applying each time.
 - [ ] **A measured color matrix.** The default is now XYZ→sRGB, but a matrix measured from a color target would be better than assuming sRGB primaries. Though nobody's got a microscopic color target, so this is low priority.

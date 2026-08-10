@@ -23,7 +23,7 @@ import numpy as np
 from ..calib import frames as F
 from ..live import balance
 from ..calib.store import CalibrationStore, dark_key, flat_key, illumination_key
-from ..process import develop, dng, scalebar, transform
+from ..process import develop, dng, orient, scalebar, transform
 from .writer import WriteQueue
 from ..process.metadata import from_setup, sensor_pitch
 from ..session.settings import Settings, next_sequence
@@ -330,6 +330,12 @@ class StillCapture:
             # in play.
             look = transform.sane(self._settings.display_transform)
             look = "" if look == "none" else look
+            # And which way up they were working. The JPEG's pixels turn,
+            # because it carries no EXIF to say so; the DNG stays in the
+            # sensor's frame and gets the standard Orientation tag, which
+            # every raw developer and thumbnailer honours.
+            spin = orient.sane_rotation(self._settings.display_rotation)
+            mirrored = bool(self._settings.display_mirror)
             # A monochrome sensor gets no CFA pattern at all. Roughly a
             # quarter of ToupTek's microscopy range is mono, and labelling
             # greyscale data with a Bayer pattern makes every developer
@@ -441,14 +447,16 @@ class StillCapture:
                         path, lambda s, c: out[s:s + c, :, ::-1],
                         out.shape[0], out.shape[1], preview=preview,
                         black=black, white=white,
-                        neutral=neutral or (1.0, 1.0, 1.0), meta=meta)
+                        neutral=neutral or (1.0, 1.0, 1.0), meta=meta,
+                        orientation=orient.exif_code(spin, mirrored))
                 else:
                     written = dng.write_bayer_streamed(
                         path, lambda s, c: out[s:s + c],
                         out.shape[0], out.shape[1],
                         preview=preview, pattern=pattern, black=black,
                         white=white, neutral=neutral or (1.0, 1.0, 1.0),
-                        meta=meta, bits=bits)
+                        meta=meta, bits=bits,
+                        orientation=orient.exif_code(spin, mirrored))
 
             # The photograph, beside the negative, and written second: this
             # is the pleasant half of the output and the raw is the
@@ -464,6 +472,9 @@ class StillCapture:
                     # the finished picture rather than part of what gets
                     # inverted.
                     image = transform.applied(image, look)
+                # And turned before the bar too, so the bar sits upright
+                # in a corner of the finished photograph.
+                image = orient.frame(image, spin, mirrored)
                 # On the photograph, never on the negative. `meta` carries
                 # the micrometres-per-pixel computed from sensor pitch over
                 # total magnification, and `draw` refuses on anything it

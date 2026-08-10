@@ -379,6 +379,13 @@ class LiveView(QtWidgets.QWidget):
     #: which is the microscope-specific job.
     GUIDES = {"none": 0, "thirds": 3, "grid": 6}
 
+    #: Centred crop guides, as width over height of the crop. Named for
+    #: the deliverable rather than the ratio: a reel or short is 9:16,
+    #: the tall feed post 4:5. Drawn as a dimmed surround rather than
+    #: lines, the way a phone's own camera shows a crop -- what sits
+    #: outside the mark will not be in the video.
+    ASPECTS = {"reel": 9 / 16, "tall": 4 / 5}
+
     def _draw_guides(self, p: QtGui.QPainter, target: QtCore.QRect) -> None:
         """Framing guides over the preview, the way a viewfinder does it.
 
@@ -392,8 +399,11 @@ class LiveView(QtWidgets.QWidget):
         window that happens to have letterboxing in it.
         """
         n = self.GUIDES.get(self.framing_grid, 0)
-        if not n and not self.framing_cross:
+        aspect = self.ASPECTS.get(self.framing_grid)
+        if not n and not aspect and not self.framing_cross:
             return
+        if aspect:
+            self._draw_crop(p, target, aspect)
         lines = []
         for i in range(1, n):
             x = target.x() + target.width() * i / n
@@ -414,6 +424,42 @@ class LiveView(QtWidgets.QWidget):
                               (QtGui.QColor(255, 255, 255, 90), 1)):
             p.setPen(QtGui.QPen(colour, width))
             p.drawLines(lines)
+        p.restore()
+
+    def _draw_crop(self, p: QtGui.QPainter, target: QtCore.QRect,
+                   aspect: float) -> None:
+        """The largest centred crop of the given shape, marked by
+        dimming everything it excludes. The bands are the message: a
+        subject under one is a subject the audience will not see."""
+        cw = min(float(target.width()), target.height() * aspect)
+        ch = cw / aspect
+        crop = QtCore.QRectF(target.x() + (target.width() - cw) / 2,
+                             target.y() + (target.height() - ch) / 2,
+                             cw, ch)
+        full = QtCore.QRectF(target)
+        p.save()
+        shade = QtGui.QColor(0, 0, 0, 90)
+        if crop.left() - full.left() > 0.5:
+            p.fillRect(QtCore.QRectF(full.left(), full.top(),
+                                     crop.left() - full.left(),
+                                     full.height()), shade)
+            p.fillRect(QtCore.QRectF(crop.right(), full.top(),
+                                     full.right() - crop.right(),
+                                     full.height()), shade)
+        if crop.top() - full.top() > 0.5:
+            p.fillRect(QtCore.QRectF(full.left(), full.top(), full.width(),
+                                     crop.top() - full.top()), shade)
+            p.fillRect(QtCore.QRectF(full.left(), crop.bottom(),
+                                     full.width(),
+                                     full.bottom() - crop.bottom()), shade)
+        # The edge itself, in the guides' own double stroke, so it reads
+        # over a blown-white field and a black one alike.
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+        for colour, width in ((QtGui.QColor(0, 0, 0, 60), 3),
+                              (QtGui.QColor(255, 255, 255, 90), 1)):
+            p.setPen(QtGui.QPen(colour, width))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawRect(crop)
         p.restore()
 
     def _scaled(self, rgb: np.ndarray, w: int, h: int,

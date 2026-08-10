@@ -206,13 +206,21 @@ class Settings:
     #: calibration store keyed to the optical configuration. This one is
     #: per bench and per habit; that one is per objective and per lamp.
     white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
-    framing_grid: str = "none"       # none | thirds | grid
+    framing_grid: str = "none"   # none | thirds | grid | reel | tall
     framing_cross: bool = False
     #: The rendering the operator is working in: none | invert | swap |
     #: grey. Carried by everything that is a picture -- live view,
     #: presentation, stream, JPEG, the DNG's embedded preview -- and by
     #: nothing that is a measurement. The raw data never wears it.
     display_transform: str = "none"
+    #: And which way up the picture hangs: degrees clockwise (0, 90,
+    #: 180, 270) and a left-right mirror, applied after the rotation so
+    #: "mirrored" always swaps the left and right the operator sees.
+    #: Same contract as the transform: the JPEG turns physically, the
+    #: DNG records it as the standard EXIF Orientation tag, and the
+    #: sensor data and every instrument stay in the sensor's own frame.
+    display_rotation: int = 0
+    display_mirror: bool = False
     #: Keep the individual slices after a stack is merged. Default changed
     #: from False to True when the setting was first made to do anything:
     #: it had never been read, so every stack ever shot kept its slices,

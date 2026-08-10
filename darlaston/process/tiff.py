@@ -265,12 +265,17 @@ class DngWriter:
     def __init__(self, path: Path | str, width: int, height: int, *,
                  samples: int = 1, bits: int = 16,
                  photometric: int = PHOTO_CFA,
-                 compression: int = COMPRESSION_NONE) -> None:
+                 compression: int = COMPRESSION_NONE,
+                 orientation: int = 1) -> None:
         self.path = Path(path)
         self.width, self.height = int(width), int(height)
         self.samples, self.bits = int(samples), int(bits)
         self.photometric = photometric
         self.compression = compression
+        #: EXIF Orientation, written to both IFDs. The pixels are always
+        #: stored the way the sensor read them; this tag is how a viewer
+        #: learns which way the operator was holding the world.
+        self.orientation = int(orientation)
         self.ifd0: list[_Tag] = []
         self.raw_tags: list[_Tag] = []
         self.exif: list[_Tag] = []
@@ -314,7 +319,7 @@ class DngWriter:
             _Tag(SAMPLES_PER_PIXEL, SHORT, 3),
             _Tag(ROWS_PER_STRIP, LONG, ph),
             _Tag(PLANAR_CONFIG, SHORT, 1),
-            _Tag(ORIENTATION, SHORT, 1),
+            _Tag(ORIENTATION, SHORT, self.orientation),
             _Tag(STRIP_OFFSETS, LONG, 0),             # patched
             _Tag(STRIP_BYTE_COUNTS, LONG, pv.nbytes),
             _Tag(SUB_IFDS, LONG, 0),                  # patched
@@ -332,7 +337,7 @@ class DngWriter:
             _Tag(SAMPLES_PER_PIXEL, SHORT, self.samples),
             _Tag(ROWS_PER_STRIP, LONG, self.ROWS_PER_STRIP),
             _Tag(PLANAR_CONFIG, SHORT, 1),
-            _Tag(ORIENTATION, SHORT, 1),
+            _Tag(ORIENTATION, SHORT, self.orientation),
             _Tag(STRIP_OFFSETS, LONG, [0] * strips),
             _Tag(STRIP_BYTE_COUNTS, LONG, [0] * strips),
         ]
