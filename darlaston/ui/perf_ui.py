@@ -131,7 +131,10 @@ class PerfPanel(QtWidgets.QWidget):
         elif total > 0.7 * self._budget_ms:
             self.hint.setText(_("perf.hint.detail.close"))
         else:
-            self.hint.setText(_("perf.hint.detail.comfortable"))
+            # Nothing to say when nothing is wrong. The commentary that
+            # lived here read like the maintainers talking to themselves,
+            # because it was.
+            self.hint.setText("")
 
 
 #: The preview scaling choices: value, label, and one line saying what it

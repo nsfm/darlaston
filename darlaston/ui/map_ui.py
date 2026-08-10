@@ -12,8 +12,6 @@ When mosaic mode arrives, captured tiles paint over the reconnaissance layer.
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -26,25 +24,6 @@ from . import theme
 #: Fields-to-widget conversion never zooms a single field bigger than this
 #: fraction of the canvas, so an unexplored map is not one giant blurry thumb.
 _MAX_FIELD_FRACTION = 0.55
-
-
-def _snap_scale(canvas_factor: float) -> float:
-    """Snap the terrain's canvas-to-widget factor onto the ladder OpenCV
-    reduces fast on: exact 1/n below unity, quarter steps above.
-
-    Twice earned: an even reduction is several times cheaper than a
-    fractional one (the preview's measured rule, bitten three times
-    before it was named), and a snapped factor keeps the terrain render
-    cache valid while the map's bounds grow -- an unsnapped fit drifts
-    a little on every new field and would miss the cache each rebuild.
-    The map simply sits a little smaller than a perfect fit, which
-    nobody measures with a ruler.
-    """
-    if canvas_factor <= 0:
-        return canvas_factor
-    if canvas_factor >= 1.0:
-        return max(1.0, math.floor(canvas_factor * 4) / 4.0)
-    return 1.0 / math.ceil(1.0 / canvas_factor)
 #: Click tolerance for selecting a pin, in widget pixels.
 _PIN_GRAB_PX = 12.0
 
@@ -100,10 +79,13 @@ class _Canvas(QtWidgets.QWidget):
         scale = min(cw / bw, ch / bh)
         if self._frame[0] > 0:
             scale = min(scale, _MAX_FIELD_FRACTION * cw / self._frame[0])
-        if self._model.terrain.ready:
-            # Snap on the canvas-to-widget axis, where the resize runs.
-            t = self._model.terrain.scale
-            scale = _snap_scale(scale * t) / t
+        # Deliberately not snapped to the fast-resize ladder. It was,
+        # briefly: the snap saved 2 to 4 ms per cache rebuild (measured)
+        # but rebuilds only happen at paint cadence, and the ladder made
+        # the map jump between discrete sizes as the bounds grew. Nate
+        # preferred the smooth fit and the mid-single-digit millisecond
+        # cost at exploration cadence is a fair price for it. The
+        # revision-keyed cache is what actually pays the repaint bill.
         ox = (self.width() - bw * scale) / 2 - x0 * scale
         oy = (self.height() - bh * scale) / 2 - y0 * scale
         return scale, ox, oy
