@@ -208,6 +208,11 @@ class Settings:
     white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
     framing_grid: str = "none"       # none | thirds | grid
     framing_cross: bool = False
+    #: The rendering the operator is working in: none | invert | swap |
+    #: grey. Carried by everything that is a picture -- live view,
+    #: presentation, stream, JPEG, the DNG's embedded preview -- and by
+    #: nothing that is a measurement. The raw data never wears it.
+    display_transform: str = "none"
     #: Keep the individual slices after a stack is merged. Default changed
     #: from False to True when the setting was first made to do anything:
     #: it had never been read, so every stack ever shot kept its slices,

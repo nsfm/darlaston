@@ -66,6 +66,28 @@ msgstr ""
 "Independent of the grid: centering a specimen and composing a frame are "
 "different jobs."
 
+#. The rendering the operator works in. It is worn by the live view, the
+#. presentation, the stream and the JPEG, and never by the raw file.
+msgid "menu.capture.render"
+msgstr "Rendering"
+
+msgid "menu.capture.render.none"
+msgstr "Normal"
+
+msgid "menu.capture.render.invert"
+msgstr "Inverted"
+
+msgid "menu.capture.render.swap"
+msgstr "Red and blue swapped"
+
+msgid "menu.capture.render.grey"
+msgstr "Greyscale"
+
+msgid "menu.capture.render.tooltip"
+msgstr ""
+"Applies to the preview, the presentation and the JPEG.\n"
+"The raw file always keeps the sensor's own picture."
+
 msgid "menu.capture.white_balance"
 msgstr "Write white balance"
 
