@@ -682,15 +682,21 @@ def test_the_speed_gauge_shares_its_zones_with_the_banking_bar(qapp):
 
     panel.set_speed(100.0, 1000.0)              # a tenth of the limit
     assert not panel.speed.isHidden()
-    assert "µm/s" in panel.speed.text()
-    assert theme.GOOD in panel.speed.styleSheet()
+    assert "µm/s" in panel.speed._text
+    assert panel.speed.tone == theme.GOOD
 
-    panel.set_speed(800.0, 1000.0)              # closing on the edge
-    assert theme.BRASS in panel.speed.styleSheet()
+    # The gauge is smoothed, so the zones are reached, not jumped to.
+    for _ in range(40):
+        panel.set_speed(800.0, 1000.0)          # closing on the edge
+    assert panel.speed.tone == theme.BRASS
 
-    panel.set_speed(1500.0, 1000.0)             # past it: the map refuses
-    assert "mm/s" in panel.speed.text()
-    assert theme.BAD in panel.speed.styleSheet()
+    for _ in range(40):
+        panel.set_speed(1500.0, 1000.0)         # past it: the map refuses
+    assert "mm/s" in panel.speed._text
+    assert panel.speed.tone == theme.BAD
+
+    panel.set_speed(None, None)
+    assert panel.speed.isHidden()
 
 
 def test_pips_are_slide_anchored_and_orientation_aware(window):

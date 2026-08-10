@@ -255,6 +255,55 @@ class _Canvas(QtWidgets.QWidget):
         p.end()
 
 
+class _SpeedGauge(QtWidgets.QWidget):
+    """A bar against the blur limit, with the number beside it.
+
+    The scale runs to 1.3x the limit; ticks mark 0.7, where the brass
+    zone begins, and 1.0, where the map starts refusing frames. The
+    fill wears the zone's colour, so peripheral vision reads it without
+    the number -- which is how a gauge trains a hand.
+    """
+
+    #: Where the drawn scale ends, as a multiple of the limit.
+    FULL = 1.3
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._ratio = 0.0
+        self._text = ""
+        self.tone = theme.GOOD
+        self.setFixedSize(150, 14)
+
+    def set(self, ratio: float, text: str) -> None:
+        tone = (theme.BAD if ratio >= 1.0
+                else theme.BRASS if ratio >= 0.7 else theme.GOOD)
+        changed = (abs(ratio - self._ratio) > 0.01 or text != self._text
+                   or tone != self.tone)
+        self._ratio, self._text, self.tone = ratio, text, tone
+        if changed:
+            self.update()
+
+    def paintEvent(self, _event) -> None:
+        with QtGui.QPainter(self) as p:
+            bar = QtCore.QRectF(0, 3.0, 86.0, self.height() - 6.0)
+            p.fillRect(bar, QtGui.QColor(255, 255, 255, 26))
+            frac = max(0.0, min(self._ratio / self.FULL, 1.0))
+            p.fillRect(QtCore.QRectF(bar.left(), bar.top(),
+                                     bar.width() * frac, bar.height()),
+                       QtGui.QColor(self.tone))
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1))
+            for mark in (0.7, 1.0):
+                x = bar.left() + bar.width() * mark / self.FULL
+                p.drawLine(QtCore.QPointF(x, bar.top() - 2),
+                           QtCore.QPointF(x, bar.bottom() + 2))
+            p.setPen(QtGui.QColor(theme.DIM))
+            p.drawText(QtCore.QRectF(bar.right() + 6, 0,
+                                     self.width() - bar.right() - 6,
+                                     self.height()),
+                       QtCore.Qt.AlignmentFlag.AlignVCenter
+                       | QtCore.Qt.AlignmentFlag.AlignLeft, self._text)
+
+
 class SlideMapPanel(QtWidgets.QWidget):
     """The map, its controls, and a one-line status.
 
@@ -327,13 +376,17 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.tips.setProperty("role", "key")
         self.tips.setToolTip(_("map.tips.tooltip"))
 
-        # The speed gauge: true stage speed in real units, coloured
-        # against the blur limit the current exposure and magnification
-        # set. It trains the hand -- the number is the same arithmetic
-        # the banking bar refuses frames by, read as you move.
-        self.speed = QtWidgets.QLabel("")
+        # The speed gauge: true stage speed against the blur limit the
+        # current exposure and magnification set. A drawn bar rather
+        # than digits -- raw values changed too fast to read and the
+        # colour was doing all the work -- smoothed over a few frames so
+        # it moves like a needle, with a number beside it that only
+        # changes when it means to. Same arithmetic the banking bar
+        # refuses frames by, so the gauge never says fine while the map
+        # disagrees.
+        self.speed = _SpeedGauge()
         self.speed.setToolTip(_("map.speed.tooltip"))
-        self._speed_shown: tuple | None = None
+        self._speed_ema: float | None = None
         self.speed.setVisible(False)
 
         row = QtWidgets.QHBoxLayout()
@@ -426,30 +479,25 @@ class SlideMapPanel(QtWidgets.QWidget):
         Handed back by `reset_tracking` at every clear."""
         self._min_gen = int(generation)
 
+    #: Exponential smoothing for the gauge, per frame. 0.2 at ~30 fps is
+    #: a quarter-second time constant: fast enough to be a live
+    #: instrument, slow enough to move like a needle.
+    SPEED_SMOOTH = 0.2
+
     def set_speed(self, um_s: float | None,
                   limit_um_s: float | None) -> None:
-        """The stage's true speed, coloured against the blur limit.
-
-        Green means the map is banking everything, brass means close to
-        the edge, red means frames are being refused. The zones share
-        their arithmetic with the banking bar, so the gauge never says
-        fine while the map disagrees.
-        """
+        """The stage's true speed against the blur limit, smoothed."""
         if um_s is None:
-            if self.speed.isVisible():
-                self.speed.setVisible(False)
-                self._speed_shown = None
+            self.speed.setVisible(False)
+            self._speed_ema = None
             return
-        text = (_("map.speed.mm", v=f"{um_s / 1000:.2f}")
-                if um_s >= 1000 else _("map.speed.um", v=f"{um_s:.0f}"))
-        ratio = (um_s / limit_um_s) if limit_um_s else 0.0
-        tone = (theme.BAD if ratio >= 1.0
-                else theme.BRASS if ratio >= 0.7 else theme.GOOD)
-        if (text, tone) == self._speed_shown:
-            return
-        self._speed_shown = (text, tone)
-        self.speed.setText(text)
-        self.speed.setStyleSheet(f"color: {tone};")
+        prev = self._speed_ema if self._speed_ema is not None else um_s
+        self._speed_ema = (1 - self.SPEED_SMOOTH) * prev \
+            + self.SPEED_SMOOTH * um_s
+        v = self._speed_ema
+        text = (_("map.speed.mm", v=f"{v / 1000:.1f}")
+                if v >= 1000 else _("map.speed.um", v=f"{v:.0f}"))
+        self.speed.set(v / limit_um_s if limit_um_s else 0.0, text)
         self.speed.setVisible(True)
 
     def set_advisory(self, text: str | None) -> None:
