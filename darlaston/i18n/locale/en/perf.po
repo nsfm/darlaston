@@ -37,15 +37,13 @@ msgid "perf.summary.detail.gated"
 msgstr " &nbsp;·&nbsp; {count} moves too fast to track"
 
 #. {worst} is the name of the most expensive stage, which comes from the
-#. loop and is not translated. The frame rate is named first because it
-#. measured as the larger lever by far.
+#. One line, whoever is reading. {worst} is the name of the most
+#. expensive stage, from the loop and not translated. The frame rate
+#. leads because it measured as the larger lever by far.
 msgid "perf.hint.detail.over"
 msgstr ""
-"Over budget, so frames are being dropped to keep up. Lowering the frame "
-"rate in the status bar is the biggest single thing you can do, and it "
-"saves work this table does not even show. After that, <b>{worst}</b> is "
-"the largest cost here and turning it off is the cheapest test of whether "
-"it is the problem."
+"Frames are being dropped: lower the frame rate, or try switching off "
+"<b>{worst}</b>."
 
 #. Stands in for the stage's name when the table is over budget with nothing
 #. in it, which should not happen but reads better than a blank.
@@ -53,12 +51,7 @@ msgid "perf.hint.detail.unnamed"
 msgstr "something"
 
 msgid "perf.hint.detail.close"
-msgstr "Close to the budget. This will not hold on a slower machine."
-
-msgid "perf.hint.detail.comfortable"
-msgstr ""
-"Comfortable. Costs are smoothed over about a second, so switch a feature "
-"on and watch its row settle."
+msgstr "Close to the budget."
 
 #. ---- the preferences dialog ---------------------------------------------
 

@@ -69,3 +69,6 @@ msgstr "waiting for detail to track"
 #. anything cranked over blank glass was never measured.
 msgid "map.state.holding"
 msgstr "holding, nothing to track"
+
+msgid "map.state.tracking"
+msgstr "tracking"

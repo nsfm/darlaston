@@ -201,6 +201,256 @@ class StageTracker:
         return self._pos, True, rekey
 
 
+class Terrain:
+    """The slide as one picture: a world-space canvas at thumbnail scale.
+
+    The map used to be a list of postcard snapshots, composited at every
+    paint and matched against as separate candidates. This is the other
+    architecture, spiked before building (spike/tracking/canvas_spike.py):
+    one growing canvas that observations are painted into. Painting is a
+    feathered paste at 0.3 ms; a session's canvas is a few megabytes;
+    coverage can only grow, which retires the whole family of bugs where
+    refreshing a postcard orphaned the ground it used to cover; and the
+    relocalizer matches against the terrain at a believed position rather
+    than holding a beauty contest between lookalike postcards -- which
+    removed a measured 1100 px aliasing tail outright.
+
+    Numpy only, deliberately: Qt lives in widgets and nowhere below it.
+    The canvas is premultiplied BGRA where **alpha is the validity
+    mask** -- 255 where painted, 0 over the void, and the void's colour
+    is zero, which premultiplied alpha requires anyway. One buffer
+    serves the map view (wrapped as a QImage without copying) and the
+    matcher (grey windows cut from it on demand).
+
+    All positions are view *centres* in preview pixels, the same
+    coordinates the tracker integrates and the postcards used.
+    """
+
+    #: Canvas pixels across one field: the resolution rule, shared with
+    #: the postcard thumbnails the mosaic tiles still use.
+    THUMB_W = 120
+    #: Canvas pixels of edge ramp where painting over existing terrain.
+    #: Full strength over the void: a ramp against nothing would fringe
+    #: the frontier dark.
+    FEATHER = 6
+    #: Canvas pixels of headroom added per growth, so roaming does not
+    #: reallocate every field.
+    MARGIN = 240
+    #: Hard ceiling per axis, in canvas pixels -- forty fields across.
+    #: Far beyond any session, and the map stops growing rather than
+    #: evicting: dropping old terrain would erase the very ground the
+    #: operator wants to find again.
+    MAX_SIDE = 4800
+    #: Share of a window that must be painted before it may be matched.
+    #: The void is zeros, and zeros correlate like blank glass lies.
+    WINDOW_VALID = 0.6
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.rgba: np.ndarray | None = None
+        #: World coordinate (preview px) of canvas pixel (0, 0).
+        self.org = (0.0, 0.0)
+        #: Preview size this map is at scale for. Any other size is
+        #: refused: a mode change rescales the world, and the window
+        #: clears the map when that happens.
+        self.size: tuple[int, int] | None = None
+        #: Bumped on every paint, so a view can cache its scaled render
+        #: and rebuild only when the ground actually changed.
+        self.revision = 0
+        self._th = 0
+        self._ramp: np.ndarray | None = None
+        self._painted = 0
+        self._grown = 0
+        #: Painted extent in canvas px, (x0, y0, x1, y1) exclusive,
+        #: maintained at paint time. `bounds` used to run np.nonzero
+        #: over the whole alpha channel and was called every repaint --
+        #: milliseconds of bookkeeping per frame, measured by Nate as a
+        #: real frame-rate cost.
+        self._bbox: tuple[int, int, int, int] | None = None
+        #: Cached (revision, candidate list). The lost sweep restarts
+        #: every few frames, nothing paints while lost -- tracking is a
+        #: precondition of painting -- so the revision holds and the
+        #: integral image would be recomputed for an identical answer.
+        self._cand: tuple[int, list] | None = None
+
+    # ---- geometry --------------------------------------------------------
+
+    @property
+    def ready(self) -> bool:
+        return self.rgba is not None and self._painted > 0
+
+    @property
+    def scale(self) -> float:
+        """Preview pixels per canvas pixel."""
+        return (self.size[0] / self.THUMB_W) if self.size else 0.0
+
+    @property
+    def fields_painted(self) -> float:
+        """Painted area, in fields -- the honest version of the old
+        snapshot count, which was postcards rather than ground."""
+        return self._painted / max(self.THUMB_W * self._th, 1)
+
+    def bounds(self) -> tuple[float, float, float, float] | None:
+        """World extent of the painted ground, or None before any.
+        Read from the bbox kept at paint time: this is called per
+        repaint, and per-repaint work must not scale with the canvas."""
+        if not self.ready or self._bbox is None:
+            return None
+        x0, y0, x1, y1 = self._bbox
+        s = self.scale
+        return (self.org[0] + x0 * s, self.org[1] + y0 * s,
+                self.org[0] + x1 * s, self.org[1] + y1 * s)
+
+    def extent_px(self) -> tuple[int, int, int, int] | None:
+        """The painted bbox in canvas pixels, for a view cropping its
+        render to the ground rather than scaling margin void."""
+        return self._bbox
+
+    def _to_canvas(self, world: tuple[float, float]) -> tuple[float, float]:
+        s = self.scale
+        return ((world[0] - self.org[0]) / s, (world[1] - self.org[1]) / s)
+
+    # ---- painting --------------------------------------------------------
+
+    def _establish(self, w: int, h: int, pos: tuple[float, float]) -> None:
+        self.size = (w, h)
+        self._th = max(1, round(self.THUMB_W * h / w))
+        f = float(self.FEATHER)
+        yy, xx = np.mgrid[0:self._th, 0:self.THUMB_W].astype(np.float32)
+        d = np.minimum.reduce([xx, yy, self.THUMB_W - 1 - xx,
+                               self._th - 1 - yy])
+        self._ramp = np.clip((d + 1) / f, 0.0, 1.0)[..., None]
+        side_w = self.THUMB_W + 2 * self.MARGIN
+        side_h = self._th + 2 * self.MARGIN
+        self.rgba = np.zeros((side_h, side_w, 4), np.uint8)
+        s = self.scale
+        self.org = (pos[0] - w / 2 - self.MARGIN * s,
+                    pos[1] - h / 2 - self.MARGIN * s)
+
+    def _grow(self, x0: int, y0: int) -> tuple[int, int] | None:
+        """Reallocate so a paste at canvas (x0, y0) fits, with margin.
+        Returns the paste position in the (possibly new) canvas, or None
+        when growth would pass the ceiling."""
+        h, w = self.rgba.shape[:2]
+        left = self.MARGIN - x0 if x0 < 0 else 0
+        top = self.MARGIN - y0 if y0 < 0 else 0
+        right = (x0 + self.THUMB_W + self.MARGIN - w
+                 if x0 + self.THUMB_W > w else 0)
+        bottom = (y0 + self._th + self.MARGIN - h
+                  if y0 + self._th > h else 0)
+        if not (left or top or right or bottom):
+            return x0, y0
+        nw, nh = w + left + right, h + top + bottom
+        if nw > self.MAX_SIDE or nh > self.MAX_SIDE:
+            return None
+        grown = np.zeros((nh, nw, 4), np.uint8)
+        grown[top:top + h, left:left + w] = self.rgba
+        self.rgba = grown
+        self._grown += 1
+        s = self.scale
+        self.org = (self.org[0] - left * s, self.org[1] - top * s)
+        if self._bbox is not None:
+            # The painted ground rides the reallocation, bbox included.
+            bx0, by0, bx1, by1 = self._bbox
+            self._bbox = (bx0 + left, by0 + top, bx1 + left, by1 + top)
+        return x0 + left, y0 + top
+
+    def paint(self, pos: tuple[float, float], preview: np.ndarray) -> bool:
+        """Lay the current view into the map at its world position.
+        Returns whether anything changed."""
+        h, w = preview.shape[:2]
+        if self.size is None:
+            self._establish(w, h, pos)
+        elif (w, h) != self.size:
+            return False
+        thumb = cv2.resize(preview, (self.THUMB_W, self._th),
+                           interpolation=cv2.INTER_AREA).astype(np.float32)
+        s = self.scale
+        cx = (pos[0] - w / 2 - self.org[0]) / s
+        cy = (pos[1] - h / 2 - self.org[1]) / s
+        at = self._grow(int(round(cx)), int(round(cy)))
+        if at is None:
+            return False
+        x0, y0 = at
+        region = self.rgba[y0:y0 + self._th, x0:x0 + self.THUMB_W]
+        painted = region[..., 3:] > 0
+        # Feathered newest-wins. Averaging measured no better under the
+        # sub-canvas-pixel misregistration that drift correction leaves,
+        # and newest-wins keeps the map saying what the slide looks like
+        # *now*, which is the map a live subject needs.
+        alpha = np.where(painted, self._ramp, 1.0)
+        rgb = region[..., :3].astype(np.float32)
+        region[..., :3] = (rgb * (1.0 - alpha)
+                           + thumb * alpha).astype(np.uint8)
+        self._painted += int(region.shape[0] * region.shape[1]
+                             - np.count_nonzero(painted))
+        region[..., 3] = 255
+        box = (x0, y0, x0 + self.THUMB_W, y0 + self._th)
+        self._bbox = box if self._bbox is None else (
+            min(self._bbox[0], box[0]), min(self._bbox[1], box[1]),
+            max(self._bbox[2], box[2]), max(self._bbox[3], box[3]))
+        self.revision += 1
+        return True
+
+    # ---- matching --------------------------------------------------------
+
+    def window(self, pos: tuple[float, float]):
+        """(grey float window, painted share, actual centre) at a world
+        position, or (None, 0.0, None) off the canvas.
+
+        The window lands on an integer canvas pixel, so its *actual*
+        centre is returned alongside: the rounding remainder is up to
+        half a canvas pixel -- eight preview pixels -- and a fix computed
+        against the request inherits it as error. That number was paid
+        once, in the spike, to be remembered here.
+        """
+        if self.rgba is None:
+            return None, 0.0, None
+        cx, cy = self._to_canvas(pos)
+        x0 = int(round(cx - self.THUMB_W / 2))
+        y0 = int(round(cy - self._th / 2))
+        h, w = self.rgba.shape[:2]
+        if x0 < 0 or y0 < 0 or x0 + self.THUMB_W > w or y0 + self._th > h:
+            return None, 0.0, None
+        region = self.rgba[y0:y0 + self._th, x0:x0 + self.THUMB_W]
+        share = float(np.count_nonzero(region[..., 3])) \
+            / (self.THUMB_W * self._th)
+        gray = cv2.cvtColor(region[..., :3], cv2.COLOR_BGR2GRAY) \
+            .astype(np.float32)
+        s = self.scale
+        at = (self.org[0] + (x0 + self.THUMB_W / 2) * s,
+              self.org[1] + (y0 + self._th / 2) * s)
+        return gray, share, at
+
+    def candidates(self) -> list:
+        """World centres of every matchable window, on a half-window
+        grid over the painted ground. The integral image makes the
+        validity test one subtraction per position."""
+        if not self.ready:
+            return []
+        if self._cand is not None and self._cand[0] == self.revision:
+            return self._cand[1]
+        alpha = (self.rgba[..., 3] > 0).astype(np.uint8)
+        integral = cv2.integral(alpha)
+        h, w = alpha.shape
+        tw, th = self.THUMB_W, self._th
+        need = self.WINDOW_VALID * tw * th
+        s = self.scale
+        out = []
+        for y0 in range(0, h - th + 1, max(1, th // 2)):
+            for x0 in range(0, w - tw + 1, max(1, tw // 2)):
+                filled = (integral[y0 + th, x0 + tw]
+                          - integral[y0, x0 + tw]
+                          - integral[y0 + th, x0] + integral[y0, x0])
+                if filled >= need:
+                    out.append((self.org[0] + (x0 + tw / 2) * s,
+                                self.org[1] + (y0 + th / 2) * s))
+        self._cand = (self.revision, out)
+        return out
+
+
 @dataclass
 class Snapshot:
     """One remembered look at the slide: where, how big, and a thumbnail."""
@@ -235,47 +485,38 @@ class SlideMap:
     hunting is exactly the map that matters.
     """
 
-    #: Bank a new snapshot once the view has moved this far (in frame widths)
-    #: from every existing one. Low enough that adjacent thumbs overlap and
-    #: the map reads as continuous terrain rather than scattered postcards.
-    SPACING = 0.35
-    #: Within this of an existing snapshot, refresh it instead -- revisited
-    #: ground shows what is there now, not what was there ten minutes ago.
-    #: Deliberately tight, because a refresh moves the snapshot to the
-    #: visitor's position: at the old 0.15 a partial pass dragged the
-    #: footprint toward you and orphaned the trailing ground it covered,
-    #: so coverage *shrank* as you crossed your own map. Nate watched it
-    #: happen. At 0.05 the drag is negligible; anything between here and
-    #: SPACING holds the old ground instead, and a slightly stale thumb
-    #: is the cheaper honest cost -- staleness also re-banks a corrected
-    #: position on every revisit, which mostly re-encodes current drift.
-    REFRESH = 0.05
-    #: Frames between refreshes, so a parked view is not resizing thumbnails
-    #: thirty times a second to overwrite itself with itself.
+    #: Repaint the current ground once the view has moved this far, in
+    #: frame widths. Under this, a paint changes almost nothing and a
+    #: panning hand repaints plenty; the parked case is covered below.
+    PAINT_STEP = 0.04
+    #: Frames between paints of a parked view, so revisited ground still
+    #: freshens -- a live subject moves under a still stage -- without
+    #: painting the same pixels thirty times a second.
     REFRESH_EVERY = 24
     THUMB_W = 120
-    #: Beyond this the map stops growing rather than evicting: dropping old
-    #: snapshots would erase the very ground the operator wants to return to.
-    #: 600 fields is far more slide than a session ever covers.
-    LIMIT = 600
 
     def __init__(self) -> None:
-        self.snapshots: list[Snapshot] = []
+        #: The ground itself, as one growing picture. Coverage can only
+        #: grow: painting is additive, which retires the whole family of
+        #: bugs where refreshing a postcard orphaned ground it covered.
+        self.terrain = Terrain()
         self.pins: list[Pin] = []
         #: Captured mosaic tiles, drawn over the reconnaissance layer. Same
         #: world space; a tile is just a snapshot somebody paid 40 MB for.
         self.tiles: list[Snapshot] = []
         self.target: int | None = None      # pin id being navigated to
         self._next_pin = 1
-        self._since_refresh = 0
+        self._since_paint = 0
+        self._last_paint: tuple[float, float] | None = None
 
     def reset(self) -> None:
-        self.snapshots.clear()
+        self.terrain.reset()
         self.pins.clear()
         self.tiles.clear()
         self.target = None
         self._next_pin = 1
-        self._since_refresh = 0
+        self._since_paint = 0
+        self._last_paint = None
 
     # ---- mosaic tiles ----------------------------------------------------
 
@@ -303,24 +544,20 @@ class SlideMap:
     def observe(self, pos: tuple[float, float] | None, preview: np.ndarray,
                 tracking: bool) -> bool:
         """Offer the current frame. Returns True if the map changed."""
-        self._since_refresh += 1
+        self._since_paint += 1
         if pos is None or not tracking:
             return False
-        h, w = preview.shape[:2]
-        nearest, dist = self._nearest_snapshot(pos)
-        if nearest is not None and dist < self.REFRESH * w:
-            if self._since_refresh < self.REFRESH_EVERY:
+        w = preview.shape[1]
+        if self._last_paint is not None:
+            moved = math.hypot(pos[0] - self._last_paint[0],
+                               pos[1] - self._last_paint[1])
+            if (moved < self.PAINT_STEP * w
+                    and self._since_paint < self.REFRESH_EVERY):
                 return False
-            self._since_refresh = 0
-            # Move to the end as well: freshly seen ground paints on top.
-            self.snapshots.remove(nearest)
-            self.snapshots.append(self._snap(pos, preview))
-            return True
-        if nearest is not None and dist < self.SPACING * w:
+        if not self.terrain.paint(pos, preview):
             return False
-        if len(self.snapshots) >= self.LIMIT:
-            return False
-        self.snapshots.append(self._snap(pos, preview))
+        self._last_paint = (float(pos[0]), float(pos[1]))
+        self._since_paint = 0
         return True
 
     def _snap(self, pos: tuple[float, float], preview: np.ndarray) -> Snapshot:
@@ -330,14 +567,6 @@ class SlideMap:
         thumb = cv2.resize(preview, (tw, th), interpolation=cv2.INTER_AREA)
         return Snapshot(pos=(float(pos[0]), float(pos[1])), size=(w, h),
                         thumb=thumb)
-
-    def _nearest_snapshot(self, pos) -> tuple[Snapshot | None, float]:
-        best, best_d = None, math.inf
-        for s in self.snapshots:
-            d = math.hypot(s.pos[0] - pos[0], s.pos[1] - pos[1])
-            if d < best_d:
-                best, best_d = s, d
-        return best, best_d
 
     # ---- pins ------------------------------------------------------------
 
@@ -383,11 +612,16 @@ class SlideMap:
 
     def bounds(self, extra: tuple[tuple[float, float], tuple[int, int]] | None
                = None) -> tuple[float, float, float, float] | None:
-        """(x0, y0, x1, y1) covering every snapshot, pin, and optionally the
-        current view -- so the fit-all render never crops anything off."""
+        """(x0, y0, x1, y1) covering the painted ground, every tile and
+        pin, and optionally the current view -- so the fit-all render
+        never crops anything off."""
         xs: list[float] = []
         ys: list[float] = []
-        for s in self.snapshots + self.tiles:
+        ground = self.terrain.bounds()
+        if ground is not None:
+            xs += [ground[0], ground[2]]
+            ys += [ground[1], ground[3]]
+        for s in self.tiles:
             xs += [s.pos[0] - s.size[0] / 2, s.pos[0] + s.size[0] / 2]
             ys += [s.pos[1] - s.size[1] / 2, s.pos[1] + s.size[1] / 2]
         for p in self.pins:

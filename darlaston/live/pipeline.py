@@ -50,7 +50,27 @@ INSTRUMENT_DIVISOR = 3
 #: divided by four lands here, and that grid is the one the tracker's own
 #: measurements were taken on; larger previews are reduced further to meet
 #: it rather than handing phase correlation more pixels than it can use.
-TRACK_WIDTH = 684
+#: Frames between turret-watch feeds. A human turning a turret takes
+#: about a second and the detector integrates over it; ten samples a
+#: second decide as well as thirty, at a third of the cost. Unlike the
+#: tracker, nothing here integrates displacement, so a divisor loses
+#: nothing silently -- the distinction the tracker's own do-not-divide
+#: rule turns on.
+TURRET_DIVISOR = 3
+
+#: The stage tracker's correlation grid, as a target width. An eighth
+#: of the 1824 preview. It was a quarter (456 wide) until the frame
+#: budget was measured on a weak machine, where the correlation was the
+#: largest single stage in the table; a quarter of the pixels takes the
+#: FFT to well under half the cost (3.8 to 1.6 ms on the reference box,
+#: and the DFT-friendly crop that was supposed to help instead lost to
+#: its own copy at this size). Accuracy, measured through the real
+#: pipeline at every speed: worst error moved from -0.4% of travel to
+#: -0.7% at a crawl and under -0.45% everywhere else, still zero
+#: gating -- and the relocalizer now abolishes exactly the accumulated
+#: drift that difference produces, which is the backstop that makes the
+#: trade safe. The frames the cut buys back feed the tracker itself.
+TRACK_WIDTH = 228
 
 
 @dataclass(frozen=True)
@@ -99,6 +119,12 @@ class LiveSignals:
     #: Running count of measured-but-rejected tracker steps. The window
     #: turns a rising count into the "moving too fast" advisory.
     track_gated: int = 0
+    #: The tracker's own downsample of this frame, grey uint8, shipped
+    #: so the relocalizer's probe starts from work already paid for --
+    #: its single-step thumbnail resize of the full preview measured
+    #: 6.4 ms against 0.3 from here. A reference, not a copy: written
+    #: once per frame by the analysis thread and read within the frame.
+    track_small: np.ndarray | None = None
     #: Which tracking origin `stage_pos` was measured under. Bumped by
     #: every reset. A consumer that clears on reset must refuse frames
     #: stamped with an older generation: they were measured before the
@@ -205,14 +231,18 @@ class LivePipeline:
         self._key_offset: tuple[float, float] = (0.0, 0.0)
         self._key_pending: np.ndarray | None = None
         self._hann: np.ndarray | None = None
-        #: Split destinations, reused across frames. Allocating three fresh
+        #: Channel destinations, reused across frames. Allocating fresh
         #: 2.2 MP planes per frame cost 3217 minor page faults -- the kernel
-        #: mapping and zeroing 6.6 MB thirty times a second -- and that, not
-        #: the deinterleave, was nearly the whole of this stage. Safe to
+        #: mapping and zeroing megabytes thirty times a second -- and that,
+        #: not the deinterleave, was nearly the whole of this stage. Safe to
         #: reuse because the planes never leave `_analyse`: the preview is an
         #: explicit copy, the histogram is its own array, and the tracker,
         #: turret and peaking all resize into new buffers of their own.
-        self._planes: list[np.ndarray] | None = None
+        #: Three named buffers rather than a split's list, because green is
+        #: wanted every frame and blue and red only on histogram frames.
+        self._gray_buf: np.ndarray | None = None
+        self._blue_buf: np.ndarray | None = None
+        self._red_buf: np.ndarray | None = None
         self._levels_seq = 0
         #: Last (histogram, per-channel clipping), reused on the frames
         #: between instrument repaints.
@@ -525,27 +555,26 @@ class LivePipeline:
         # from preview clipping that is not sensor clipping at all. Green
         # saturates within a few percent of the sensor's own ceiling, and it
         # carries most of the detail regardless.
-        # Split once, then everything downstream reads contiguous memory.
         #
-        # This was the most expensive thing in the loop and it was pure waste.
-        # Clipping used to be three full-frame `(chan >= 255).mean()` calls,
-        # each materialising a 2.2 MP boolean temporary: 10.9 ms per frame
-        # against a 33 ms budget. Counting the same pixels with calcHist is
-        # the obvious fix, but calcHist on an interleaved channel strides and
-        # costs 5.7 ms -- while splitting first and running it on contiguous
-        # planes costs 3.4 ms *and* hands back the green plane the focus
-        # metric needs anyway, replacing a separate copy.
+        # One plane, not three. The full split ran every frame, but blue
+        # and red are only read on the frames the histogram is computed
+        # -- one in three -- so two planes in two of three frames were
+        # extracted into reused buffers for nobody. Green is pulled
+        # alone here and the others only when the levels below want
+        # them. (Clipping by histogram rather than by boolean masks is
+        # older history: three `(chan >= 255).mean()` calls materialised
+        # 2.2 MP temporaries at 10.9 ms a frame.)
         if data.ndim == 3:
-            shape, n = data.shape[:2], data.shape[2]
-            buf = self._planes
-            if buf is None or len(buf) != n or buf[0].shape != shape:
-                buf = self._planes = [np.empty(shape, np.uint8)
-                                      for _ in range(n)]
-            planes = cv2.split(data, buf)             # B, G, R
-            gray = planes[1]
+            shape = data.shape[:2]
+            if self._gray_buf is None or self._gray_buf.shape != shape:
+                self._gray_buf = np.empty(shape, np.uint8)
+                self._blue_buf = np.empty(shape, np.uint8)
+                self._red_buf = np.empty(shape, np.uint8)
+            gray = cv2.extractChannel(data, 1, self._gray_buf)
+            colour = True
         else:
-            planes = None
             gray = data
+            colour = False
 
         # The levels are computed at the rate they are *looked at*, not at
         # frame rate. The exposure histogram repaints at a third of the
@@ -563,17 +592,27 @@ class LivePipeline:
         # still sees it, one frame late.
         if self._levels is None or self._analysed % INSTRUMENT_DIVISOR == 0:
             total = float(gray.size)
-            if planes is not None:
-                hists = [cv2.calcHist([p], [0], None, [256], [0, 256]).ravel()
-                         for p in planes]
-                hist = hists[1]
-                per = (float(hists[2][255] / total),
-                       float(hists[1][255] / total),
-                       float(hists[0][255] / total))
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+            g_clip = float(hist[255] / total)
+            if colour and (self._levels is None or self._analysed
+                           % (2 * INSTRUMENT_DIVISOR) == 0):
+                # Blue and red feed only the per-channel "hot" advisory,
+                # and the cost here is channel extraction, not calcHist
+                # (measured 1.35 ms against 0.33) -- so they take every
+                # other histogram turn. Four hundred milliseconds of
+                # advisory latency is still immediate to a person
+                # reaching for a lamp; the clipping warning itself is
+                # judged on green, every histogram turn, unchanged.
+                blue = cv2.extractChannel(data, 0, self._blue_buf)
+                red = cv2.extractChannel(data, 2, self._red_buf)
+                r_clip = float(cv2.calcHist(
+                    [red], [0], None, [256], [0, 256])[255] / total)
+                b_clip = float(cv2.calcHist(
+                    [blue], [0], None, [256], [0, 256])[255] / total)
             else:
-                hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
-                per = (0.0, float(hist[255] / total), 0.0)
-            self._levels = (hist, per)
+                held = self._levels[1] if self._levels else (0.0, 0.0, 0.0)
+                r_clip, b_clip = held[0], held[2]
+            self._levels = (hist, (r_clip, g_clip, b_clip))
             self._levels_seq += 1
         hist, per = self._levels
 
@@ -697,16 +736,24 @@ class LivePipeline:
         # The log-polar step really does only run on the frame a rotation
         # finishes, and costs 1.37 ms when it does.
         turret_event = None
-        if self._turret is not None:
+        fed_turret = (self._turret is not None and small is not None
+                      and self._analysed % TURRET_DIVISOR == 0)
+        if fed_turret:
             # Exposure times gain is what the brightness reading has to be
             # divided by; without it the level says more about the last
             # slider touched than about which objective is in place.
+            #
+            # At a divisor, which the tracker must never run at and this
+            # may: a human turning a turret takes about a second, the
+            # detector integrates its evidence over that second, and ten
+            # samples of it decide as well as thirty. Nothing here
+            # integrates displacement, so nothing is silently lost.
             turret_event = self._turret_det.feed(
                 small, self._turret,
                 exposure_gain=max(frame.exposure_us * frame.gain_pct, 1),
                 signatures=self._signatures, learned=self._learned)
 
-        if self._turret is not None:
+        if fed_turret:
             mark = self.meter.since("turret watch", mark)
         else:
             self.meter.skip("turret watch")
@@ -820,6 +867,7 @@ class LivePipeline:
             stage_pos=stage_pos,
             stage_tracking=stage_tracking,
             track_gated=self._xy.gated,
+            track_small=small,
             # After the sync above, `_track_seen` is the generation this
             # frame's position was measured under -- including the case
             # where a reset landed mid-correlation and the measurement

@@ -12,6 +12,7 @@ When mosaic mode arrives, captured tiles paint over the reconnaissance layer.
 """
 from __future__ import annotations
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..capture.mosaic import overlap_fraction
@@ -38,6 +39,10 @@ class _Canvas(QtWidgets.QWidget):
         self._pos: tuple[float, float] | None = None
         self._frame: tuple[int, int] = (0, 0)
         self._tracking = False
+        #: The pre-scaled terrain render. See `_terrain_render`.
+        self._terrain_img: QtGui.QImage | None = None
+        self._terrain_key = None
+        self._terrain_world = (0.0, 0.0)
         self.setMinimumHeight(120)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
                            QtWidgets.QSizePolicy.Policy.Expanding)
@@ -74,6 +79,13 @@ class _Canvas(QtWidgets.QWidget):
         scale = min(cw / bw, ch / bh)
         if self._frame[0] > 0:
             scale = min(scale, _MAX_FIELD_FRACTION * cw / self._frame[0])
+        # Deliberately not snapped to the fast-resize ladder. It was,
+        # briefly: the snap saved 2 to 4 ms per cache rebuild (measured)
+        # but rebuilds only happen at paint cadence, and the ladder made
+        # the map jump between discrete sizes as the bounds grew. Nate
+        # preferred the smooth fit and the mid-single-digit millisecond
+        # cost at exploration cadence is a fair price for it. The
+        # revision-keyed cache is what actually pays the repaint bill.
         ox = (self.width() - bw * scale) / 2 - x0 * scale
         oy = (self.height() - bh * scale) / 2 - y0 * scale
         return scale, ox, oy
@@ -100,6 +112,36 @@ class _Canvas(QtWidgets.QWidget):
 
     # ---- paint -----------------------------------------------------------
 
+    def _terrain_render(self, ground, factor: float):
+        """The painted ground, cropped to its bbox and pre-scaled for
+        the current zoom. Rebuilt when the terrain's revision or the
+        zoom changes; between rebuilds a repaint costs one blit.
+        Returns (QImage or None, world position of its top-left)."""
+        box = ground.extent_px()
+        if box is None or factor <= 0:
+            return None, (0.0, 0.0)
+        key = (ground.revision, round(factor, 5))
+        cached = getattr(self, "_terrain_key", None)
+        if cached == key and self._terrain_img is not None:
+            return self._terrain_img, self._terrain_world
+        import cv2
+        x0, y0, x1, y1 = box
+        crop = ground.rgba[y0:y1, x0:x1]
+        w = max(1, int(round((x1 - x0) * factor)))
+        h = max(1, int(round((y1 - y0) * factor)))
+        interp = cv2.INTER_AREA if factor < 1.0 else cv2.INTER_LINEAR
+        scaled = cv2.resize(crop, (w, h), interpolation=interp)
+        # Held on the instance: the QImage is a view of this buffer.
+        self._terrain_buf = np.ascontiguousarray(scaled)
+        self._terrain_img = QtGui.QImage(
+            self._terrain_buf.data, w, h, self._terrain_buf.strides[0],
+            QtGui.QImage.Format.Format_ARGB32_Premultiplied)
+        s = ground.scale
+        self._terrain_world = (ground.org[0] + x0 * s,
+                               ground.org[1] + y0 * s)
+        self._terrain_key = key
+        return self._terrain_img, self._terrain_world
+
     def paintEvent(self, event) -> None:
         import time as _t
 
@@ -125,16 +167,18 @@ class _Canvas(QtWidgets.QWidget):
             return
 
         s, _, _ = fit
-        # Terrain: oldest first, so refreshed and newer ground paints on top.
-        for snap in self._model.snapshots:
-            th, tw = snap.thumb.shape[:2]
-            img = QtGui.QImage(snap.thumb.data, tw, th, snap.thumb.strides[0],
-                               QtGui.QImage.Format.Format_BGR888)
-            w, h = snap.size
-            top_left = self._to_widget(fit, snap.pos[0] - w / 2,
-                                       snap.pos[1] - h / 2)
-            p.drawImage(QtCore.QRectF(top_left.x(), top_left.y(),
-                                      w * s, h * s), img)
+        # Terrain: the whole explored slide is one picture, blitted in
+        # one call from a cache that is rebuilt only when the ground or
+        # the zoom actually changed. Scaling the full canvas inside
+        # every repaint measured as most of the frame budget while
+        # panning -- the repaint runs at frame rate and the ground
+        # changes at paint cadence, and the cache is the difference.
+        ground = self._model.terrain
+        if ground.ready:
+            img, world = self._terrain_render(ground, ground.scale * s)
+            if img is not None:
+                tl = self._to_widget(fit, *world)
+                p.drawImage(QtCore.QPointF(tl.x(), tl.y()), img)
 
         # Mosaic tiles over the reconnaissance layer: same terrain, but
         # outlined -- these are the frames that exist on disk.
@@ -236,6 +280,10 @@ class SlideMapPanel(QtWidgets.QWidget):
         #: Frames stamped with an older tracking generation than this are
         #: refused: they were measured before the map's last clear.
         self._min_gen = 0
+        #: Tracking advisory, shown in the status line with priority:
+        #: the map is where the eyes already are when tracking misbehaves,
+        #: and the fields count this replaced stopped earning the space.
+        self._advisory: str | None = None
 
         self.pin_btn = QtWidgets.QPushButton(_("map.pin.action"))
         self.pin_btn.setProperty("role", "seg")
@@ -314,6 +362,13 @@ class SlideMapPanel(QtWidgets.QWidget):
         Handed back by `reset_tracking` at every clear."""
         self._min_gen = int(generation)
 
+    def set_advisory(self, text: str | None) -> None:
+        """What tracking wants said, or None when nothing does. Takes
+        the status line with priority while it stands."""
+        if text != self._advisory:
+            self._advisory = text
+            self._update_status()
+
     def set_mosaic(self, on: bool) -> None:
         """Confirmation from the session owner, not the click itself."""
         self._mosaic_on = on
@@ -365,6 +420,13 @@ class SlideMapPanel(QtWidgets.QWidget):
             self.status.setText(text)
             self.status.setStyleSheet(f"color: {colour};")
             return
+        # Tracking advisories outrank the idle readouts: "lost, watching
+        # for familiar ground" is the one thing this line exists to say,
+        # and the map is where the eyes already are when it applies.
+        if self._advisory:
+            self.status.setText(self._advisory)
+            self.status.setStyleSheet(f"color: {theme.BRASS};")
+            return
         guide = self.model.guidance(self._pos, self._frame[0])
         if guide is not None:
             fields, compass = guide
@@ -381,9 +443,10 @@ class SlideMapPanel(QtWidgets.QWidget):
             # but anything cranked over blank glass is not measured.
             text, colour = _("map.state.holding"), theme.DIM
         else:
-            n = len(self.model.snapshots)
-            text = f"tracking · {n} field{'s' if n != 1 else ''} mapped"
-            colour = theme.DIM
+            # Just "tracking". The fields count that lived here stopped
+            # earning the space once the canvas made coverage visible at
+            # a glance, and the advisories above wanted the room.
+            text, colour = _("map.state.tracking"), theme.DIM
         self.status.setText(text)
         self.status.setStyleSheet(f"color: {colour};")
 

@@ -62,8 +62,9 @@ CONTINUOUS_EVERY = 8
 #: interface thread never stalls; distance-ranked so the likely ground
 #: is tried first.
 SWEEP_CHUNK = 24
-#: Candidate radius while tracking, as a fraction of the frame: only
-#: snapshots overlapping the believed view can match it.
+#: Largest believable correction while tracking, as a fraction of the
+#: frame. Past this the window and the view barely overlap, and an
+#: answer is a contradiction rather than a correction.
 NEAR_FRAC = 0.55
 #: A probe with less texture than this has nothing to match -- bare
 #: glass correlates with everything and means nothing. Standard
@@ -94,9 +95,6 @@ class Relocator:
 
     def __init__(self) -> None:
         self._since = 0
-        #: Grey float thumbs, keyed by id(snapshot) and invalidated by
-        #: thumb identity -- a refreshed snapshot re-renders its grey.
-        self._grays: dict[int, tuple[object, np.ndarray]] = {}
         self._window: tuple[tuple[int, int], np.ndarray] | None = None
         #: The sweep cursor while lost: ranked candidate order and how
         #: far through it this pass has read.
@@ -116,23 +114,27 @@ class Relocator:
     # ---- the schedule ----------------------------------------------------
 
     def observe(self, preview: np.ndarray, pos, tracking: bool,
-                snapshots) -> Fix | None:
+                terrain, small: np.ndarray | None = None) -> Fix | None:
         """One frame's worth of work, or none. Returns a `Fix` to apply.
 
         `pos` is the tracker's current belief (which it holds even
         without a lock), `tracking` whether that belief is integrating.
+        `terrain` is the map's canvas (`tracker.Terrain`).
         """
-        if not snapshots:
+        h, w = preview.shape[:2]
+        if not terrain.ready or terrain.size != (w, h):
+            # Nothing painted yet, or painted at another preview scale:
+            # a mode change rescales the world and clears the map.
             self.searching = False
             return None
         if tracking:
             if self._suspect_sweeps > 0:
                 # Resumed, but from a position held across a gap: the
                 # tracker is confident and may be wrong by the whole
-                # crossing. Keep sweeping until the bank agrees with the
+                # crossing. Keep sweeping until the map agrees with the
                 # belief, corrects it, or the budget decides this is
                 # ground nobody has seen.
-                fix = self._lost(preview, pos, snapshots)
+                fix = self._lost(preview, pos, terrain, small)
                 if fix is not None:
                     self._settle()
                 return fix
@@ -146,10 +148,10 @@ class Relocator:
             # these calls: a large claim's two witnesses are a whole
             # cadence apart, and clearing it here made agreement
             # impossible -- caught by its test.
-            return self._continuous(preview, pos, snapshots)
+            return self._continuous(preview, pos, terrain, small)
         self._since = 0
         self._suspect_sweeps = self.SUSPECT_SWEEPS
-        return self._lost(preview, pos, snapshots)
+        return self._lost(preview, pos, terrain, small)
 
     #: Full passes over the bank a resumed-but-suspect position is
     #: allowed before it is believed: familiar ground answers in the
@@ -164,18 +166,12 @@ class Relocator:
 
     # ---- tracking: hold the map rigid ------------------------------------
 
-    def _continuous(self, preview, pos, snapshots) -> Fix | None:
-        h, w = preview.shape[:2]
-        near = [s for s in snapshots
-                if s.size == (w, h)
-                and abs(s.pos[0] - pos[0]) < NEAR_FRAC * w
-                and abs(s.pos[1] - pos[1]) < NEAR_FRAC * h]
-        if not near:
-            return None
-        probe = self._thumb(preview)
+    def _continuous(self, preview, pos, terrain, small=None) -> Fix | None:
+        w = preview.shape[1]
+        probe = self._thumb(preview, small)
         if probe is None:
             return None
-        best = self._best(probe, near, w)
+        best = self._locate(probe, terrain, pos)
         if best is None:
             return None
         est, response = best
@@ -190,10 +186,9 @@ class Relocator:
 
     # ---- lost: find familiar ground --------------------------------------
 
-    def _lost(self, preview, pos, snapshots) -> Fix | None:
-        h, w = preview.shape[:2]
+    def _lost(self, preview, pos, terrain, small=None) -> Fix | None:
         self.searching = True
-        probe = self._thumb(preview)
+        probe = self._thumb(preview, small)
         if probe is None:
             # Bare glass in view: nothing to match, and trying would
             # only prove that blank correlates with everything.
@@ -202,9 +197,9 @@ class Relocator:
         if self._sweep is None:
             anchor = pos or (0.0, 0.0)
             self._sweep = sorted(
-                (s for s in snapshots if s.size == (w, h)),
-                key=lambda s: (s.pos[0] - anchor[0]) ** 2
-                + (s.pos[1] - anchor[1]) ** 2)
+                terrain.candidates(),
+                key=lambda c: (c[0] - anchor[0]) ** 2
+                + (c[1] - anchor[1]) ** 2)
             self._sweep_at = 0
         chunk = self._sweep[self._sweep_at:self._sweep_at + SWEEP_CHUNK]
         self._sweep_at += len(chunk)
@@ -217,7 +212,11 @@ class Relocator:
                 self._suspect_sweeps -= 1
         if not chunk:
             return None
-        best = self._best(probe, chunk, w)
+        best = None
+        for cand in chunk:
+            found = self._locate(probe, terrain, cand)
+            if found is not None and (best is None or found[1] > best[1]):
+                best = found
         if best is None:
             return None
         est, response = best
@@ -241,45 +240,49 @@ class Relocator:
 
     # ---- the primitive ---------------------------------------------------
 
-    def _best(self, probe, candidates, preview_w) -> tuple | None:
-        scale = preview_w / probe.shape[1]
-        window = self._hanning(probe.shape)
-        top, second = None, 0.0
-        for snap in candidates:
-            gray = self._gray(snap)
-            if gray.shape != probe.shape:
-                continue
-            (dx, dy), response = cv2.phaseCorrelate(gray, probe.copy(),
-                                                    window)
-            if top is None or response > top[2]:
-                second = top[2] if top is not None else second
-                top = (snap, (dx, dy), response)
-            elif response > second:
-                second = response
-        if top is None or top[2] < RESPONSE_FLOOR:
+    def _locate(self, probe, terrain, at) -> tuple | None:
+        """The probe's position, measured against the terrain window at
+        `at` -- computed from the window's *actual* centre, because the
+        integer-canvas-pixel rounding remainder is eight preview pixels
+        of error when computed against the request. Paid once, in the
+        spike."""
+        window, share, centre = terrain.window(at)
+        if window is None or share < terrain.WINDOW_VALID:
             return None
-        snap, (dx, dy), response = top
-        est = (snap.pos[0] - dx * scale, snap.pos[1] - dy * scale)
-        return est, response
+        if window.shape != probe.shape:
+            return None
+        (dx, dy), response = cv2.phaseCorrelate(window, probe.copy(),
+                                                self._hanning(probe.shape))
+        if response < RESPONSE_FLOOR:
+            return None
+        scale = terrain.scale
+        return (centre[0] - dx * scale, centre[1] - dy * scale), response
 
-    def _thumb(self, preview: np.ndarray) -> np.ndarray | None:
+    def _thumb(self, preview: np.ndarray,
+               small: np.ndarray | None = None) -> np.ndarray | None:
         h, w = preview.shape[:2]
-        tw = 120                       # SlideMap.THUMB_W, and must stay so
+        tw = 120                       # Terrain.THUMB_W, and must stay so
         th = max(1, round(tw * h / w))
-        small = cv2.resize(preview, (tw, th), interpolation=cv2.INTER_AREA)
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        if small is not None and small.ndim == 2:
+            # The tracker's own downsample, already grey and already
+            # paid for: fitting it costs a third of a millisecond where
+            # the single-step reduction of the full preview cost six --
+            # the non-integer-factor trap, in this module's own code.
+            # It is the green plane where the terrain was painted from
+            # colour; green carries most of the structure and phase
+            # correlation reads structure, not tint.
+            gray = cv2.resize(small, (tw, th),
+                              interpolation=cv2.INTER_AREA) \
+                .astype(np.float32)
+        else:
+            # No downsample offered (tests, or a future caller): take
+            # the cheap integer quarter first, then fit.
+            q = cv2.resize(preview, (w // 4, h // 4),
+                           interpolation=cv2.INTER_AREA)
+            fit = cv2.resize(q, (tw, th), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(fit, cv2.COLOR_BGR2GRAY).astype(np.float32)
         if float(gray.std()) < TEXTURE_FLOOR:
             return None
-        return gray
-
-    def _gray(self, snap) -> np.ndarray:
-        held = self._grays.get(id(snap))
-        if held is not None and held[0] is snap.thumb:
-            return held[1]
-        gray = cv2.cvtColor(snap.thumb, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        if len(self._grays) > 700:     # a cleared map leaves stale ids
-            self._grays.clear()
-        self._grays[id(snap)] = (snap.thumb, gray)
         return gray
 
     def _hanning(self, shape) -> np.ndarray:

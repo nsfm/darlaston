@@ -14,7 +14,7 @@ import pytest
 from darlaston.camera.buffers import BufferPool, Frame
 from darlaston.camera.mock import MockCamera, _RESOLUTIONS
 from darlaston.live.pipeline import LivePipeline
-from darlaston.live.tracker import SlideMap, StageTracker
+from darlaston.live.tracker import SlideMap, StageTracker, Terrain
 
 
 # ---- the tracker's contract --------------------------------------------------
@@ -69,21 +69,23 @@ def _preview(w=160, h=120):
     return np.zeros((h, w, 3), np.uint8)
 
 
-def test_map_banks_on_movement_not_on_time():
+def test_map_paints_on_movement_not_on_time():
     m = SlideMap()
     p = _preview()
     assert m.observe((0.0, 0.0), p, tracking=True)
     assert not m.observe((4.0, 0.0), p, tracking=True), \
-        "hand tremor must not spawn snapshots"
+        "hand tremor must not repaint the map"
+    one_field = m.terrain.fields_painted
     assert m.observe((0.5 * 160, 0.0), p, tracking=True)
-    assert len(m.snapshots) == 2
+    assert m.terrain.fields_painted > one_field, \
+        "new ground must grow the painted area"
 
 
 def test_map_ignores_untracked_frames():
     m = SlideMap()
     assert not m.observe((0.0, 0.0), _preview(), tracking=False)
     assert not m.observe(None, _preview(), tracking=True)
-    assert len(m.snapshots) == 0
+    assert not m.terrain.ready
 
 
 @pytest.mark.serial
@@ -94,11 +96,14 @@ def test_revisit_refreshes_in_place():
     p = _preview()
     m.observe((0.0, 0.0), p, tracking=True)
     m.observe((200.0, 0.0), p, tracking=True)
-    # Return to the origin: within REFRESH range, but rate-limited.
+    covered = m.terrain.fields_painted
+    # Return to the origin: the arrival paints once, and a parked view
+    # repaints only at the refresh cadence after that.
     changed = sum(m.observe((1.0, 0.0), p, tracking=True)
                   for _ in range(3 * SlideMap.REFRESH_EVERY))
-    assert len(m.snapshots) == 2, "a revisit must not duplicate"
-    assert 2 <= changed <= 4, "refresh should be rate-limited, not per-frame"
+    assert 3 <= changed <= 5, "refresh should be rate-limited, not per-frame"
+    assert m.terrain.fields_painted == pytest.approx(covered, rel=0.02), \
+        "revisiting mapped ground must not grow the map"
 
 
 def test_guidance_counts_down_in_fields():
@@ -433,15 +438,16 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
                                      stage_tracking=True, track_gen=gen)
 
     panel.update_live(signal(0, (10.0, 10.0)))
-    assert panel.model.snapshots, "tracking never banked terrain"
+    assert panel.model.terrain.ready, "tracking never painted terrain"
 
     panel.model.reset()
     panel.ignore_before(1)
     panel.update_live(signal(0, (10.0, 10.0)))    # measured before the reset
-    assert not panel.model.snapshots, "a stale frame repainted cleared ground"
+    assert not panel.model.terrain.ready, \
+        "a stale frame repainted cleared ground"
 
     panel.update_live(signal(1, (0.0, 0.0)))
-    assert panel.model.snapshots, "fresh frames must still bank"
+    assert panel.model.terrain.ready, "fresh frames must still paint"
 
 
 def test_clearing_the_map_fences_in_the_same_press(window):
@@ -566,42 +572,90 @@ def test_the_window_says_what_tracking_is_doing(window):
     def signal(tracking, gated=0):
         return types.SimpleNamespace(preview=frame, stage_pos=(0.0, 0.0),
                                      stage_tracking=tracking,
-                                     track_gen=1, track_gated=gated)
+                                     track_gen=1, track_gated=gated,
+                                     track_small=None)
 
     win._keep_tracking(signal(True))
-    assert win.view._advisories == ()
+    assert win.slidemap._advisory is None
 
     for _i in range(25):                      # sustained, not instantaneous
         win._keep_tracking(signal(False))
-    assert _("advice.track.blank") in win.view._advisories
+    assert _("advice.track.blank") in win.slidemap._advisory
 
     win._keep_tracking(signal(True, gated=3))
-    assert _("advice.track.fast") in win.view._advisories
+    assert _("advice.track.fast") in win.slidemap._advisory
 
     win._track_wanted = False                 # asleep on purpose: quiet
     win._keep_tracking(signal(False, gated=9))
-    assert win.view._advisories == ()
+    assert win.slidemap._advisory is None
 
 
-def test_a_partial_revisit_never_shrinks_coverage():
-    """Passing partly over an old snapshot used to replace it at the
-    visitor's position, dragging its footprint and orphaning the
-    trailing ground it covered -- the map lost coverage as you crossed
-    it. A refresh now demands near-concentricity; anything less leaves
-    the old postcard exactly where it was."""
+def test_coverage_never_shrinks():
+    """The postcard map could lose ground on a partial revisit; the
+    canvas cannot, structurally -- painting is additive. This test
+    stands guard over that property through a meandering pass."""
     m = SlideMap()
     frame = np.full((60, 80, 3), 120, np.uint8)
+    seen = 0.0
+    walk = [(0.0, 0.0), (40.0, 0.0), (8.0, 0.0), (60.0, 20.0),
+            (30.0, 10.0), (90.0, 0.0), (0.0, 0.0)]
+    for pos in walk:
+        for _ in range(SlideMap.REFRESH_EVERY + 1):
+            m.observe(pos, frame, True)
+        now = m.terrain.fields_painted
+        assert now >= seen, "coverage shrank while crossing the map"
+        seen = now
+
+
+# ---- the terrain canvas ------------------------------------------------------
+
+def test_growth_does_not_move_the_world():
+    """Reallocation shifts the buffer and the origin together: ground
+    painted before a growth sits at the same world position after."""
+    m = SlideMap()
+    frame = np.zeros((60, 80, 3), np.uint8)
+    frame[:, :40] = 200                        # a recognisable half
     m.observe((0.0, 0.0), frame, True)
+    before, _s1, at1 = m.terrain.window((0.0, 0.0))
+    m.observe((80 * 30.0, 0.0), np.full((60, 80, 3), 90, np.uint8), True)
+    assert m.terrain._grown >= 1, "the walk should have grown the canvas"
+    after, _s2, at2 = m.terrain.window((0.0, 0.0))
+    assert np.array_equal(before, after), "growth moved painted ground"
+    assert at1 == at2
 
-    # A tenth of a field away: inside the old refresh radius, decidedly
-    # not concentric. Must neither drag the postcard nor bank a new one.
-    for _ in range(SlideMap.REFRESH_EVERY + 1):
-        m.observe((8.0, 0.0), frame, True)
-    assert len(m.snapshots) == 1
-    assert m.snapshots[0].pos == (0.0, 0.0), "the footprint was dragged"
 
-    # Nearly concentric: the refresh still refreshes.
-    for _ in range(SlideMap.REFRESH_EVERY + 1):
-        m.observe((2.0, 0.0), frame, True)
-    assert len(m.snapshots) == 1
-    assert m.snapshots[0].pos == (2.0, 0.0)
+def test_the_canvas_has_a_ceiling():
+    t = Terrain()
+    frame = np.full((60, 80, 3), 120, np.uint8)
+    assert t.paint((0.0, 0.0), frame)
+    assert not t.paint((80.0 * Terrain.MAX_SIDE, 0.0), frame), \
+        "the map must stop growing rather than evict"
+    assert t.paint((40.0, 0.0), frame), "nearby ground still paints"
+
+
+def test_the_frontier_has_no_dark_fringe():
+    """Feathering applies only over already-painted ground: a ramp
+    against the void would blend toward zero and rim every frontier
+    with darkness."""
+    t = Terrain()
+    t.paint((0.0, 0.0), np.full((60, 80, 3), 200, np.uint8))
+    painted = t.rgba[t.rgba[..., 3] > 0]
+    assert painted[:, :3].min() >= 199, "the frontier was feathered dark"
+
+
+def test_a_foreign_preview_size_is_refused_by_the_canvas():
+    t = Terrain()
+    assert t.paint((0.0, 0.0), np.full((60, 80, 3), 120, np.uint8))
+    assert not t.paint((0.0, 0.0), np.full((30, 40, 3), 120, np.uint8))
+    assert t.size == (80, 60)
+
+
+def test_windows_report_their_actual_centre():
+    """A window lands on an integer canvas pixel; the rounding remainder
+    is real distance and was measured, in the spike, as eight preview
+    pixels of silent error when computed against the request."""
+    t = Terrain()
+    t.paint((0.0, 0.0), np.full((60, 80, 3), 120, np.uint8))
+    _win, _share, at = t.window((0.7, -0.3))
+    half = t.scale / 2 + 1e-6
+    assert abs(at[0] - 0.7) <= half and abs(at[1] + 0.3) <= half
