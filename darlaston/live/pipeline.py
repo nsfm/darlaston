@@ -592,20 +592,27 @@ class LivePipeline:
         # still sees it, one frame late.
         if self._levels is None or self._analysed % INSTRUMENT_DIVISOR == 0:
             total = float(gray.size)
-            if colour:
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+            g_clip = float(hist[255] / total)
+            if colour and (self._levels is None or self._analysed
+                           % (2 * INSTRUMENT_DIVISOR) == 0):
+                # Blue and red feed only the per-channel "hot" advisory,
+                # and the cost here is channel extraction, not calcHist
+                # (measured 1.35 ms against 0.33) -- so they take every
+                # other histogram turn. Four hundred milliseconds of
+                # advisory latency is still immediate to a person
+                # reaching for a lamp; the clipping warning itself is
+                # judged on green, every histogram turn, unchanged.
                 blue = cv2.extractChannel(data, 0, self._blue_buf)
                 red = cv2.extractChannel(data, 2, self._red_buf)
-                hists = [cv2.calcHist([p], [0], None, [256],
-                                      [0, 256]).ravel()
-                         for p in (blue, gray, red)]
-                hist = hists[1]
-                per = (float(hists[2][255] / total),
-                       float(hists[1][255] / total),
-                       float(hists[0][255] / total))
+                r_clip = float(cv2.calcHist(
+                    [red], [0], None, [256], [0, 256])[255] / total)
+                b_clip = float(cv2.calcHist(
+                    [blue], [0], None, [256], [0, 256])[255] / total)
             else:
-                hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
-                per = (0.0, float(hist[255] / total), 0.0)
-            self._levels = (hist, per)
+                held = self._levels[1] if self._levels else (0.0, 0.0, 0.0)
+                r_clip, b_clip = held[0], held[2]
+            self._levels = (hist, (r_clip, g_clip, b_clip))
             self._levels_seq += 1
         hist, per = self._levels
 
