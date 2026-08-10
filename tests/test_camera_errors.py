@@ -732,3 +732,92 @@ def test_the_ignored_screen_is_not_the_no_camera_screen():
     assert nothing.kind != ignored.kind
     assert nothing.heading != ignored.heading
     assert "cable" not in " ".join(ignored.steps).lower()
+
+
+# ---- the SDK download's trust policy ----------------------------------------
+
+def test_a_certificate_failure_gets_its_name(monkeypatch):
+    """A Python with no certificate store fails TLS verification against
+    a server whose chain measures complete -- the packaged interpreter
+    on macOS shipped exactly that way. The failure is raised as its own
+    type so the dialog can say so in words instead of relaying urllib's
+    stack furniture."""
+    import ssl
+    import urllib.error
+
+    from darlaston.camera import sdk_install
+
+    def refuse(request, timeout=None, context=None):
+        err = ssl.SSLCertVerificationError(
+            "unable to get local issuer certificate")
+        raise urllib.error.URLError(err)
+
+    monkeypatch.setattr(sdk_install.urllib.request, "urlopen", refuse)
+    with pytest.raises(sdk_install.TrustProblem):
+        sdk_install._open("https://example.invalid/sdk.zip", timeout=1)
+
+    # Any other network failure keeps its own shape.
+    def unreachable(request, timeout=None, context=None):
+        raise urllib.error.URLError(OSError("no route to host"))
+
+    monkeypatch.setattr(sdk_install.urllib.request, "urlopen", unreachable)
+    with pytest.raises(urllib.error.URLError):
+        sdk_install._open("https://example.invalid/sdk.zip", timeout=1)
+
+
+def test_the_trust_bundle_travels_with_the_app():
+    """certifi is a declared dependency precisely so the packaged
+    interpreter believes the same certificates on every machine; the
+    context must actually be built from it."""
+    from darlaston.camera import sdk_install
+
+    context = sdk_install._tls_context()
+    assert context is not None, "certifi is installed; the context must use it"
+    assert context.cert_store_stats()["x509_ca"] > 100, (
+        "the context trusts almost nothing; that is the macOS bug itself")
+
+
+def test_the_explanation_column_wraps_in_characters_not_pixels(qapp):
+    """440 hard pixels chopped the same sentences on an Intel Mac whose
+    font rendered wider. The column is sized in the label's own
+    characters now, so it grows with the face and DPI it is actually
+    rendered in."""
+    from PySide6 import QtGui, QtWidgets
+
+    from darlaston.ui.shell import _wrap_width, _wraps
+
+    label = QtWidgets.QLabel("some prose")
+    _wraps(label)
+    narrow = label.width()
+
+    big = QtWidgets.QLabel("some prose")
+    font = QtGui.QFont(big.font())
+    font.setPointSizeF(font.pointSizeF() * 2)
+    big.setFont(font)
+    _wraps(big)
+    assert big.width() > narrow * 1.5, (
+        "a larger face must be given a wider column, or it chops")
+    assert _wrap_width(label) == narrow
+
+
+def test_a_trust_failure_sets_up_the_manual_route(qapp, monkeypatch,
+                                                  tmp_path):
+    """No path is spelled at the user: the loader's preferred folder is
+    a dot-directory macOS hides from Finder, and a tilde is unix-brain.
+    The dialog opens the maker's page and the destination folder, so
+    "the folder that just opened" is the whole instruction."""
+    from PySide6 import QtGui
+
+    from darlaston.camera import sdk_install
+    from darlaston.ui.sdk_ui import SdkDialog
+
+    monkeypatch.setattr(sdk_install, "INSTALL_ROOT", tmp_path / "sdk")
+    opened = []
+    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl",
+                        lambda url: opened.append(url.toString()) or True)
+
+    dialog = SdkDialog()
+    dialog._on_trust_failed()
+    assert any(o.startswith("http") for o in opened), "no maker's page"
+    assert any(o.startswith("file:") for o in opened), "no folder opened"
+    assert (tmp_path / "sdk").exists(), "the folder must exist to open"

@@ -57,6 +57,18 @@ msgstr ""
 msgid "sdk.status.contacting"
 msgstr "Contacting {host}…"
 
+#. The download failed TLS verification. Nearly always a Python with no
+#. certificate store rather than a vendor problem, and the browser
+#. route always works because browsers carry their own trust. The
+#. dialog has just opened the maker's page and the destination folder,
+#. which is why the message may speak of them without naming a path.
+msgid "sdk.status.tls"
+msgstr ""
+"The secure download could not be verified on this computer, so the "
+"manual route is ready instead: your browser has the camera maker's "
+"download page, and the folder darlaston reads from just opened. Unzip "
+"the downloaded SDK into that folder, then restart darlaston."
+
 msgid "sdk.status.installed"
 msgstr ""
 "Installed. Unplug the camera, plug it back in, and <i>darlaston</i> will find "

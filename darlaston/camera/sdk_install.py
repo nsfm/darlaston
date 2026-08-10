@@ -33,12 +33,57 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import ssl
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+
+class TrustProblem(RuntimeError):
+    """The download could not verify the server's certificate.
+
+    Almost never the vendor's fault: their chain was measured complete.
+    It is what a Python with no certificate store wired looks like --
+    the packaged interpreter on macOS shipped exactly that way -- and
+    the honest advice is the browser-and-unzip route, which the loader
+    already supports. Raised as its own type so the dialog can say that
+    in words instead of relaying urllib's stack furniture.
+    """
+
+
+def _tls_context() -> ssl.SSLContext | None:
+    """A context that trusts certifi's bundle when certifi is present.
+
+    The platform's own store is preferred by default, but a bundled
+    interpreter may have none at all -- PyInstaller ships the Python it
+    was built with, and on macOS that Python trusted nothing. certifi
+    travels with the package, so the same certificates are believed on
+    every machine the app runs on. None falls back to the default.
+    """
+    try:
+        import certifi
+    except ImportError:
+        return None
+    try:
+        return ssl.create_default_context(cafile=certifi.where())
+    except (OSError, ssl.SSLError):
+        return None
+
+
+def _open(request, timeout: float):
+    """urlopen with our trust policy, and trust failures given their name."""
+    try:
+        return urllib.request.urlopen(request, timeout=timeout,
+                                      context=_tls_context())
+    except urllib.error.URLError as exc:
+        if isinstance(getattr(exc, "reason", None),
+                      ssl.SSLCertVerificationError):
+            raise TrustProblem() from exc
+        raise
 
 #: Where fetched SDKs land. Under the user's data directory rather than
 #: inside the installation, so it survives upgrades and needs no
@@ -106,7 +151,7 @@ def sources(refresh: bool = False) -> tuple[Source, ...]:
     if not refresh:
         return SOURCES
     try:
-        with urllib.request.urlopen(MANIFEST_URL, timeout=TIMEOUT) as fh:
+        with _open(MANIFEST_URL, timeout=TIMEOUT) as fh:
             data = json.loads(fh.read().decode("utf-8"))
         found = tuple(Source(**entry) for entry in data["sources"])
         return found or SOURCES
@@ -156,7 +201,7 @@ def download(source: Source, on_progress: Callable[[int, int], None] | None
             source.url,
             # Some vendor endpoints refuse an unadorned urllib agent.
             headers={"User-Agent": "darlaston/sdk-installer"})
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as fh:
+        with _open(request, timeout=TIMEOUT) as fh:
             total = int(fh.headers.get("Content-Length") or 0)
             done = 0
             with archive.open("wb") as out:

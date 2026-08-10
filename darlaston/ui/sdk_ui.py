@@ -26,6 +26,10 @@ class SdkDialog(QtWidgets.QDialog):
 
     progress = QtCore.Signal(int, int)
     finished_with = QtCore.Signal(object, str)   # (path or None, message)
+    #: TLS trust failed on this machine: the automatic route will keep
+    #: failing, so the manual one gets set up instead, on the interface
+    #: thread where windows may be opened.
+    trust_failed = QtCore.Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -84,6 +88,7 @@ class SdkDialog(QtWidgets.QDialog):
 
         self.progress.connect(self._on_progress)
         self.finished_with.connect(self._on_done)
+        self.trust_failed.connect(self._on_trust_failed)
         self._describe()
 
     # ---- presentation ----------------------------------------------------
@@ -138,12 +143,38 @@ class SdkDialog(QtWidgets.QDialog):
                 path = sdk_install.download(
                     source, on_progress=lambda a, b: self.progress.emit(a, b))
                 self.finished_with.emit(path, _("sdk.status.installed"))
+            except sdk_install.TrustProblem:
+                # A Python with no certificate store, not a vendor fault.
+                # Set up the manual route rather than describing it: the
+                # queued signal below opens the maker's page and the
+                # destination folder, so the message can say "the folder
+                # that just opened" and nobody needs to know what a
+                # tilde means.
+                self.trust_failed.emit()
+                self.finished_with.emit(None, _("sdk.status.tls"))
             except Exception as exc:
                 self.finished_with.emit(None, str(exc))
 
         self._worker = threading.Thread(target=work, daemon=True,
                                         name="sdk-download")
         self._worker.start()
+
+    @QtCore.Slot()
+    def _on_trust_failed(self) -> None:
+        """Open the maker's page and the destination folder, so the
+        failure message can say "the folder that just opened".
+
+        No path is spelled at the user on purpose: the loader's
+        preferred folder is a dot-directory that macOS hides from
+        Finder entirely, and a tilde is unix-brain. A folder standing
+        open on screen needs neither.
+        """
+        source = self._current()
+        where = sdk_install.INSTALL_ROOT / source.brand
+        where.mkdir(parents=True, exist_ok=True)
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(source.page))
+        QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(str(where)))
 
     @QtCore.Slot(int, int)
     def _on_progress(self, done: int, total: int) -> None:
