@@ -50,6 +50,25 @@ def test_absurd_jumps_are_rejected():
     assert not locked
 
 
+def test_the_gate_band_is_asymmetric_today():
+    """Characterisation, not endorsement. The per-axis gate is 0.35 of
+    each axis's own extent, so on a landscape track frame a 55 px shift
+    is 24% of x's width and accepted, but 36% of y's height and
+    discarded whole -- the Y undershoot's mechanism, pinned here so the
+    fix shows up as a deliberate change to this file rather than a
+    silent one."""
+    shape = (152, 228)                    # the track frame, h x w
+    x = StageTracker()
+    x.anchor((5.0, 5.0), 0.9, shape)
+    _, locked, _ = x.anchor((55.0, 0.0), 0.9, shape)
+    assert locked and x.gated == 0, "x absorbs the band"
+
+    y = StageTracker()
+    y.anchor((5.0, 5.0), 0.9, shape)
+    _, locked, _ = y.anchor((0.0, 55.0), 0.9, shape)
+    assert not locked and y.gated == 1, "y discards it"
+
+
 def test_no_position_until_first_lock():
     t = StageTracker()
     assert t.position is None
