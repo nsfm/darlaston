@@ -114,7 +114,7 @@ class Relocator:
     # ---- the schedule ----------------------------------------------------
 
     def observe(self, preview: np.ndarray, pos, tracking: bool,
-                terrain) -> Fix | None:
+                terrain, small: np.ndarray | None = None) -> Fix | None:
         """One frame's worth of work, or none. Returns a `Fix` to apply.
 
         `pos` is the tracker's current belief (which it holds even
@@ -134,7 +134,7 @@ class Relocator:
                 # crossing. Keep sweeping until the map agrees with the
                 # belief, corrects it, or the budget decides this is
                 # ground nobody has seen.
-                fix = self._lost(preview, pos, terrain)
+                fix = self._lost(preview, pos, terrain, small)
                 if fix is not None:
                     self._settle()
                 return fix
@@ -148,10 +148,10 @@ class Relocator:
             # these calls: a large claim's two witnesses are a whole
             # cadence apart, and clearing it here made agreement
             # impossible -- caught by its test.
-            return self._continuous(preview, pos, terrain)
+            return self._continuous(preview, pos, terrain, small)
         self._since = 0
         self._suspect_sweeps = self.SUSPECT_SWEEPS
-        return self._lost(preview, pos, terrain)
+        return self._lost(preview, pos, terrain, small)
 
     #: Full passes over the bank a resumed-but-suspect position is
     #: allowed before it is believed: familiar ground answers in the
@@ -166,9 +166,9 @@ class Relocator:
 
     # ---- tracking: hold the map rigid ------------------------------------
 
-    def _continuous(self, preview, pos, terrain) -> Fix | None:
+    def _continuous(self, preview, pos, terrain, small=None) -> Fix | None:
         w = preview.shape[1]
-        probe = self._thumb(preview)
+        probe = self._thumb(preview, small)
         if probe is None:
             return None
         best = self._locate(probe, terrain, pos)
@@ -186,9 +186,9 @@ class Relocator:
 
     # ---- lost: find familiar ground --------------------------------------
 
-    def _lost(self, preview, pos, terrain) -> Fix | None:
+    def _lost(self, preview, pos, terrain, small=None) -> Fix | None:
         self.searching = True
-        probe = self._thumb(preview)
+        probe = self._thumb(preview, small)
         if probe is None:
             # Bare glass in view: nothing to match, and trying would
             # only prove that blank correlates with everything.
@@ -258,12 +258,29 @@ class Relocator:
         scale = terrain.scale
         return (centre[0] - dx * scale, centre[1] - dy * scale), response
 
-    def _thumb(self, preview: np.ndarray) -> np.ndarray | None:
+    def _thumb(self, preview: np.ndarray,
+               small: np.ndarray | None = None) -> np.ndarray | None:
         h, w = preview.shape[:2]
         tw = 120                       # Terrain.THUMB_W, and must stay so
         th = max(1, round(tw * h / w))
-        small = cv2.resize(preview, (tw, th), interpolation=cv2.INTER_AREA)
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        if small is not None and small.ndim == 2:
+            # The tracker's own downsample, already grey and already
+            # paid for: fitting it costs a third of a millisecond where
+            # the single-step reduction of the full preview cost six --
+            # the non-integer-factor trap, in this module's own code.
+            # It is the green plane where the terrain was painted from
+            # colour; green carries most of the structure and phase
+            # correlation reads structure, not tint.
+            gray = cv2.resize(small, (tw, th),
+                              interpolation=cv2.INTER_AREA) \
+                .astype(np.float32)
+        else:
+            # No downsample offered (tests, or a future caller): take
+            # the cheap integer quarter first, then fit.
+            q = cv2.resize(preview, (w // 4, h // 4),
+                           interpolation=cv2.INTER_AREA)
+            fit = cv2.resize(q, (tw, th), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(fit, cv2.COLOR_BGR2GRAY).astype(np.float32)
         if float(gray.std()) < TEXTURE_FLOOR:
             return None
         return gray

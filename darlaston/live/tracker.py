@@ -269,6 +269,11 @@ class Terrain:
         #: milliseconds of bookkeeping per frame, measured by Nate as a
         #: real frame-rate cost.
         self._bbox: tuple[int, int, int, int] | None = None
+        #: Cached (revision, candidate list). The lost sweep restarts
+        #: every few frames, nothing paints while lost -- tracking is a
+        #: precondition of painting -- so the revision holds and the
+        #: integral image would be recomputed for an identical answer.
+        self._cand: tuple[int, list] | None = None
 
     # ---- geometry --------------------------------------------------------
 
@@ -425,6 +430,8 @@ class Terrain:
         validity test one subtraction per position."""
         if not self.ready:
             return []
+        if self._cand is not None and self._cand[0] == self.revision:
+            return self._cand[1]
         alpha = (self.rgba[..., 3] > 0).astype(np.uint8)
         integral = cv2.integral(alpha)
         h, w = alpha.shape
@@ -440,6 +447,7 @@ class Terrain:
                 if filled >= need:
                     out.append((self.org[0] + (x0 + tw / 2) * s,
                                 self.org[1] + (y0 + th / 2) * s))
+        self._cand = (self.revision, out)
         return out
 
 

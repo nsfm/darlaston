@@ -572,7 +572,8 @@ def test_the_window_says_what_tracking_is_doing(window):
     def signal(tracking, gated=0):
         return types.SimpleNamespace(preview=frame, stage_pos=(0.0, 0.0),
                                      stage_tracking=tracking,
-                                     track_gen=1, track_gated=gated)
+                                     track_gen=1, track_gated=gated,
+                                     track_small=None)
 
     win._keep_tracking(signal(True))
     assert win.slidemap._advisory is None

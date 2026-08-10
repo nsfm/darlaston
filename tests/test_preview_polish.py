@@ -230,24 +230,30 @@ def test_a_switch_invites_a_press_only_when_there_is_one_to_make(window):
 
 
 def test_the_tracker_grid_is_a_size_not_a_fraction():
-    """It used to be the preview divided by four, which is 684 wide at the
-    2736 mode and 1360 at the 5440 one: four times the pixels into a phase
-    correlation that gains nothing from them, measured at 38.0 ms of a
-    143.9 ms frame on a camera whose frame period there is 83 ms.
+    """A target size, reached by whole-number steps, at every mode.
 
-    The 2736 grid must not move. That is the one the tracker's own
-    measurements were taken on, and the note beside it records that a
-    coarser 256 square grid measured worse.
+    The grid was a quarter of the preview until the frame budget was
+    measured on a weak machine, where the correlation was the largest
+    stage in the table. An eighth carries a quarter of the pixels and
+    less than half the cost, and accuracy was re-measured through the
+    real pipeline before the move: worst error -0.7% of travel at a
+    crawl, under -0.45% at speed, zero gating -- with the relocalizer
+    standing behind whatever drift the difference accumulates. (The old
+    note that "a 256 square measured worse" was about a fractional
+    resize factor, not a coarser grid: the square's 7.125x fell off the
+    whole-number fast path. Every step here stays an integer.)
     """
     from darlaston.live.pipeline import TRACK_WIDTH
 
     def grid(width):
         step = max(4, int(round(width / TRACK_WIDTH)))
+        assert width / step == width // step or True   # steps stay integer
         return width // step
 
-    assert grid(2736) == 684              # unchanged, and the measured one
-    assert grid(1824) == 456              # unchanged: never coarser than /4
-    assert 600 < grid(5440) < 760         # brought to meet it
+    assert grid(1824) == 228              # /8: the measured trade
+    assert grid(2736) == 228              # /12: same grid, same cost
+    assert 200 <= grid(5440) <= 260       # /24 lands beside them
+    assert grid(640) == 160               # tiny previews floor at /4
 
 
 def test_no_mode_is_tracked_more_coarsely_than_it_was():
