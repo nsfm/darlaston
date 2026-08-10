@@ -68,8 +68,9 @@ msgstr ""
 
 #. The rendering the operator works in. It is worn by the live view, the
 #. presentation, the stream and the JPEG, and never by the raw file.
+#. "Color" rather than "Rendering": less precise, far more colloquial.
 msgid "menu.capture.render"
-msgstr "Rendering"
+msgstr "Color"
 
 msgid "menu.capture.render.none"
 msgstr "Normal"

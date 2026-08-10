@@ -47,7 +47,7 @@ def test_setup_holds_what_outlives_the_session(win):
 
 def test_capture_holds_only_what_needs_a_camera(win):
     got = entries(win, "Capture")
-    assert got == ["Timelapse…", "Framing guides", "Rendering",
+    assert got == ["Timelapse…", "Framing guides", "Color",
                    "Write white balance",
                    "Scale bar", "Scale bar on the live view", "Scale bar…",
                    "Calibration", "Slide map", "Performance monitor"]

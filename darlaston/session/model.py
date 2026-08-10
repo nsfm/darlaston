@@ -121,27 +121,27 @@ def format_fits(width_mm: float, height_mm: float,
 
 @dataclass(frozen=True)
 class IlluminationMode:
-    """A way of lighting the specimen.
+    """A way of lighting the specimen. `kind` drives calibration and
+    focus-metric defaults.
 
-    `kind` drives calibration and focus-metric defaults; `inverted` is a
-    display and export choice only. Inverting raw data would destroy its
-    linearity and with it the point of raw, so the intent is carried as
-    metadata and applied downstream.
+    There used to be a "Brightfield (inverted)" entry here, carried as
+    intent because inverting raw data would destroy its linearity. The
+    Colour menu's rendering modes are that intent done properly -- live,
+    on the JPEG, and recorded in the file -- so an illumination that was
+    never a way of *lighting* anything went back to being one mode.
     """
 
     key: str
     label: str
     kind: str                    # brightfield | darkfield | phase
-    inverted: bool = False
 
     @property
     def display(self) -> str:
-        return f"{self.label} (inverted)" if self.inverted else self.label
+        return self.label
 
 
 BUILTIN_ILLUMINATION: tuple[IlluminationMode, ...] = (
     IlluminationMode("brightfield", "Brightfield", "brightfield"),
-    IlluminationMode("brightfield_inv", "Brightfield", "brightfield", inverted=True),
     IlluminationMode("darkfield", "Darkfield", "darkfield"),
     IlluminationMode("phase", "Phase contrast", "phase"),
 )

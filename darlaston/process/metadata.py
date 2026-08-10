@@ -237,7 +237,6 @@ def from_setup(setup, *, exposure_us: int, gain_pct: int,
         # was looked at and found to be at unity.
         "optovar": f"{scope.optovar_factor:g}" if scope.optovar else "",
         "illumination": setup.illumination.key,
-        "inverted": "1" if setup.illumination.inverted else "0",
         "relay": cam.relay,
         "total_magnification": f"{total:g}" if total else "",
         # The number a scale bar is drawn from: how much *slide* one
