@@ -247,6 +247,8 @@ class LiveView(QtWidgets.QWidget):
         #: frame are different jobs and people want them separately.
         self.framing_grid = "none"
         self.framing_cross = False
+        #: Quiet chips at the top of the frame. See `set_advisories`.
+        self._advisories: tuple = ()
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
         self.setMinimumSize(480, 320)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
@@ -577,6 +579,38 @@ class LiveView(QtWidgets.QWidget):
         self._peaking = None
         self.update()
 
+    def set_advisories(self, lines) -> None:
+        """Small quiet chips at the top of the frame: conditions worth a
+        sentence but not an interruption. "Tracking lost over blank
+        glass", "moving too fast to track" -- the class of thing that
+        used to happen silently, which was the actual fault."""
+        lines = tuple(lines)
+        if lines != self._advisories:
+            self._advisories = lines
+            self.update()
+
+    def _draw_advisories(self, p: QtGui.QPainter,
+                         target: QtCore.QRect) -> None:
+        font = QtGui.QFont(self.font())
+        font.setPixelSize(10)
+        font.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 0.5)
+        metrics = QtGui.QFontMetrics(font)
+        y = target.top() + 8
+        p.save()
+        p.setFont(font)
+        for text in self._advisories:
+            w = metrics.horizontalAdvance(text) + 14
+            h = metrics.height() + 5
+            plate = QtCore.QRectF(target.x() + (target.width() - w) / 2,
+                                  y, w, h)
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.setBrush(QtGui.QColor(16, 18, 16, 190))
+            p.drawRoundedRect(plate, 3, 3)
+            p.setPen(BRASS)
+            p.drawText(plate, QtCore.Qt.AlignmentFlag.AlignCenter, text)
+            y += h + 4
+        p.restore()
+
     def set_notice(self, text: str | None) -> None:
         """A message that cannot be missed, over the frozen preview.
 
@@ -609,6 +643,8 @@ class LiveView(QtWidgets.QWidget):
                 at, t0 = pointer
                 if not draw_pointer(p, target, at, time.monotonic() - t0):
                     self._pointer = None
+
+            self._draw_advisories(p, target)
 
             # The measured region, drawn so it is never a mystery what the focus
             # number refers to.

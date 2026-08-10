@@ -30,6 +30,12 @@ msgstr ""
 msgid "perf.summary.detail.driver"
 msgstr " &nbsp;·&nbsp; {count} dropped by the driver"
 
+#. Tracker steps rejected as too large to measure. Each is travel the
+#. map lost whole, so a count that climbs while cranking is the dead
+#. reckoning undershoot happening live. Shown only when non zero.
+msgid "perf.summary.detail.gated"
+msgstr " &nbsp;·&nbsp; {count} moves too fast to track"
+
 #. {worst} is the name of the most expensive stage, which comes from the
 #. loop and is not translated. The frame rate is named first because it
 #. measured as the larger lever by far.

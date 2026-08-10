@@ -413,3 +413,195 @@ def test_a_gated_jump_does_not_teleport_the_position_backwards():
     assert locked
     assert after == (-65.0, 0.0), (
         f"position teleported to {after} instead of (-65.0, 0.0)")
+
+
+def test_the_map_refuses_frames_from_before_its_clear(qapp):
+    """The two-press clear: the frame in flight when a reset lands still
+    carries the old origin's position, and banked, it repaints the
+    current view at stale coordinates -- the map shows the same picture
+    twice until a second press sweeps it. The generation fence refuses
+    it instead."""
+    import types
+
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    panel = SlideMapPanel()
+    frame = np.full((60, 80, 3), 120, np.uint8)
+
+    def signal(gen, pos):
+        return types.SimpleNamespace(preview=frame, stage_pos=pos,
+                                     stage_tracking=True, track_gen=gen)
+
+    panel.update_live(signal(0, (10.0, 10.0)))
+    assert panel.model.snapshots, "tracking never banked terrain"
+
+    panel.model.reset()
+    panel.ignore_before(1)
+    panel.update_live(signal(0, (10.0, 10.0)))    # measured before the reset
+    assert not panel.model.snapshots, "a stale frame repainted cleared ground"
+
+    panel.update_live(signal(1, (0.0, 0.0)))
+    assert panel.model.snapshots, "fresh frames must still bank"
+
+
+def test_clearing_the_map_fences_in_the_same_press(window):
+    """One route: the panel's clear resets the tracking origin and sets
+    the stale-frame fence together, whichever path asked for it."""
+    win = window()
+    before = win.pipeline.reset_tracking()
+    assert isinstance(before, int)
+    win.slidemap.clear()
+    assert win.slidemap._min_gen == before + 1, (
+        "the clear did not fence out frames from the old origin")
+
+
+def test_the_gate_is_a_fraction_of_each_axis():
+    """Documented, not endorsed: on a landscape frame the same jump in
+    pixels survives in x and is discarded whole in y, because the
+    measurable range is a fraction of each axis's own extent. This is
+    the mechanism behind the dead-reckoning undershoot in y -- see the
+    TODO entry -- and this test pins the current behaviour so a fix
+    shows up as a deliberate change here."""
+    shape = (1216, 1824)
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    _pos, locked, _rekey = t.anchor((500.0, 0.0), 0.9, shape)
+    assert locked, "x should keep a 500 px jump: the gate is 638 there"
+
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    _pos, locked, _rekey = t.anchor((0.0, 500.0), 0.9, shape)
+    assert not locked and t.gated == 1, (
+        "y's gate is 426 px: the same jump is discarded whole")
+
+
+def test_a_blind_tracker_costs_nothing_and_claims_nothing():
+    """With nobody consuming the position, the correlation is skipped --
+    and blind means blind: no position, no lock, no stillness, so the
+    opportunist and the guard cannot mistake sleep for a measurement."""
+    cam, pipe, push, got = _rig()
+    push(); push(); push()
+    assert got[-1].stage_pos is not None, "the premise: awake, it tracks"
+
+    pipe.set_track_wanted(False)
+    cam.stage_xy = (2400.0, 1800.0)             # travel nobody integrates
+    push(); push()
+    s = got[-1]
+    assert s.stage_pos is None
+    assert not s.stage_tracking
+    assert not s.settled, "a blind tracker claimed stillness"
+
+    pipe.set_track_wanted(True)
+    pipe.reset_tracking()                       # what the window does on wake
+    push(); push(); push()
+    assert got[-1].stage_pos is not None, "it did not wake"
+    cam.close()
+
+
+def test_the_window_wakes_the_tracker_for_a_listener(window):
+    win = window()
+    win.map_window.hide()
+    win._sync_track_wanted()
+    assert win.pipeline._track_wanted is False, (
+        "map closed, no session: the tracker should sleep")
+    fence = win.slidemap._min_gen
+    win.map_window.show()
+    win._sync_track_wanted()
+    assert win.pipeline._track_wanted is True
+    assert win.slidemap._min_gen > fence, (
+        "waking must clear the map and fence the blind gap")
+
+
+def test_corrections_ride_the_generation_fence():
+    """A nudge moves the position and its anchor together; a stale
+    generation's correction describes an origin that no longer exists
+    and must change nothing."""
+    cam, pipe, push, got = _rig()
+    push(); push(); push()
+    gen = got[-1].track_gen
+    before = pipe.stage_position()
+    assert before is not None
+
+    pipe.correct_tracking(gen, delta=(10.0, 4.0))
+    moved = pipe.stage_position()
+    assert moved == pytest.approx((before[0] + 10.0, before[1] + 4.0))
+
+    # The stage has not moved, so the next frames must hold the nudged
+    # position rather than snapping back to the keyframe's old belief.
+    push(); push()
+    held = got[-1].stage_pos
+    assert held == pytest.approx(moved, abs=2.0)
+
+    pipe.correct_tracking(gen - 1, delta=(500.0, 500.0))
+    assert pipe.stage_position() == pytest.approx(held, abs=2.0), (
+        "a stale correction was believed")
+    cam.close()
+
+
+def test_a_refix_plants_the_position_and_drops_the_key():
+    """After a blank crossing the keyframe is of ground from before the
+    gap; a refix plants the position absolutely and the next analysis
+    pass measures from fresh ground rather than jumping back."""
+    cam, pipe, push, got = _rig()
+    push(); push(); push()
+    gen = got[-1].track_gen
+    pipe.correct_tracking(gen, refix=(500.0, 300.0))
+    push(); push()
+    assert got[-1].stage_pos == pytest.approx((500.0, 300.0), abs=2.0), (
+        "the refix did not survive the next frames")
+    cam.close()
+
+
+def test_the_window_says_what_tracking_is_doing(window):
+    """The advisories: lost is said after it is sustained, a gated step
+    is said the moment it happens, and neither is said while the
+    tracker was put to sleep on purpose."""
+    import types
+
+    from darlaston.i18n import _
+
+    win = window()
+    frame = np.full((120, 160, 3), 120, np.uint8)
+
+    def signal(tracking, gated=0):
+        return types.SimpleNamespace(preview=frame, stage_pos=(0.0, 0.0),
+                                     stage_tracking=tracking,
+                                     track_gen=1, track_gated=gated)
+
+    win._keep_tracking(signal(True))
+    assert win.view._advisories == ()
+
+    for _i in range(25):                      # sustained, not instantaneous
+        win._keep_tracking(signal(False))
+    assert _("advice.track.blank") in win.view._advisories
+
+    win._keep_tracking(signal(True, gated=3))
+    assert _("advice.track.fast") in win.view._advisories
+
+    win._track_wanted = False                 # asleep on purpose: quiet
+    win._keep_tracking(signal(False, gated=9))
+    assert win.view._advisories == ()
+
+
+def test_a_partial_revisit_never_shrinks_coverage():
+    """Passing partly over an old snapshot used to replace it at the
+    visitor's position, dragging its footprint and orphaning the
+    trailing ground it covered -- the map lost coverage as you crossed
+    it. A refresh now demands near-concentricity; anything less leaves
+    the old postcard exactly where it was."""
+    m = SlideMap()
+    frame = np.full((60, 80, 3), 120, np.uint8)
+    m.observe((0.0, 0.0), frame, True)
+
+    # A tenth of a field away: inside the old refresh radius, decidedly
+    # not concentric. Must neither drag the postcard nor bank a new one.
+    for _ in range(SlideMap.REFRESH_EVERY + 1):
+        m.observe((8.0, 0.0), frame, True)
+    assert len(m.snapshots) == 1
+    assert m.snapshots[0].pos == (0.0, 0.0), "the footprint was dragged"
+
+    # Nearly concentric: the refresh still refreshes.
+    for _ in range(SlideMap.REFRESH_EVERY + 1):
+        m.observe((2.0, 0.0), frame, True)
+    assert len(m.snapshots) == 1
+    assert m.snapshots[0].pos == (2.0, 0.0)

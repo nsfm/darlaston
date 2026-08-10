@@ -88,6 +88,28 @@ class StageTracker:
         the same thing as it not having moved."""
         return self._gated
 
+    def nudge(self, delta: tuple[float, float]) -> None:
+        """Shift the position and its anchor together, by an externally
+        measured correction -- the relocalizer matching the view against
+        the map's own bank. Moving both keeps the keyframe arithmetic
+        consistent: the next `anchor` still measures a true shift from a
+        keyframe whose planted position moved with the belief."""
+        if not self._ever:
+            return
+        self._pos = (self._pos[0] + delta[0], self._pos[1] + delta[1])
+        self._anchor = (self._anchor[0] + delta[0],
+                        self._anchor[1] + delta[1])
+
+    def refix(self, pos: tuple[float, float]) -> None:
+        """Plant the position absolutely: the relocalizer found familiar
+        ground after a blank crossing. Deliberately does not claim a
+        lock -- the next good correlation earns that -- and the caller
+        must drop the keyframe, which belongs to ground from before the
+        crossing."""
+        self._pos = (float(pos[0]), float(pos[1]))
+        self._anchor = self._pos
+        self._ever = True
+
     def _acceptable(self, offset: tuple[float, float], confidence: float,
                     shape: tuple[int, ...]) -> bool:
         if confidence < self.CONFIDENCE:
@@ -219,7 +241,15 @@ class SlideMap:
     SPACING = 0.35
     #: Within this of an existing snapshot, refresh it instead -- revisited
     #: ground shows what is there now, not what was there ten minutes ago.
-    REFRESH = 0.15
+    #: Deliberately tight, because a refresh moves the snapshot to the
+    #: visitor's position: at the old 0.15 a partial pass dragged the
+    #: footprint toward you and orphaned the trailing ground it covered,
+    #: so coverage *shrank* as you crossed your own map. Nate watched it
+    #: happen. At 0.05 the drag is negligible; anything between here and
+    #: SPACING holds the old ground instead, and a slightly stale thumb
+    #: is the cheaper honest cost -- staleness also re-banks a corrected
+    #: position on every revisit, which mostly re-encodes current drift.
+    REFRESH = 0.05
     #: Frames between refreshes, so a parked view is not resizing thumbnails
     #: thirty times a second to overwrite itself with itself.
     REFRESH_EVERY = 24

@@ -88,6 +88,13 @@ class PerfPanel(QtWidgets.QWidget):
         driver = getattr(self, "_driver_dropped", None)
         theirs = ("" if not driver
                   else _("perf.summary.detail.driver", count=driver))
+        # Tracker steps rejected as too large to measure. Each one is
+        # travel discarded whole, so a count climbing during a fast crank
+        # is the dead-reckoning undershoot happening live. Absent while
+        # zero: it is a diagnosis, not a vital sign.
+        gated = stats.get("gated", 0)
+        if gated:
+            theirs += _("perf.summary.detail.gated", count=gated)
         # Every number is rounded here, so the catalogue carries words and
         # not format specs.
         self.summary.setText(

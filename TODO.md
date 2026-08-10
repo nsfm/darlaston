@@ -1,5 +1,24 @@
 # Next up
 
+- [ ] **The true-canvas slide map.** The relocalization tier SHIPPED
+      (`live/relocate.py`: continuous drift correction over trodden
+      ground, lost-sweep recovery rejoining the same origin, advisory
+      chips; spikes and numbers in `spike/tracking/`) and survived a
+      278-field freehand circumnavigation of a coverslip rim on real
+      glass with the loop closing cleanly. The remaining half of the
+      idea is Nate's: composite the thumbnails into a real world-space
+      canvas at thumb scale instead of a list of postcards. A 20×15
+      field session is a ~3 MP uint8 canvas, cheaper to paint than
+      compositing hundreds of snapshots per frame; partial updates make
+      the coverage-eating refresh structurally impossible; matching
+      runs against continuous terrain instead of postcard centres; and
+      the canvas is the exportable artifact the finding-aid entry below
+      wants. Design decisions made in advance: feathered newest-wins
+      (averaging ghosts under residual misregistration), a validity
+      mask for the unexplored void, growth by reallocation with margin,
+      snapshots list retained for relocalizer candidate ranking, mosaic
+      tiles ride on top unchanged. Spike first, like the relocalizer.
+
 - [ ] **Flyby: the orchestrated version.** Design notes in `spike/FLYBY.md`, A stacked mosaic is a four-dimensional
       recording - x, y, zoom and focal plane - and every move through it
       can be perfectly smooth because it is synthesised rather than
@@ -12,6 +31,20 @@
       coverage and an honest size estimate, then shoot it - which turns a
       rendering feature into a capture feature. Order and reasoning in the
       doc.
+- [ ] **Centre-cropping the tracker against a bad relay: refuted,
+      recorded so it is not re-proposed.** Benched 2026-08-09
+      (`spike/tracking/relay_bench.py`): a synthetic fixed-to-sensor
+      relay (barrel k1=0.03, radial edge blur) costs ~2% drift at slow
+      cranks, fading to nothing at speed; a 70% centre crop recovers
+      about a third of that; a width-only "square" crop keeps the
+      blurred corners, shrinks the measurable range, gates at slow
+      speeds and lands *worse* than full frame. And on a harsher relay
+      (k1=0.06) the crop's benefit evaporates entirely -- cropping
+      discards correlation statistics exactly when the surviving pixels
+      are noisiest. The Hanning window already tapers the edges, the
+      relocalizer bounds accumulated drift over trodden ground, and the
+      real fix is optical: a proper relay. No setting shipped.
+
 - [ ] **The tracker must not run at a divisor**, recorded so it is not
       re-proposed. `StageTracker.MAX_STEP` rejects a single-frame shift past
       0.35 of the frame, which is 7.0 fields/second at 30 fps; a divisor of
@@ -59,12 +92,33 @@
       idea, still open: export the accumulated map — pins, thumbnails,
       µm coordinates — as a printable sheet. For a catalogued mount that
       is an archival artifact, and Victorian mounters drew them by hand.
-- [ ] **Why does stage tracking undershoot Y at 25×?** The drift that
-      broke registration was systematic: monotonic, one direction, ~14%
-      of traveled distance. Candidates: per-objective calibration error
-      in preview-px-per-µm, tracking loss during capture blackouts, or
-      anisotropy in the tracker. The stitcher now survives it, but the
-      minimap would place fields better if dead reckoning were honest.
+- [ ] **The Y undershoot: mechanism found, fix unshipped.** Probed
+      synthetically through the real pipeline (2026-08-08): steady
+      tracking is clean on both axes at every speed (worst −0.4%, zero
+      gating), and defocus wobble up to 8 µm changes nothing. What
+      reproduces the loss is a jump arriving between two analysed frames:
+      the per-axis gate is 0.35 of each axis's own extent, 638 px in x
+      but 426 px in y on a landscape frame, and a gated jump is discarded
+      _whole_. So travel in the 426 to 638 px band survives in x and
+      vanishes in y — and dropped frames while cranking fast are exactly
+      what makes multi-hundred-pixel inter-frame steps, which is why it
+      shows at 25×, where a small field makes the hand fast in pixels.
+      Monotonic, one direction, proportional to how often it trips.
+
+      Confirm on glass before fixing: crank y hard at 25× and watch
+      "moves too fast to track" in the performance panel — that counter
+      climbing is this mechanism live (each tick is one discarded jump).
+
+      Fix candidates, in order of ambition: raise the gate toward the
+      physical half-frame limit (0.45 of the axis buys y 426 → 547 px,
+      cheap, partial); or disambiguate the wraparound — a shift past the
+      gate has exactly two candidates, the measured offset and offset ±
+      the frame extent, and directly comparing overlap agreement at both
+      extends the measurable range to half the frame and possibly past
+      it. The second is a real algorithm and wants a bench before it
+      ships. A characterisation test in test_tracker.py pins today's
+      behaviour so the fix shows up as a deliberate change.
+
 - [ ] **Measured candidates in waiting** (from the research sweep, each goes
       through `tools/stack_bench.py` before shipping): CombineZP's ramp
       subtraction (monotone-vs-peaked profile test — the only shipped
@@ -199,6 +253,9 @@
 ## Capture features
 
 - [ ] **Inverted brightfield** native in the live view. Display and export transform only; the raw stays linear positive.
+- [ ] **Color swap** an earlier bug swapped R and B, the effect was actually pretty cool.
+- [ ] **Greyscale** to support green filter / high contrast modes
+- [ ] **Mobile formats** Rotate the preview 90 degrees; add crop guides for mobile aspect rations to support content creators.
 
 ## Presentation, deferred by choice
 

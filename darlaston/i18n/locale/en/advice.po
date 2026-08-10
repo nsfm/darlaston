@@ -1,0 +1,19 @@
+# Small quiet chips over the live view: conditions worth a sentence
+# but not an interruption. These used to happen silently, which was
+# the actual fault.
+
+#. Tracking lost and the map has banked ground it could recognise:
+#. the relocalizer is sweeping for it. Returning to anywhere already
+#. seen recovers the position.
+msgid "advice.track.searching"
+msgstr "tracking lost, watching for familiar ground"
+
+#. Tracking lost with nothing to search: the view is featureless and
+#. the map has nothing banked that could be recognised.
+msgid "advice.track.blank"
+msgstr "tracking lost over blank glass"
+
+#. The stage moved further between two frames than can be measured,
+#. and that travel was discarded rather than guessed at.
+msgid "advice.track.fast"
+msgstr "moving too fast to track"

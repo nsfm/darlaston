@@ -41,6 +41,7 @@ from ..live.cell import Newest
 from ..live import exposure as exposure_ctl
 from ..process import scalebar
 from ..process.metadata import sensor_pitch
+from ..live.relocate import Relocator
 from ..live.pipeline import (INSTRUMENT_DIVISOR, LivePipeline,
                              LiveSignals)
 from ..session.model import (BUILTIN_ILLUMINATION, CameraProfile, Library,
@@ -164,6 +165,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.pipeline = LivePipeline(self._publish_signals,
                                      illumination=Illumination.BRIGHTFIELD)
+        #: Matches the live view against the slide map's own bank: drift
+        #: correction over trodden ground, recovery over familiar ground.
+        self.relocator = Relocator()
+        self._lost_for = 0
+        self._track_wanted = True
         self.session = CameraSession(make_backend,
                                      self.bridge.status.emit,
                                      self.pipeline.submit,
@@ -518,7 +524,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # session ritual that does not deserve permanent rail residency --
         # both belong here, and both can be dragged out of the way.
         self.slidemap = SlideMapPanel()
-        self.slidemap.reset_requested.connect(self.pipeline.reset_tracking)
+        self.slidemap.reset_requested.connect(self._reset_tracking)
         self.slidemap.mosaic_requested.connect(self._on_mosaic_requested)
         self.slidemap.undo_tile.connect(self._on_undo_tile)
         self.map_window = FloatingPanel("slide map", self.view)
@@ -1275,10 +1281,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if index is None or not self.session.status.is_live:
             return
         # The scene scale changes with the mode, so tracked positions in the
-        # old mode's pixels no longer measure anything.
+        # old mode's pixels no longer measure anything. `clear` resets the
+        # tracking origin through `_reset_tracking`, generation fence and
+        # all -- a second direct reset here would bump the generation
+        # after the fence was set and re-open the stale-frame window.
         self.session.set_preview_resolution(int(index))
         self._remember_preview_resolution(int(index))
-        self.pipeline.reset_tracking()
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
         self._ae_hurry = True
@@ -1460,7 +1468,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.opportunist.set_key(flat_key(self.setup, self.subject.slide_note))
         self._refresh_calibration()
         # Scale changed, so tracked positions no longer measure anything.
-        self.pipeline.reset_tracking()
+        # One route: `clear` resets the origin and sets the stale-frame
+        # fence in the same breath.
         self.slidemap.clear()
         self.pipeline.reset_focus_peak()
         self._push_turret()
@@ -2469,6 +2478,77 @@ class MainWindow(QtWidgets.QMainWindow):
         self.capture.white_balance = on
         self.strip.set_white_balance(on)
 
+    def _reset_tracking(self) -> None:
+        """New origin, and the map refuses whatever was measured under
+        the old one. The two must happen together: the frame in flight
+        when the reset lands still carries the old position, and banked,
+        it repaints cleared ground -- the two-press clear."""
+        self.slidemap.ignore_before(self.pipeline.reset_tracking())
+
+    def _keep_tracking(self, s: LiveSignals) -> None:
+        """The relocalizer and its advisories, once per frame.
+
+        The map's own bank is a place-recognition database: over trodden
+        ground the tracker is nudged by the measured drift so the map
+        stays rigid, and when tracking is lost -- Darlaston's mounts are
+        too clean between specimens -- the bank is swept until familiar
+        ground reappears and the position rejoins the *same* origin,
+        terrain and pins intact. And none of it is silent any more."""
+        if not self._track_wanted:
+            self.view.set_advisories(())
+            self._gated_seen = s.track_gated
+            return
+        fix = self.relocator.observe(s.preview, s.stage_pos,
+                                     s.stage_tracking,
+                                     self.slidemap.model.snapshots)
+        if fix is not None:
+            if s.stage_tracking and fix.delta is not None:
+                # Drift over familiar ground: position and anchor move
+                # together and the keyframe stays valid.
+                self.pipeline.correct_tracking(s.track_gen,
+                                               delta=fix.delta)
+            else:
+                # Found again after a crossing: plant the position and
+                # let the analysis thread drop the stale keyframe.
+                self.pipeline.correct_tracking(s.track_gen, refix=fix.pos)
+
+        now = time.monotonic()
+        if s.track_gated > getattr(self, "_gated_seen", 0):
+            #: The gate fired: travel arrived too fast to measure and
+            #: was discarded whole. Worth a moment of saying so.
+            self._fast_until = now + 1.5
+        self._gated_seen = s.track_gated
+        self._lost_for = (self._lost_for + 1 if not s.stage_tracking
+                          else 0)
+        lines = []
+        # Sustained, not instantaneous: a single unmatched frame is a
+        # correlation hiccup, not a state worth announcing.
+        if self._lost_for > 20:
+            lines.append(_("advice.track.searching")
+                         if self.relocator.searching
+                         else _("advice.track.blank"))
+        if now < getattr(self, "_fast_until", 0.0):
+            lines.append(_("advice.track.fast"))
+        self.view.set_advisories(lines)
+
+    def _sync_track_wanted(self) -> None:
+        """Run the tracker only while something consumes its answer: the
+        map on screen, a mosaic, a stack in progress, a sweep, or a
+        timelapse wanting its guard. Waking it clears the map, because
+        travel while blind was never integrated and the old terrain sits
+        at coordinates that no longer mean anything."""
+        wanted = (not self.map_window.isHidden()
+                  or self.mosaic is not None
+                  or self.stack_session is not None
+                  or self.focus.sweep.isChecked()
+                  or self.timelapse.running)
+        if wanted == getattr(self, "_track_wanted", True):
+            return
+        self._track_wanted = wanted
+        self.pipeline.set_track_wanted(wanted)
+        if wanted:
+            self.slidemap.clear()
+
     def _bind_panel(self, action, window, size, before_show=None) -> None:
         """Wire a menu entry and a floating panel to one truth.
 
@@ -3148,6 +3228,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.calibration.busy and not self.capture.busy:
             self.opportunist.observe(s)
         self._auto_expose_guarded(s)
+        self._sync_track_wanted()
+        self._keep_tracking(s)
         # Blankness is only read by the stack trigger, so it is only worth
         # computing while a stack is open. Pushed from here rather than
         # tracked through the session's several beginnings and ends.
