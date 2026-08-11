@@ -75,6 +75,37 @@ class _Grip(QtWidgets.QWidget):
         self._start = None
 
 
+class _InfoBubble(QtWidgets.QLabel):
+    """A help overlay that closes every way it can: click it, press
+    Escape, click the mark again, or wait for the timer. A child widget,
+    so it never grabs input the way a Qt.Popup does -- the bug this class
+    exists to have never shipped.
+    """
+
+    def __init__(self, text: str, parent: QtWidgets.QWidget, on_close) -> None:
+        super().__init__(text, parent)
+        self._on_close = on_close
+        self.setWordWrap(True)
+        self.setMargin(9)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(
+            f"QLabel {{ background: {QtGui.QColor(20, 22, 20).name()};"
+            f" color: {theme.INK}; border: 1px solid {theme.LINE};"
+            f" border-radius: 4px; }}")
+
+    def mousePressEvent(self, _event) -> None:
+        self._on_close()
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() in (QtCore.Qt.Key.Key_Escape,
+                            QtCore.Qt.Key.Key_Return,
+                            QtCore.Qt.Key.Key_Space):
+            self._on_close()
+        else:
+            super().keyPressEvent(event)
+
+
 class FloatingPanel(QtWidgets.QWidget):
     """A rounded, mostly-opaque panel that lives over the live view.
 
@@ -138,6 +169,7 @@ class FloatingPanel(QtWidgets.QWidget):
         self._info.setStyleSheet(
             "QPushButton { border: 0; background: transparent; }")
         self._info_text = ""
+        self._info_bubble: _InfoBubble | None = None
         self._info.clicked.connect(self._show_info)
         self._info.hide()
 
@@ -188,23 +220,37 @@ class FloatingPanel(QtWidgets.QWidget):
         self._place_info()
 
     def _show_info(self) -> None:
-        """A small popup under the mark. Qt.Popup dismisses it on the next
-        click anywhere, which is the behaviour every tooltip should have
-        had and this one reliably does."""
-        popup = QtWidgets.QLabel(
-            self._info_text, self, QtCore.Qt.WindowType.Popup)
-        popup.setWordWrap(True)
-        popup.setMargin(9)
-        popup.setMaximumWidth(320)
-        popup.setStyleSheet(
-            f"QLabel {{ background: {QtGui.QColor(20, 22, 20).name()};"
-            f" color: {theme.INK}; border: 1px solid {theme.LINE};"
-            f" border-radius: 4px; }}")
-        below = self._info.mapToGlobal(
-            QtCore.QPoint(0, self._info.height() + 2))
-        popup.adjustSize()
-        popup.move(below)
-        popup.show()
+        """A help bubble under the mark, and a toggle: a second click
+        closes it.
+
+        A CHILD widget, never a top-level `Qt.Popup`. A Popup grabs the
+        keyboard and mouse globally, and under a tiling window manager
+        that grab could not be released -- it trapped all input and the
+        app had to be killed by rebooting. A child widget cannot grab
+        anything, and it carries three ways out on top of that: click it,
+        press Escape, or click the mark again -- with a timer as a
+        backstop so it can never, under any window manager, get stuck.
+        """
+        if self._info_bubble is not None:
+            self._close_info()
+            return
+        bubble = _InfoBubble(self._info_text, self, self._close_info)
+        bubble.setMaximumWidth(min(320, max(160, self.width() - 18)))
+        bubble.adjustSize()
+        bubble.move(9, TITLE_H + 4)
+        bubble.show()
+        bubble.raise_()
+        bubble.setFocus(QtCore.Qt.FocusReason.PopupFocusReason)
+        self._info_bubble = bubble
+        # The backstop. Even if every other exit failed on some exotic
+        # window manager, it closes itself.
+        QtCore.QTimer.singleShot(15000, self._close_info)
+
+    def _close_info(self) -> None:
+        if self._info_bubble is not None:
+            self._info_bubble.hide()
+            self._info_bubble.deleteLater()
+            self._info_bubble = None
 
     def _place_info(self) -> None:
         """After the title text, whose width depends on the font and the
