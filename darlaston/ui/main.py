@@ -596,6 +596,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_panel.build_flat.connect(self._do_flat)
         self.calib_panel.bank_flat.connect(self._bank_flat)
         self.calib_panel.build_lut.connect(self._do_lut)
+        self.calib_panel.calibrate_drift.connect(self._calibrate_drift)
         # Performance, in a floating panel like the others. Off by
         # default: it is a diagnostic, and a permanent cost table is a
         # thing you stop seeing.
@@ -904,6 +905,10 @@ class MainWindow(QtWidgets.QMainWindow):
                      or self._first_scope())
             self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
+            # The camera's calibrated rolling-shutter readout, or zero
+            # and no correction. Lives with the profile because
+            # remounting the body is what invalidates it.
+            self.pipeline.set_readout(profile.readout_us)
             self.objective.set_turret(self.setup.scope.turret)
             self._sync_optovar()
             self._push_turret()
@@ -1738,6 +1743,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _do_lut(self) -> None:
         self.calibration.build_preview_lut(self.setup)
+
+    def _calibrate_drift(self) -> None:
+        """The tracking-drift ritual: fit the camera's rolling-shutter
+        readout from passes the operator closes on one feature. Modal,
+        fed live frames through the fan-out while it runs."""
+        if self.setup is None:
+            return
+        from .calib_ui import DriftDialog
+
+        dlg = DriftDialog(self.pipeline, self.setup.camera, self)
+        if self._last_preview is not None:
+            dlg.set_frame_height(self._last_preview.shape[0])
+        self._drift_dialog = dlg
+        try:
+            dlg.exec()
+        finally:
+            self._drift_dialog = None
+        if dlg.saved:
+            # The constant lives with the camera: remounting or rotating
+            # the body is what invalidates it, not anything per-session.
+            self.library.file_camera(self.setup.camera)
+            self.library.save()
 
     @QtCore.Slot(object)
     def _on_calib_progress(self, progress: Progress) -> None:
@@ -2650,7 +2677,9 @@ class MainWindow(QtWidgets.QMainWindow):
                   or self.timelapse.running
                   # The pips are a consumer too: dots pinned to the
                   # slide need a tracker awake to pin them.
-                  or self.settings.framing_pips)
+                  or self.settings.framing_pips
+                  # As is the drift ritual, which is made of tracking.
+                  or getattr(self, "_drift_dialog", None) is not None)
         if wanted == getattr(self, "_track_wanted", True):
             return
         self._track_wanted = wanted
@@ -3390,6 +3419,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auto_expose_guarded(s)
         self._sync_track_wanted()
         self._keep_tracking(s)
+        drift = getattr(self, "_drift_dialog", None)
+        if drift is not None:
+            drift.observe(s)
         # Blankness is only read by the stack trigger, so it is only worth
         # computing while a stack is open. Pushed from here rather than
         # tracked through the session's several beginnings and ends.

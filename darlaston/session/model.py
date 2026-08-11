@@ -293,6 +293,15 @@ class CameraProfile:
     #: Set here it is authoritative; the datasheet number is the answer
     #: and the camera cannot argue with it.
     pixel_um: float = 0.0
+    #: Rolling-shutter readout time in microseconds, signed by the
+    #: direction the rows sweep relative to the scene -- so a camera
+    #: mounted back-to-front simply calibrates to the opposite sign.
+    #: Zero means uncalibrated and no correction. Measured by the
+    #: tracking-drift ritual in the calibration panel, never typed in:
+    #: vertical stage motion under a rolling shutter rescales every
+    #: measured shift by 1 + v*readout/h, which walks the map one way
+    #: over up-down passes (spike/docs/rolling-shutter.md).
+    readout_us: float = 0.0
     last_scope: str | None = None
 
     @property

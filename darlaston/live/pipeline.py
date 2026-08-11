@@ -236,6 +236,12 @@ class LivePipeline:
         self._key_raw: np.ndarray | None = None
         self._key_pending_raw: np.ndarray | None = None
         self._hann: np.ndarray | None = None
+        #: Rolling-shutter readout time, microseconds, signed by the
+        #: sweep direction; zero disables the correction. From the
+        #: camera profile, measured by the calibration ritual.
+        self._readout_us = 0.0
+        #: Smoothed vertical speed, track px/s, for that correction.
+        self._vy_track = 0.0
         #: Channel destinations, reused across frames. Allocating fresh
         #: 2.2 MP planes per frame cost 3217 minor page faults -- the kernel
         #: mapping and zeroing megabytes thirty times a second -- and that,
@@ -934,6 +940,15 @@ class LivePipeline:
             self._key_raw = small.copy()
             return None, None, 0.0
         (dx, dy), response = cv2.phaseCorrelate(self._key, cur)
+        # Rolling-shutter correction, when the readout has been
+        # calibrated. The row sweep rescales every measured vertical
+        # shift by 1/(1 + v*T/h) -- invisible from inside the stream,
+        # since both frames wear the same warp, which is why T comes
+        # from the calibration ritual rather than from any measurement
+        # here. First order, ~1% at cranking speeds; the velocity is
+        # last frame's estimate, whose lag costs a second-order term.
+        if self._readout_us and dy:
+            dy *= 1.0 + self._vy_track * self._readout_us / 1e6 / h
         # A shift beyond the safe zone must show its work. Past 0.35 of
         # an axis the number can still be exact, but it is also where a
         # *wrapped* measurement can land: a true shift past half the
@@ -960,6 +975,10 @@ class LivePipeline:
         self._key_offset = key_offset
         self._key_pending = cur
         self._key_pending_raw = small.copy()
+        # Vertical speed in track pixels per second, smoothed, for the
+        # next frame's rolling-shutter correction.
+        self._vy_track = (0.7 * self._vy_track
+                          + 0.3 * (motion[1] / sy) * self._rate)
         return key_offset, motion, float(response)
 
     #: Shifts up to this fraction of each axis are trusted on the
@@ -1036,6 +1055,11 @@ class LivePipeline:
                 if score is not None and score >= bar:
                     return False
         return True
+
+    def set_readout(self, us: float) -> None:
+        """The camera's calibrated rolling-shutter readout time. Applies
+        from the next frame; zero switches the correction off."""
+        self._readout_us = float(us or 0.0)
 
     def _drop_key(self) -> None:
         """Forget the correlation reference. Analysis thread only."""
