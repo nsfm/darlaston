@@ -133,8 +133,6 @@ class CalibrationPanel(QtWidgets.QWidget):
     #: automatic version could not work, because deciding the view had
     #: moved needed the tracker, and the tracker cannot follow empty glass.
     bank_flat = QtCore.Signal()
-    #: Open the tracking-drift ritual.
-    calibrate_drift = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -149,9 +147,6 @@ class CalibrationPanel(QtWidgets.QWidget):
         self.wb.button.setEnabled(False)
         self.lut = _Row(_("calib.lut.label"), _("calib.lut.action"),
                         _("calib.lut.tooltip"))
-        self.drift = _Row(_("calib.drift.label"), _("calib.drift.action"),
-                          _("calib.drift.tooltip"))
-        self.drift.act.connect(self.calibrate_drift)
 
         self.dark.act.connect(self.capture_dark)
         self.flat.act.connect(self._on_flat)
@@ -173,7 +168,7 @@ class CalibrationPanel(QtWidgets.QWidget):
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(5)
-        for w in (self.dark, self.flat, self.wb, self.lut, self.drift,
+        for w in (self.dark, self.flat, self.wb, self.lut,
                   self.progress, self.status):
             col.addWidget(w)
 

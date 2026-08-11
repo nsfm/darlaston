@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- A circled 'i': the universal "there is help here" mark, drawn at
+       the same stroke weight as every other icon so it renders the same
+       on every machine, unlike the font glyph it replaces. -->
+  <g fill="none" stroke="currentColor" stroke-width="1.2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="8" cy="8" r="6.1"/>
+    <path d="M8 7.4 L8 11.2"/>
+  </g>
+  <circle cx="8" cy="4.9" r="0.7" fill="currentColor" stroke="none"/>
+</svg>

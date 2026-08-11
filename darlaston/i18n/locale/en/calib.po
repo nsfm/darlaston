@@ -117,17 +117,8 @@ msgstr ""
 #. the readout time from passes the operator closes by re-centring the
 #. same feature -- their re-centring is the ground truth.
 
-msgid "calib.drift.label"
-msgstr "Tracking drift"
-
-msgid "calib.drift.action"
-msgstr "Measure"
-
-msgid "calib.drift.tooltip"
-msgstr ""
-"Vertical cranking can walk the map slowly one way: a rolling-shutter\n"
-"effect, measurable in under a minute and corrected once measured.\n"
-"Recalibrate if the camera is remounted or rotated."
+#. The button that opens this ritual lives on the slide map, not here;
+#. its label and tooltip are under map.calibrate.
 
 msgid "calib.drift.title"
 msgstr "Tracking drift"

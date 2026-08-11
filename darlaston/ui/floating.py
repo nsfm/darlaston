@@ -124,6 +124,17 @@ class FloatingPanel(QtWidgets.QWidget):
         # impossible to find because there was nothing to find.
         self._grip = _Grip(self)
 
+        # An optional help mark in the title bar, after the title. A real
+        # icon widget rather than a font glyph: the unicode circled-i
+        # rendered at a different weight on every machine and its tooltip
+        # never fired where it sat in the body. Hidden until a panel gives
+        # it something to say.
+        self._info = QtWidgets.QLabel(self)
+        self._info.setPixmap(icons.icon("info", theme.DIM, 13).pixmap(13, 13))
+        self._info.setFixedSize(15, 15)
+        self._info.setCursor(QtCore.Qt.CursorShape.WhatsThisCursor)
+        self._info.hide()
+
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(9, TITLE_H + 2, 9, 9)
         outer.setSpacing(0)
@@ -159,6 +170,26 @@ class FloatingPanel(QtWidgets.QWidget):
 
     def set_relative(self, fx: float, fy: float) -> None:
         self._rel = (fx, fy)
+
+    def set_info(self, text: str | None) -> None:
+        """A help mark in the title bar, hovered for `text`. None hides it."""
+        if not text:
+            self._info.hide()
+            return
+        self._info.setToolTip(text)
+        self._info.show()
+        self._place_info()
+
+    def _place_info(self) -> None:
+        """After the title text, whose width depends on the font and the
+        title, so it is measured rather than guessed."""
+        if self._info.isHidden():
+            return
+        f = QtGui.QFont()
+        f.setPointSizeF(7.5)
+        f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.0)
+        width = QtGui.QFontMetrics(f).horizontalAdvance(self._title.upper())
+        self._info.move(9 + width + 7, (TITLE_H - self._info.height()) // 2 + 1)
 
     # ---- dragging --------------------------------------------------------
 

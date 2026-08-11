@@ -587,8 +587,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slidemap.reset_requested.connect(self._reset_tracking)
         self.slidemap.mosaic_requested.connect(self._on_mosaic_requested)
         self.slidemap.undo_tile.connect(self._on_undo_tile)
+        self.slidemap.calibrate_drift.connect(self._calibrate_drift)
         self.map_window = FloatingPanel("slide map", self.view)
         self.map_window.set_relative(0.02, 0.58)
+        self.map_window.set_info(_("map.tips.tooltip"))
         _fill(self.map_window, self.slidemap)
 
         self.calib_panel = CalibrationPanel()
@@ -596,7 +598,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calib_panel.build_flat.connect(self._do_flat)
         self.calib_panel.bank_flat.connect(self._bank_flat)
         self.calib_panel.build_lut.connect(self._do_lut)
-        self.calib_panel.calibrate_drift.connect(self._calibrate_drift)
         # Performance, in a floating panel like the others. Off by
         # default: it is a diagnostic, and a permanent cost table is a
         # thing you stop seeing.

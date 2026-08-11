@@ -73,13 +73,20 @@ msgstr "holding, nothing to track"
 msgid "map.state.tracking"
 msgstr "tracking"
 
-#. The tips marker: one glyph, hover for the sentence. Circled i, the
-#. universal "there is help here" mark.
-msgid "map.tips.mark"
-msgstr "ⓘ"
+#. The tracking-drift calibration button, first-class on the map
+#. because a new user meets tracking here long before any calibration
+#. panel: results are acceptable uncalibrated, so nobody goes looking.
+msgid "map.calibrate.action"
+msgstr "Calibrate"
 
-#. What actually helps tracking, none of it discoverable from the
-#. interface: light and hands.
+msgid "map.calibrate.tooltip"
+msgstr ""
+"Measure and correct rolling-shutter tracking drift for this camera.\n"
+"Worth it if the map slowly walks one way as you crank vertically."
+
+#. Shown one hover away, on the title bar's help mark. What actually
+#. helps tracking, none of it discoverable from the interface: light
+#. and hands.
 msgid "map.tips.tooltip"
 msgstr ""
 "Tracking works best with a short exposure time (under 8 ms if the "

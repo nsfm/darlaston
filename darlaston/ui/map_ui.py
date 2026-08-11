@@ -321,6 +321,11 @@ class SlideMapPanel(QtWidgets.QWidget):
     #: leave the button lying.
     mosaic_requested = QtCore.Signal(bool)
     undo_tile = QtCore.Signal()
+    #: The operator asked to calibrate tracking drift. First-class on the
+    #: map because this is where a new user meets tracking -- results are
+    #: acceptable uncalibrated, so the map is seen long before anyone
+    #: goes looking for a calibration panel.
+    calibrate_drift = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -364,17 +369,14 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.undo_btn.clicked.connect(self.undo_tile)
         self.undo_btn.hide()
 
+        self.calib_btn = QtWidgets.QPushButton(_("map.calibrate.action"))
+        self.calib_btn.setProperty("role", "seg")
+        self.calib_btn.setToolTip(_("map.calibrate.tooltip"))
+        self.calib_btn.clicked.connect(self.calibrate_drift)
+
         self.status = QtWidgets.QLabel("")
         self.status.setProperty("role", "key")
         self.status.setWordWrap(True)
-
-        # The tips, behind a hover rather than in anyone's way. What
-        # helps tracking is not discoverable from the interface -- it is
-        # a property of light and hands -- so it is worth a sentence
-        # somewhere the eyes already go when tracking misbehaves.
-        self.tips = QtWidgets.QLabel(_("map.tips.mark"))
-        self.tips.setProperty("role", "key")
-        self.tips.setToolTip(_("map.tips.tooltip"))
 
         # The speed gauge: true stage speed against the blur limit the
         # current exposure and magnification set. A drawn bar rather
@@ -393,9 +395,9 @@ class SlideMapPanel(QtWidgets.QWidget):
         row.setSpacing(4)
         row.addWidget(self.mosaic_btn)
         row.addWidget(self.undo_btn)
-        row.addWidget(self.tips)
         row.addWidget(self.speed)
         row.addStretch(1)
+        row.addWidget(self.calib_btn)
         row.addWidget(self.pin_btn)
         row.addWidget(self.clear_btn)
 
