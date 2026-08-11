@@ -243,6 +243,11 @@ class DriftDialog(FramedDialog):
     PASSES = 2
     #: How far a pass should travel, in fields, before Centred means
     #: anything. Advisory in the copy; enforced only by MIN_EVIDENCE.
+    #: More is strictly better -- the drift signal grows with travel
+    #: while the re-centring error stays a few pixels -- now that the
+    #: relocalizer is held off for the ritual, so nothing eats the
+    #: drift over ground revisited on the way back. Three is the floor,
+    #: not the ceiling.
     FIELDS = 3
     #: The relocalizer's texture floor, reused: the ritual needs real
     #: ground for the same reason a probe does. Blank glass cannot

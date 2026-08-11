@@ -2594,6 +2594,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._gated_seen = s.track_gated
             UI_METER.skip("relocalizer")
             return
+        # The drift ritual measures the tracker's raw rolling-shutter
+        # accumulation, and the relocalizer's whole job is to abolish
+        # exactly that over trodden ground -- so a correction landing
+        # mid-pass would eat the drift being measured and under-read the
+        # readout, worse the further the pass revisits mapped terrain.
+        # It goes quiet for the duration; the tracker runs uncorrected,
+        # which is the honest ground truth the ritual is built on.
+        if getattr(self, "_drift_dialog", None) is not None:
+            UI_METER.skip("relocalizer")
+            return
         start = time.perf_counter()
         fix = self.relocator.observe(s.preview, s.stage_pos,
                                      s.stage_tracking,

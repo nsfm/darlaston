@@ -756,6 +756,33 @@ def test_pips_reach_the_view_only_while_tracking(qapp, window):
     assert got[-1] is None, "a lost position must never wear confident dots"
 
 
+def test_the_relocalizer_goes_quiet_during_the_drift_ritual(window):
+    """The ritual measures the tracker's raw drift; the relocalizer
+    exists to abolish exactly that. So while the drift dialog is open,
+    the relocalizer must not observe or correct -- or it would eat the
+    drift being measured."""
+    import types
+
+    win = window()
+    calls = []
+    win.relocator.observe = lambda *a, **k: calls.append(1)
+
+    s = types.SimpleNamespace(
+        preview=np.zeros((120, 160, 3), np.uint8), stage_pos=(5.0, 5.0),
+        stage_tracking=True, stats={}, xy_offset=None, track_gen=1,
+        track_gated=0, track_small=None)
+
+    win._track_wanted = True
+    win._drift_dialog = None
+    win._keep_tracking(s)
+    assert calls, "the relocalizer runs in ordinary operation"
+
+    calls.clear()
+    win._drift_dialog = object()               # the ritual is open
+    win._keep_tracking(s)
+    assert not calls, "the relocalizer must not run during the ritual"
+
+
 def test_the_window_says_what_tracking_is_doing(window):
     """The advisories: lost is said after it is sustained, a gated step
     is said the moment it happens, and neither is said while the

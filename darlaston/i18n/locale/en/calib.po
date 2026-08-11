@@ -152,9 +152,10 @@ msgstr "Centred"
 #. {fields} is a small number of fields of view.
 msgid "calib.drift.pass"
 msgstr ""
-"Crank slowly and steadily down about {fields} fields, then come back "
+"Crank slowly and steadily at least {fields} fields, then come back "
 "to the same feature. Press Centred when it is back in the middle. "
-"Cranking down or up both work; slow and even is what matters."
+"Further is better; cranking down or up both work; slow and even is "
+"what matters."
 
 msgid "calib.drift.again"
 msgstr ""
