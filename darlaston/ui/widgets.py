@@ -1229,6 +1229,38 @@ _BAYER = np.array([
 ], dtype=np.float32) / 64.0
 
 
+def dithered_fill(p: QtGui.QPainter, rect: QtCore.QRectF, frac: float,
+                  colour: QtGui.QColor, cell: int = 2,
+                  dissolve: float = 16.0) -> None:
+    """A horizontal bar filled to `frac` of `rect`, its leading edge
+    dissolving into the ground through the ordered-dither ramp rather
+    than a hard line -- the same grammar ValueBar uses, which reads as
+    'a quantity, and an estimate' wherever it is drawn. The caller sets
+    any clip and draws the ground; this only lays down the fill.
+    """
+    frac = max(0.0, min(1.0, frac))
+    edge = rect.left() + rect.width() * frac
+    solid = max(rect.left(), edge - dissolve)
+    if solid > rect.left():
+        p.fillRect(QtCore.QRectF(rect.left(), rect.top(),
+                                 solid - rect.left(), rect.height()), colour)
+    if edge <= solid:
+        return
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+    p.setPen(QtCore.Qt.PenStyle.NoPen)
+    p.setBrush(colour)
+    width = edge - solid
+    top, bottom = int(rect.top()), int(rect.bottom())
+    for cx in range(int(solid), int(edge) + 1, cell):
+        coverage = (1.0 - (cx - solid) / width) ** 2
+        col = (cx // cell) % 8
+        for cy in range(top, bottom, cell):
+            if _BAYER[(cy // cell) % 8, col] >= coverage:
+                continue
+            p.drawRect(QtCore.QRectF(cx, cy, cell, cell))
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+
 def _packed(colour: QtGui.QColor) -> np.uint32:
     """One opaque RGBA8888 pixel, as an integer.
 

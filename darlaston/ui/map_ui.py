@@ -256,23 +256,28 @@ class _Canvas(QtWidgets.QWidget):
 
 
 class _SpeedGauge(QtWidgets.QWidget):
-    """A bar against the blur limit, with the number beside it.
+    """A dithered bar against the blur limit, the speed read inside it.
 
-    The scale runs to 1.3x the limit; ticks mark 0.7, where the brass
-    zone begins, and 1.0, where the map starts refusing frames. The
-    fill wears the zone's colour, so peripheral vision reads it without
-    the number -- which is how a gauge trains a hand.
+    Same dissolve grammar as the sensor sliders -- solid zone colour,
+    then an ordered-dither ramp -- which says 'a quantity, and an
+    estimate', both true here. No handle, because the value is an
+    estimate and there is nothing to point at precisely. The scale runs
+    to 1.3x the limit, and the fill wears green below 0.7, brass to 1.0,
+    red past it, so peripheral vision reads the zone without the number.
     """
 
     #: Where the drawn scale ends, as a multiple of the limit.
     FULL = 1.3
+    #: How far the leading edge dissolves back, in device pixels; shared
+    #: with the fill so the text colour splits exactly at the solid edge.
+    DISSOLVE = 16.0
 
     def __init__(self) -> None:
         super().__init__()
         self._ratio = 0.0
         self._text = ""
         self.tone = theme.GOOD
-        self.setFixedSize(150, 14)
+        self.setFixedSize(132, 18)
 
     def set(self, ratio: float, text: str) -> None:
         tone = (theme.BAD if ratio >= 1.0
@@ -284,24 +289,54 @@ class _SpeedGauge(QtWidgets.QWidget):
             self.update()
 
     def paintEvent(self, _event) -> None:
+        from .widgets import BG_TEXT, dithered_fill
+
         with QtGui.QPainter(self) as p:
-            bar = QtCore.QRectF(0, 3.0, 86.0, self.height() - 6.0)
-            p.fillRect(bar, QtGui.QColor(255, 255, 255, 26))
-            frac = max(0.0, min(self._ratio / self.FULL, 1.0))
-            p.fillRect(QtCore.QRectF(bar.left(), bar.top(),
-                                     bar.width() * frac, bar.height()),
-                       QtGui.QColor(self.tone))
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1))
-            for mark in (0.7, 1.0):
-                x = bar.left() + bar.width() * mark / self.FULL
-                p.drawLine(QtCore.QPointF(x, bar.top() - 2),
-                           QtCore.QPointF(x, bar.bottom() + 2))
-            p.setPen(QtGui.QColor(theme.DIM))
-            p.drawText(QtCore.QRectF(bar.right() + 6, 0,
-                                     self.width() - bar.right() - 6,
-                                     self.height()),
-                       QtCore.Qt.AlignmentFlag.AlignVCenter
-                       | QtCore.Qt.AlignmentFlag.AlignLeft, self._text)
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            rect = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(rect, 3.0, 3.0)
+            p.setClipPath(path)
+
+            p.fillRect(self.rect(), QtGui.QColor("#141614"))
+            frac = min(self._ratio / self.FULL, 1.0)
+            dithered_fill(p, rect, frac, QtGui.QColor(self.tone),
+                          dissolve=self.DISSOLVE)
+            # The solid edge sits DISSOLVE pixels back from the fill edge.
+            split = max(rect.left(),
+                        rect.left() + rect.width() * frac - self.DISSOLVE)
+
+            # The limit, where the map begins refusing frames: the one
+            # threshold worth a mark. Faint, so the colour still leads.
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 70), 1))
+            x = rect.left() + rect.width() / self.FULL
+            p.drawLine(QtCore.QPointF(x, rect.top()),
+                       QtCore.QPointF(x, rect.bottom()))
+
+            # The reading, inside the bar, drawn twice under opposite
+            # clips: dark where it sits over the fill, light over the
+            # ground, so it reads at any level without an outline. Split
+            # at the solid edge, before the dissolve, the same as the
+            # sliders.
+            font = p.font()
+            font.setPixelSize(11)
+            p.setFont(font)
+            box = QtCore.QRectF(0, 0, self.width(), self.height())
+            align = (QtCore.Qt.AlignmentFlag.AlignCenter)
+            for clip, colour in (
+                    (QtCore.QRectF(0, 0, split, self.height()), BG_TEXT),
+                    (QtCore.QRectF(split, 0, self.width() - split,
+                                   self.height()), theme.DIM)):
+                p.save()
+                p.setClipRect(clip, QtCore.Qt.ClipOperation.IntersectClip)
+                p.setPen(colour)
+                p.drawText(box, align, self._text)
+                p.restore()
+
+            p.setClipping(False)
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE), 1))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(rect, 3.0, 3.0)
 
 
 class SlideMapPanel(QtWidgets.QWidget):
@@ -391,31 +426,43 @@ class SlideMapPanel(QtWidgets.QWidget):
         self._speed_ema: float | None = None
         self.speed.setVisible(False)
 
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(4)
-        row.addWidget(self.mosaic_btn)
-        row.addWidget(self.undo_btn)
-        row.addWidget(self.speed)
-        row.addStretch(1)
-        row.addWidget(self.calib_btn)
-        row.addWidget(self.pin_btn)
-        row.addWidget(self.clear_btn)
+        # The status line and the gauge share a row of their own: both
+        # are things you read, and crushing them in beside the buttons is
+        # what made the buttons cramped.
+        readout = QtWidgets.QHBoxLayout()
+        readout.setSpacing(6)
+        readout.addWidget(self.status, 1)
+        readout.addWidget(self.speed, 0, QtCore.Qt.AlignmentFlag.AlignRight
+                          | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+        # The buttons get their own row and share it evenly: each expands
+        # to an equal share of the width, so they read as one toolbar
+        # rather than a scatter of different-width segments. Undo takes no
+        # space until a mosaic is open, and the rest simply widen to fill.
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.setSpacing(4)
+        for b in (self.mosaic_btn, self.undo_btn, self.calib_btn,
+                  self.pin_btn, self.clear_btn):
+            b.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
+            buttons.addWidget(b, 1)
 
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(5)
         col.addWidget(self.canvas, 1)
-        col.addWidget(self.status)
-        col.addLayout(row)
+        col.addLayout(readout)
+        col.addLayout(buttons)
 
         self._pos: tuple[float, float] | None = None
         self._frame: tuple[int, int] = (0, 0)
         self._tracking = False
 
     def preferred_size(self, host: QtWidgets.QWidget) -> tuple[int, int]:
-        """About a third of the view wide, bounded, plus room for controls."""
-        w = int(max(280, min(500, host.width() * 0.34)))
-        return w, int(w * 0.58) + 76
+        """About a third of the view wide, bounded, plus room for the two
+        control rows."""
+        w = int(max(300, min(500, host.width() * 0.34)))
+        return w, int(w * 0.58) + 92
 
     #: Estimated motion blur, in preview pixels, above which a frame is
     #: not banked. Picked, not measured: bounded by the field observation
@@ -481,10 +528,17 @@ class SlideMapPanel(QtWidgets.QWidget):
         Handed back by `reset_tracking` at every clear."""
         self._min_gen = int(generation)
 
-    #: Exponential smoothing for the gauge, per frame. 0.2 at ~30 fps is
-    #: a quarter-second time constant: fast enough to be a live
-    #: instrument, slow enough to move like a needle.
-    SPEED_SMOOTH = 0.2
+    #: Exponential smoothing for the gauge, per frame. 0.1 at ~30 fps is
+    #: a third-of-a-second time constant -- heavier than a needle wants
+    #: to feel, but the raw per-frame speed is chaotic enough that the
+    #: extra averaging is what makes the number readable rather than a
+    #: blur of digits.
+    SPEED_SMOOTH = 0.1
+    #: Below this, in um/s, the reading is pinned to zero. A parked stage
+    #: still measures a pixel or two of tremor per frame, and a gauge
+    #: flickering 0-1 while nothing moves reads as broken. Under the
+    #: hand-tremor floor the tracker itself already ignores.
+    SPEED_FLOOR = 3.0
 
     def set_speed(self, um_s: float | None,
                   limit_um_s: float | None) -> None:
@@ -496,9 +550,13 @@ class SlideMapPanel(QtWidgets.QWidget):
         prev = self._speed_ema if self._speed_ema is not None else um_s
         self._speed_ema = (1 - self.SPEED_SMOOTH) * prev \
             + self.SPEED_SMOOTH * um_s
-        v = self._speed_ema
-        text = (_("map.speed.mm", v=f"{v / 1000:.1f}")
-                if v >= 1000 else _("map.speed.um", v=f"{v:.0f}"))
+        v = 0.0 if self._speed_ema < self.SPEED_FLOOR else self._speed_ema
+        # Rounded coarsely so the digits settle: to 0.1 mm/s, or to the
+        # nearest 5 um/s. Finer than that is churn the eye cannot use.
+        if v >= 1000:
+            text = _("map.speed.mm", v=f"{v / 1000:.1f}")
+        else:
+            text = _("map.speed.um", v=f"{round(v / 5) * 5:.0f}")
         self.speed.set(v / limit_um_s if limit_um_s else 0.0, text)
         self.speed.setVisible(True)
 

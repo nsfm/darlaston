@@ -125,14 +125,20 @@ class FloatingPanel(QtWidgets.QWidget):
         self._grip = _Grip(self)
 
         # An optional help mark in the title bar, after the title. A real
-        # icon widget rather than a font glyph: the unicode circled-i
-        # rendered at a different weight on every machine and its tooltip
-        # never fired where it sat in the body. Hidden until a panel gives
-        # it something to say.
-        self._info = QtWidgets.QLabel(self)
-        self._info.setPixmap(icons.icon("info", theme.DIM, 13).pixmap(13, 13))
-        self._info.setFixedSize(15, 15)
-        self._info.setCursor(QtCore.Qt.CursorShape.WhatsThisCursor)
+        # icon widget rather than a font glyph, and it opens a small popup
+        # on *click* rather than waiting on a tooltip: hover tips never
+        # fired for at least one window manager, and a click is
+        # unambiguous everywhere. Hidden until a panel gives it something
+        # to say.
+        self._info = QtWidgets.QPushButton(self)
+        self._info.setIcon(icons.hover_icon("info", theme.DIM, theme.BRASS, 13))
+        self._info.setIconSize(QtCore.QSize(13, 13))
+        self._info.setFixedSize(16, 16)
+        self._info.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self._info.setStyleSheet(
+            "QPushButton { border: 0; background: transparent; }")
+        self._info_text = ""
+        self._info.clicked.connect(self._show_info)
         self._info.hide()
 
         outer = QtWidgets.QVBoxLayout(self)
@@ -172,13 +178,33 @@ class FloatingPanel(QtWidgets.QWidget):
         self._rel = (fx, fy)
 
     def set_info(self, text: str | None) -> None:
-        """A help mark in the title bar, hovered for `text`. None hides it."""
+        """A help mark in the title bar; clicking it shows `text` in a
+        small popup. None hides the mark."""
+        self._info_text = text or ""
         if not text:
             self._info.hide()
             return
-        self._info.setToolTip(text)
         self._info.show()
         self._place_info()
+
+    def _show_info(self) -> None:
+        """A small popup under the mark. Qt.Popup dismisses it on the next
+        click anywhere, which is the behaviour every tooltip should have
+        had and this one reliably does."""
+        popup = QtWidgets.QLabel(
+            self._info_text, self, QtCore.Qt.WindowType.Popup)
+        popup.setWordWrap(True)
+        popup.setMargin(9)
+        popup.setMaximumWidth(320)
+        popup.setStyleSheet(
+            f"QLabel {{ background: {QtGui.QColor(20, 22, 20).name()};"
+            f" color: {theme.INK}; border: 1px solid {theme.LINE};"
+            f" border-radius: 4px; }}")
+        below = self._info.mapToGlobal(
+            QtCore.QPoint(0, self._info.height() + 2))
+        popup.adjustSize()
+        popup.move(below)
+        popup.show()
 
     def _place_info(self) -> None:
         """After the title text, whose width depends on the font and the
