@@ -98,6 +98,29 @@ def test_the_ritual_dialog_walks_the_passes(qapp):
     assert dlg.saved and camera.readout_us == pytest.approx(fitted)
 
 
+def test_measuring_passes_run_without_the_old_correction(qapp):
+    """The re-run bug: a camera already carrying a calibration must
+    measure raw drift, not residual, or the fit lands at the difference
+    from the current constant and the map keeps drifting. Pressing Start
+    zeros the correction; walking away restores it."""
+    from darlaston.ui.calib_ui import DriftDialog
+
+    written = []
+    pipeline = types.SimpleNamespace(set_readout=written.append)
+    camera = types.SimpleNamespace(readout_us=11000.0)
+    dlg = DriftDialog(pipeline, camera)
+    dlg.set_frame_height(1216)
+    dlg._pos_y = 0.0
+
+    dlg._pressed()                              # Start
+    assert written and written[-1] == 0.0, \
+        "measuring must begin with the correction off"
+
+    dlg.reject()
+    assert written[-1] == 11000.0, \
+        "bailing must restore the camera's saved calibration"
+
+
 def test_walking_away_restores_the_profiles_truth(qapp):
     from darlaston.ui.calib_ui import DriftDialog
 

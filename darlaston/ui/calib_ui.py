@@ -326,6 +326,13 @@ class DriftDialog(FramedDialog):
 
     def _pressed(self) -> None:
         if self._cal is None:
+            # Measure raw drift. Any correction already on the camera
+            # would leave each pass reporting only its *residual*, so a
+            # second calibration would fit the difference from the
+            # current constant rather than the truth -- which is exactly
+            # how a re-run lands lower than the first and the map keeps
+            # drifting. Restored on the way out if nothing is saved.
+            self._pipeline.set_readout(0.0)
             self._cal = DriftCalibration(self._frame_h())
             self._cal.begin_pass(self._pos_y if hasattr(self, "_pos_y")
                                  else 0.0)
