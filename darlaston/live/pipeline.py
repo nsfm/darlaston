@@ -975,8 +975,13 @@ class LivePipeline:
         self._key_offset = key_offset
         self._key_pending = cur
         self._key_pending_raw = small.copy()
-        # Vertical speed in track pixels per second, smoothed, for the
-        # next frame's rolling-shutter correction.
+        # Vertical speed in track pixels per second, lightly smoothed,
+        # for the next frame's rolling-shutter correction. The smoothing
+        # weight was swept against jittery cranking
+        # (spike/tracking/jitter_probe.py) and barely moved the residual:
+        # mild jitter corrects to a few px at any weight, and wild jitter
+        # is limited by the nonlinear regime, not the velocity estimate.
+        # So this stays where it was rather than gaining a knob.
         self._vy_track = (0.7 * self._vy_track
                           + 0.3 * (motion[1] / sy) * self._rate)
         return key_offset, motion, float(response)
