@@ -510,6 +510,37 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
     assert panel.model.terrain.ready, "fresh frames must still paint"
 
 
+def test_a_mosaic_locks_its_halo_profile_on_the_first_tile(window):
+    """Removal changes by specimen, not by region: the first stacked
+    tile of a mosaic picks the halo bound, and every tile after inherits
+    it silently rather than asking again -- or worse, answering
+    differently and stitching forty answers into one picture."""
+    win = window()
+
+    win.settings.stack_halo_mode = "off"
+    assert win._tile_merge_slope() == (0.0, False), "off removes nothing"
+
+    win.settings.stack_halo_mode = "choose"
+    win.settings.stack_clamp_slope = 0.7
+    win._mosaic_slope = None
+    slope, pick = win._tile_merge_slope()
+    assert pick, "the first tile must pick, on real data"
+
+    # Tile one's pick locks the profile; the rest inherit it silently.
+    win._mosaic_slope = 0.42
+    assert win._tile_merge_slope() == (0.42, False), "the rest inherit"
+
+    # A fresh mosaic starts the choice over.
+    win._on_mosaic_requested(True)
+    assert win._mosaic_slope is None
+    win._on_mosaic_requested(False)
+
+    # 'last' honours the stored bound without ever asking.
+    win.settings.stack_halo_mode = "last"
+    win._mosaic_slope = None
+    assert win._tile_merge_slope() == (0.7, False), "last never asks"
+
+
 def test_a_stacked_tile_shows_live_and_seals_in_place(qapp):
     """The bug: a stacked mosaic painted nothing until a tile sealed on
     the slide to the next field, while single captures painted per shot,

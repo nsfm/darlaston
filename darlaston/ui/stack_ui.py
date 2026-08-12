@@ -228,6 +228,19 @@ class StackAssembly(QtWidgets.QWidget):
         self.update()
         self.canvas.update()
 
+    def set_context(self, mosaic: bool) -> None:
+        """In a mosaic, Finish seals the field as a tile and Discard drops
+        just that field -- both leave the mosaic running -- so the buttons
+        say so rather than borrowing the free-standing stack's words."""
+        self.finish.setText(_("stack.seal.action") if mosaic
+                            else _("stack.finish.action"))
+        self.finish.setToolTip(_("stack.seal.tooltip") if mosaic
+                               else _("stack.finish.tooltip"))
+        self.discard.setText(_("stack.discard_field.action") if mosaic
+                             else _("stack.discard.action"))
+        self.discard.setToolTip(_("stack.discard_field.tooltip") if mosaic
+                                else _("stack.discard.tooltip"))
+
     @property
     def count(self) -> int:
         return self._count

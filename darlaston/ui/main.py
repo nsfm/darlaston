@@ -196,6 +196,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_preview = None
         self._tile_merges: list[tuple[int, Path]] = []
         self._tile_merging: int | None = None
+        #: The halo-removal bound chosen for this mosaic, locked by its
+        #: first stacked tile and inherited by the rest. None until the
+        #: first tile picks it; reset when a new mosaic begins.
+        self._mosaic_slope: float | None = None
         #: Take the next auto-exposure step at full stride. Set by things
         #: that are known to change the light rather than measured to have
         #: changed it: swapping objective loses four to sixteen times the
@@ -1981,11 +1985,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 # rhythm -- rack, pause, rack, pause, slide -- with no
                 # button between fields.
                 self.assembly.reset()
+                self.assembly.set_context(True)
                 self.stack_window.place((420, 330))
                 self.stack_window.show()
                 self.stack_trigger.arm()
                 self.strip.set_note(_("note.stacked_mosaic"))
                 return
+            self.assembly.set_context(False)
             self.stack_session = StackSession(self.settings.capture_root,
                                       self.subject.subject)
             if self.setup is not None:
@@ -2219,6 +2225,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merges.append((index, Path(directory)))
         self._next_tile_merge()
 
+    def _tile_merge_slope(self) -> tuple[float, bool]:
+        """The halo-removal bound for the next mosaic tile, and whether
+        this tile has to pick it interactively.
+
+        One profile for the whole mosaic: removal changes by specimen,
+        not by region, so forty tiles must not be forty different answers
+        stitched into one picture. When removal is on, the *first* tile
+        picks the bound on its own real stacked data and every tile after
+        inherits it silently. "off" removes nothing; "last" uses the
+        stored bound without asking.
+        """
+        mode = self.settings.stack_halo_mode
+        if mode == "off":
+            return 0.0, False
+        if self._mosaic_slope is not None:
+            return self._mosaic_slope, False          # locked by tile one
+        if mode == "choose":
+            return self.settings.stack_clamp_slope, True   # pick, this tile
+        return self.settings.stack_clamp_slope, False      # "last": silent
+
     def _next_tile_merge(self) -> None:
         if self._tile_merging is not None or not self._tile_merges:
             return
@@ -2227,13 +2253,21 @@ class MainWindow(QtWidgets.QMainWindow):
         smoothing = self.settings.stack_smoothing
         feather = self.settings.stack_feather
         masking = self.settings.stack_mask_background
-        # Locked for the whole mosaic, and never asked. Forty tiles would
-        # be forty questions, and worse, forty different answers stitched
-        # into one picture -- so a tile takes the stored bound whatever
-        # the mode says, which also keeps a tile identical to the same
-        # stack merged on its own.
-        slope_ = (0.0 if self.settings.stack_halo_mode == "off"
-                  else self.settings.stack_clamp_slope)
+        slope_, pick = self._tile_merge_slope()
+        choose = None
+        if pick:
+            # The first tile's chosen bound becomes the mosaic's, captured
+            # off the worker thread as the picker returns it. Dismissing
+            # the dialog locks the stored default instead, so the rest of
+            # the mosaic still stays consistent.
+            from .sampler_ui import bridge
+            base = bridge(self, self.bridge.stack_merge)
+
+            def choose(*a, _base=base):
+                picked = _base(*a)
+                self._mosaic_slope = (float(picked) if picked is not None
+                                      else self.settings.stack_clamp_slope)
+                return picked
 
         def work():
             from ..process.stack import merge
@@ -2242,7 +2276,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # stitcher reads bayer tiles.
                 merge(directory, output="bayer", smoothing=smoothing,
                       feather=feather, mask_background=masking,
-                      clamp_slope=slope_)
+                      clamp_slope=slope_, choose_slope=choose)
                 self.bridge.tile_merge.emit((index, True, ""))
             except Exception as exc:
                 self.bridge.tile_merge.emit((index, False, str(exc)))
@@ -2498,6 +2532,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if on:
             self.mosaic = MosaicSession(self.settings.capture_root,
                                         self.subject.subject)
+            # A fresh mosaic picks its halo profile anew, on its first
+            # stacked tile.
+            self._mosaic_slope = None
             if self.setup is not None:
                 obj = self.setup.scope.turret.objective
                 self.mosaic.set_meta(
