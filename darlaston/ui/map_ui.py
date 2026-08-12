@@ -206,10 +206,15 @@ class _Canvas(QtWidgets.QWidget):
                 colour = QtGui.QColor(200, 60, 50)
             else:
                 colour = QtGui.QColor(theme.BRASS)
-                if not last:
+                if not last and tile.state != "stacking":
                     colour.setAlpha(140)
-            p.setPen(QtGui.QPen(colour, 1.4 if last or tile.state == "failed"
-                                else 1.0))
+            pen = QtGui.QPen(colour, 1.4 if last or tile.state in
+                             ("failed", "stacking") else 1.0)
+            if tile.state == "stacking":
+                # The field being racked right now: a dashed, live outline,
+                # so it reads as in progress rather than a committed frame.
+                pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+            p.setPen(pen)
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
             if tile.label:
@@ -379,6 +384,11 @@ class SlideMapPanel(QtWidgets.QWidget):
         #: and how many tracked frames of holdoff remain after a gate.
         self._gated_seen = 0
         self._paint_hold = 0
+        #: A provisional tile is on the map for the field being stacked
+        #: right now, so a stacked mosaic shows the work as it happens
+        #: rather than only when a tile seals on the slide to the next
+        #: field -- the asymmetry that read as "stacking does nothing".
+        self._stacking = False
 
         self.pin_btn = QtWidgets.QPushButton(_("map.pin.action"))
         self.pin_btn.setProperty("role", "seg")
@@ -583,6 +593,31 @@ class SlideMapPanel(QtWidgets.QWidget):
             self.model.add_tile(pos, preview, state=state, label=label)
         self.canvas.update()
         self._update_status()
+
+    def begin_stacking(self, pos, preview) -> None:
+        """Show the field currently being stacked, live. A provisional
+        tile that `end_stacking` replaces with the sealed one, so a
+        stacked mosaic paints as it works rather than only on slide-away."""
+        if pos is None or preview is None:
+            return
+        if self._stacking:
+            self.model.pop_tile()
+        self.model.add_tile(pos, preview, state="stacking", label="")
+        self._stacking = True
+        self.canvas.update()
+
+    def update_stacking(self, label: str) -> None:
+        """The slice count on the in-progress tile, as slices land."""
+        if self._stacking and self.model.tiles:
+            self.model.tiles[-1].label = label
+            self.canvas.update()
+
+    def end_stacking(self) -> None:
+        """Drop the provisional tile; the sealed one is added next."""
+        if self._stacking:
+            self.model.pop_tile()
+            self._stacking = False
+            self.canvas.update()
 
     def set_tile_state(self, index: int, state: str) -> None:
         self.model.set_tile_state(index, state)

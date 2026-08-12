@@ -1893,6 +1893,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_frame = (w, h)
             self._tile_preview = (self._last_preview.copy()
                                   if self._last_preview is not None else None)
+            # Paint the field live: a stacked mosaic now shows the tile
+            # being worked from its first slice, the same immediate
+            # feedback a single-shot tile gives, rather than appearing
+            # from nothing when it seals on the slide to the next field.
+            self.slidemap.begin_stacking(self._tile_anchor, self._tile_preview)
+        if self.mosaic is not None:
+            self.slidemap.update_stacking(f"×{s.index}")
         self._read_slice_for_preview(self.stack_session.dir / s.filename)
         # Nothing here about the queue. It lives in the gauge under the
         # stack window now: the strip is where "hold still -- exposing"
@@ -2168,6 +2175,9 @@ class MainWindow(QtWidgets.QMainWindow):
         done, self.stack_session = self.stack_session, None
         anchor, self._tile_anchor = self._tile_anchor, None
         preview, self._tile_preview = self._tile_preview, None
+        # The provisional live tile goes now; the sealed one takes its
+        # place below, at the same position.
+        self.slidemap.end_stacking()
         if done is None or self.mosaic is None:
             return
         import shutil

@@ -510,6 +510,37 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
     assert panel.model.terrain.ready, "fresh frames must still paint"
 
 
+def test_a_stacked_tile_shows_live_and_seals_in_place(qapp):
+    """The bug: a stacked mosaic painted nothing until a tile sealed on
+    the slide to the next field, while single captures painted per shot,
+    so stacking read as doing nothing. The field being racked now shows
+    live as a provisional tile, which the sealed one then replaces --
+    without leaving two tiles at one spot."""
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    panel = SlideMapPanel()
+    preview = np.full((60, 80, 3), 120, np.uint8)
+
+    panel.begin_stacking((100.0, 50.0), preview)
+    assert len(panel.model.tiles) == 1
+    assert panel.model.tiles[-1].state == "stacking", "live tile is distinct"
+    panel.update_stacking("×3")
+    assert panel.model.tiles[-1].label == "×3"
+
+    # Sealing: the provisional goes, the real tile takes its place. One
+    # tile, not two, at the field.
+    panel.end_stacking()
+    panel.tile_added((100.0, 50.0), preview, state="merging", label="×3")
+    assert len(panel.model.tiles) == 1
+    assert panel.model.tiles[-1].state == "merging"
+
+    # A field passed through with no slices leaves nothing behind.
+    panel.begin_stacking((300.0, 0.0), preview)
+    assert len(panel.model.tiles) == 2
+    panel.end_stacking()
+    assert len(panel.model.tiles) == 1, "an abandoned field must not linger"
+
+
 def test_the_map_banks_only_what_the_tracker_is_calm_about(qapp):
     """The banking quality bar, from the on-glass report: during a fast
     crank the map banked blurred frames, and one frame banked in the
