@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 from ..capture.mosaic import MosaicSession, Tile
-from . import depthmap, develop, dng
+from . import depthmap, develop, dng, seam
 
 _log = logging.getLogger(__name__)
 
@@ -542,6 +542,7 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
               scale: float = 0.25, pattern: str = "GBRG",
               flat: np.ndarray | None = None,
               shapes: list[tuple[int, int]] | None = None,
+              seam_mult: list[np.ndarray] | None = None,
               progress=None) -> Path:
     """Blend the tiles at their solved positions into one linear DNG.
 
@@ -555,6 +556,12 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
 
     The cost is re-reading tiles that straddle a band boundary, which is
     bounded and cheap next to not being able to do it at all.
+
+    `seam_mult`, when given, is a per-tile field in [0, 1] (at the ownership
+    scale `process.seam` decides) that multiplies into each tile's window --
+    routing the transition between two tiles around any specimen in their
+    overlap instead of feathering across it. It is 1 wherever the seam found
+    nothing to move, so the blend is unchanged where it was already clean.
     """
     if shapes is None:
         shapes = []
@@ -589,7 +596,7 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
         bot = min(ch, top + band_h)
         acc = np.zeros((bot - top, cw, 3), np.float32)
         wacc = np.zeros((bot - top, cw), np.float32)
-        for tile, (x, y, sw, sh) in zip(session.tiles, boxes):
+        for ti, (tile, (x, y, sw, sh)) in enumerate(zip(session.tiles, boxes)):
             if y >= bot or y + sh <= top:
                 continue                      # this tile misses the band
             raw = read_tile(session.dir, tile)
@@ -607,6 +614,12 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
                 small /= cv2.resize(flat, (sw, sh),
                                     interpolation=cv2.INTER_LINEAR)[:, :, None]
             win = _window(sh, sw)
+            if seam_mult is not None:
+                # Route the seam around specimens: narrow the window to the
+                # side of the seam this tile owns. Upsampled from the coarse
+                # ownership scale; the feather is broad, so linear is enough.
+                win = win * cv2.resize(seam_mult[ti], (sw, sh),
+                                       interpolation=cv2.INTER_LINEAR)
 
             # Intersect the tile with the band, in both coordinate frames.
             y0 = max(y, top)
@@ -716,10 +729,11 @@ def stitch(directory: Path | str, scale: float = 0.25,
         del raw
     positions, edges = register(session, lumas, shapes)
     flat = estimate_flat(lumas)
+    seam_mult, _ = seam.weights(lumas, positions, shapes, scale)
     del lumas
     geom = plan(positions, shapes, scale)
     path = composite(session, positions, scale=scale, flat=flat,
-                     shapes=shapes, progress=progress)
+                     shapes=shapes, seam_mult=seam_mult, progress=progress)
     # A stacked mosaic knows its own shape: blend the tiles' depth maps
     # the same way, and every depth render works on the whole
     # arrangement rather than one field.
@@ -735,6 +749,7 @@ def stitch(directory: Path | str, scale: float = 0.25,
         "tiles": len(session.tiles),
         "edges": len(edges),
         "refined": sum(1 for e in edges if e.refined),
+        "seamed": sum(1 for m in seam_mult if float(m.min()) < 0.999),
         "flattened": flat is not None,
         "depth_map": depth_path is not None,
         "falloff": (round(float(1.0 - flat.min() / flat.max()) * 100, 1)
