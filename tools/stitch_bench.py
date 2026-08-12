@@ -2,10 +2,18 @@
 
 The stack bench (`stack_bench.py`) pins the merge; this pins the stitch.
 Synthetic two-tile scenes with known ground truth, each modelling what the
-seam is meant to fix or forbidden to break, and a table of the two blends
--- the plain raised-cosine feather the compositor ships, and the seam-aware
-weights -- across the metrics. Every change to `process.seam` must move
-these the right way before it ships.
+seam is meant to fix or forbidden to break, and a table of the blends across
+the metrics. Every change to `process.seam` must move these the right way
+before it ships.
+
+Blends:
+  feather   -- the plain raised-cosine window the compositor ships.
+  seam      -- the window narrowed by the seam multiplier (process.seam).
+  multiband -- seam ownership blended per frequency (seam.multiband_blend),
+               applied seam-locally; the archival ceiling for a specimen in
+               an overlap that also carries a brightness step.
+  lfc       -- a recorded dead-end (see blend_lfc): the cheap two-band
+               approximation of multiband, kept to stop it being retried.
 
 Scenes:
   ghost    -- a specimen sits in the overlap and the two tiles are placed
@@ -277,6 +285,50 @@ def blend_multiband(scene):
     return out, w
 
 
+def blend_lfc(scene, down=8):
+    """Low-frequency compensation: a measured dead-end, kept as one.
+
+    The hope was a streaming-cheap multiband: high frequencies from the seam
+    composite (specimen committed, no ghost) and low frequencies from a
+    wide-mask composite (brightness step graded), a global two-band split
+    with no three-tile-junction patch boundary and no full pyramid to hold.
+
+    It does not work, and the bench says so: ghost 445 -> 130 on the ghost
+    scene (helps) but 0 -> 161 on ghost+step (a *regression* against the
+    plain seam). The reason is fundamental. A specimen the seam routed around
+    sits right beside the seam, so any spatially wide mask bleeds across it
+    and de-commits it -- the ghost comes back. Full multiband escapes this
+    because it is frequency-selective, not a single spatial mask: it commits
+    detail with a sharp mask at the fine levels and grades the step with a
+    wide mask at the coarse ones, in the same place. A two-band spatial split
+    cannot do both at once where specimen and seam are close. So the archival
+    win needs the real pyramid; this is here to stop the idea being retried."""
+    mult, _ = seam.weights([scene.tile_a, scene.tile_b],
+                           [scene.pos_a, scene.pos_b],
+                           [(scene.th, scene.tw)] * 2, scale=1.0)
+    base = _window(scene.th, scene.tw)
+    wa = base * cv2.resize(mult[0], (scene.tw, scene.th))
+    wb = base * cv2.resize(mult[1], (scene.tw, scene.th))
+    seam_out, _ = _place(scene, wa, wb)
+
+    sigma = scene.tw * 0.12                     # widen the ownership transition
+
+    def wide(m):
+        mm = cv2.resize(m, (scene.tw, scene.th))
+        return base * cv2.GaussianBlur(mm, (0, 0), sigma)
+
+    wide_out, _ = _place(scene, wide(mult[0]), wide(mult[1]))
+
+    def lowpass(img):
+        h, w = img.shape
+        small = cv2.resize(img, (max(1, w // down), max(1, h // down)),
+                           interpolation=cv2.INTER_AREA)
+        return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    correction = lowpass(wide_out) - lowpass(seam_out)
+    return seam_out + correction, None
+
+
 # ---- metrics ----------------------------------------------------------------
 
 def _overlap_cols(scene):
@@ -349,7 +401,8 @@ def main():
         scene = build()
         for blend_name, blend in (("feather", blend_feather),
                                   ("seam", blend_seam),
-                                  ("multiband", blend_multiband)):
+                                  ("multiband", blend_multiband),
+                                  ("lfc", blend_lfc)):
             out, ratio = blend(scene)
             s = seam_on_specimen(scene, ratio) * 100
             g = ghost_rmse(scene, out)
