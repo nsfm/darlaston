@@ -2078,6 +2078,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # are exactly the ones most likely to still be in the queue when
         # somebody presses Finish.
         self._settle_slices()
+        if self.mosaic is not None:
+            # Finish in a mosaic seals this field as a tile, exactly as
+            # sliding to the next field does: unchecking stack routes
+            # through _on_stack_toggled, whose mosaic branch adopts the
+            # slices into the mosaic and background-merges them with the
+            # mosaic's one locked profile, and the map shows the tile. The
+            # standalone merge below instead writes a merged file the
+            # mosaic never sees -- which is why pressing Finish rather than
+            # sliding left the map blank and the tile lost to the mosaic.
+            self.focus.stack.setChecked(False)
+            return
         if len(self.stack_session.slices) < 2:
             self.assembly.set_merging(None, None,
                                       "need at least two slices")
