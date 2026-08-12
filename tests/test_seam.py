@@ -97,3 +97,34 @@ def test_a_specimen_in_the_overlap_is_given_to_one_tile():
     # One side owns the specimen (near 1), the other yields it (near 0).
     assert abs(over_a - over_b) > 0.5, \
         "the specimen was split between both tiles, not given to one"
+
+
+def test_multiband_reconstructs_a_single_source():
+    """Blending an image with itself, or committing wholly to one side, must
+    return that source: the Laplacian pyramid has to collapse back cleanly,
+    or every blend carries reconstruction error."""
+    rng = np.random.default_rng(4)
+    a = rng.uniform(0, 4095, (200, 300)).astype(np.float32)
+    b = rng.uniform(0, 4095, (200, 300)).astype(np.float32)
+    w_all = np.ones((200, 300), np.float32)
+    w_none = np.zeros((200, 300), np.float32)
+    assert np.allclose(seam.multiband_blend(a, a, w_all * 0.5), a, atol=1e-2)
+    assert np.allclose(seam.multiband_blend(a, b, w_all), a, atol=1e-2)
+    assert np.allclose(seam.multiband_blend(a, b, w_none), b, atol=1e-2)
+
+
+def test_multiband_grades_a_step_wider_than_its_mask():
+    """The reason it exists: a brightness step blended with a sharp mask
+    still comes out graded, because the low frequencies are blended over the
+    whole pyramid. A single-band blend with the same sharp mask would step in
+    one pixel; multiband must spread it over many."""
+    a = np.full((128, 128), 1000.0, np.float32)
+    b = np.full((128, 128), 1060.0, np.float32)      # a 60-count step
+    mask = np.ones((128, 128), np.float32)
+    mask[:, 64:] = 0.0                                # hard edge, one pixel
+    out = seam.multiband_blend(a, b, mask)
+    row = out[64]
+    # No single-pixel cliff anywhere near the 60-count difference.
+    assert float(np.abs(np.diff(row)).max()) < 20.0, "the step was not graded"
+    # And it really did cross: the mask-1 side settles on a, the 0 side on b.
+    assert row[:8].mean() < 1020 and row[-8:].mean() > 1040

@@ -142,8 +142,21 @@ def scene_step():
     return Scene(bg.astype(np.float32), mask, _TW, 2 * _TW - _W, gain_b=1.06)
 
 
+def scene_ghost_step():
+    """A specimen in the overlap *and* a brightness step: the case that
+    separates single-band from multiband. The seam commits the specimen to
+    one tile (no ghost), but a single-band feather narrow enough to do that
+    turns the 6% step sharp. Multiband grades the step wide while keeping the
+    specimen committed -- ghost gone and step gone at once."""
+    rng = np.random.default_rng(15)
+    bg = _texture(rng, (_H, _W), 6.0, 600, 760)
+    blob, mask = _blob(rng, (_H, _W), _CX, _CY, 18)
+    canvas = np.where(mask, blob, bg).astype(np.float32)
+    return Scene(canvas, mask, _TW, 2 * _TW - _W, res=(9.0, 5.0), gain_b=1.06)
+
+
 SCENES = {"ghost": scene_ghost, "straddle": scene_straddle,
-          "step": scene_step}
+          "step": scene_step, "ghost+step": scene_ghost_step}
 
 
 # ---- the two blends ---------------------------------------------------------
@@ -183,27 +196,85 @@ def blend_feather(scene):
     return out, None
 
 
-def blend_seam(scene):
+def _seam_windows(scene):
+    """The two tiles' final weights: the raised-cosine window narrowed by the
+    seam multiplier, exactly as the compositor forms them."""
     lumas = [scene.tile_a, scene.tile_b]
     positions = [scene.pos_a, scene.pos_b]
     shapes = [(scene.th, scene.tw), (scene.th, scene.tw)]
     mult, _ = seam.weights(lumas, positions, shapes, scale=1.0)
-    # The seam returns multipliers; the compositor multiplies them into its
-    # own raised-cosine window, so this mirrors exactly what composite does.
     base = _window(scene.th, scene.tw)
     wa = base * cv2.resize(mult[0], (scene.tw, scene.th))
     wb = base * cv2.resize(mult[1], (scene.tw, scene.th))
-    out, _ = _place(scene, wa, wb)
-    # The ownership boundary, in canvas coordinates, for the seam% metric --
-    # placed where the tiles actually land (B at its believed position).
+    return wa, wb
+
+
+def _ownership(scene, wa, wb):
+    """Canvas-frame ownership fraction of tile A, placed where the tiles
+    actually land (B at its believed position)."""
     own_a = np.zeros((scene.H, scene.W), np.float32)
     own_b = np.zeros((scene.H, scene.W), np.float32)
     bx = int(round(scene.bx_believed))
     x1 = min(scene.W, bx + scene.tw)
     own_a[:, scene.ax:scene.ax + scene.tw] += wa
     own_b[:, bx:x1] += wb[:, :x1 - bx]
+    return own_a, own_b
+
+
+def blend_seam(scene):
+    wa, wb = _seam_windows(scene)
+    out, _ = _place(scene, wa, wb)
+    own_a, own_b = _ownership(scene, wa, wb)
     ratio = own_a / np.maximum(own_a + own_b, 1e-9)
     return out, ratio
+
+
+def _canvas_tile(scene, tile, x, y, w):
+    """A tile and its weight painted onto the full canvas, with a coverage
+    mask, clipped at the edges the way the compositor clips."""
+    H, W = scene.H, scene.W
+    img = np.zeros((H, W), np.float32)
+    wt = np.zeros((H, W), np.float32)
+    cov = np.zeros((H, W), bool)
+    th, tw = tile.shape
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(W, x + tw), min(H, y + th)
+    sx0, sy0 = x0 - x, y0 - y
+    img[y0:y1, x0:x1] = tile[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+    wt[y0:y1, x0:x1] = w[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+    cov[y0:y1, x0:x1] = True
+    return img, wt, cov
+
+
+def blend_multiband(scene):
+    """The seam's ownership mask blended per spatial frequency: the specimen
+    committed sharp, a brightness step graded wide. Mirrors what a seam-local
+    multiband pass in the compositor would produce.
+
+    Seam-local: where no seam fired there is nothing to protect, and a global
+    multiband only adds pyramid ringing to a gradient the feather already
+    grades, so the pair falls back to the plain blend -- exactly what the
+    compositor would do, running multiband only around a routed seam."""
+    mult, _ = seam.weights([scene.tile_a, scene.tile_b],
+                           [scene.pos_a, scene.pos_b],
+                           [(scene.th, scene.tw)] * 2, scale=1.0)
+    if min(float(m.min()) for m in mult) > 0.999:
+        return blend_feather(scene)            # no seam here: plain blend
+    wa, wb = _seam_windows(scene)
+    a_img, a_wt, a_cov = _canvas_tile(scene, scene.tile_a, scene.ax, scene.ay,
+                                      wa)
+    b_img, b_wt, b_cov = _canvas_tile(
+        scene, scene.tile_b, int(round(scene.bx_believed)),
+        int(round(scene.by_believed)), wb)
+    # Fill each tile's non-coverage with the other so the pyramid meets no
+    # zero cliff at a tile edge; where a tile is absent its weight is 0, so
+    # the fill never shows through.
+    a_img = np.where(a_cov, a_img, b_img)
+    b_img = np.where(b_cov, b_img, a_img)
+    total = a_wt + b_wt
+    w = np.where(total > 0, a_wt / np.maximum(total, 1e-9), 1.0)
+    out = seam.multiband_blend(a_img, b_img, w)
+    return out, w
 
 
 # ---- metrics ----------------------------------------------------------------
@@ -251,12 +322,19 @@ def ghost_rmse(scene, out):
 
 
 def step_grad(scene, out):
-    """Worst local gradient over the empty background of the overlap: a hard
-    cut shows up here as a spike the feather never makes."""
+    """Worst local gradient over the *clean* background of the overlap.
+
+    This is the brightness-step test: an unnormalised step graded narrow (a
+    seam that commits empty background to one tile) spikes here, while a wide
+    grade (feather, or multiband's low frequencies) does not. The specimen
+    and a margin around it are excluded, or its own committed edge -- real
+    image content, not a defect -- would swamp the few-DN step entirely."""
     x0, x1 = _overlap_cols(scene)
     band = out[:, x0:x1]
     if scene.mask.any():
-        keep = ~scene.mask[:, x0:x1]
+        near = cv2.dilate(scene.mask.astype(np.uint8),
+                          np.ones((41, 41), np.uint8)).astype(bool)
+        keep = ~near[:, x0:x1]
     else:
         keep = np.ones_like(band, bool)
     gx = np.abs(np.diff(band, axis=1))
@@ -270,7 +348,8 @@ def main():
     for name, build in SCENES.items():
         scene = build()
         for blend_name, blend in (("feather", blend_feather),
-                                  ("seam", blend_seam)):
+                                  ("seam", blend_seam),
+                                  ("multiband", blend_multiband)):
             out, ratio = blend(scene)
             s = seam_on_specimen(scene, ratio) * 100
             g = ghost_rmse(scene, out)

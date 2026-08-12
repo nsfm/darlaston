@@ -176,6 +176,65 @@ def _side_masks(shape: tuple[int, int], seam: np.ndarray, vertical: bool,
     return lo, (1.0 - lo).astype(np.float32)
 
 
+#: Levels in the blend pyramid. Five spans from the finest detail (committed
+#: to one tile at the seam) to a brightness step graded over ~16x the seam
+#: width -- enough to hide an unnormalised step without a global pyramid.
+MULTIBAND_LEVELS = 5
+
+
+def _gaussian_pyramid(img: np.ndarray, levels: int) -> list[np.ndarray]:
+    pyr = [img]
+    for _ in range(levels - 1):
+        if min(pyr[-1].shape[:2]) < 4:
+            break
+        pyr.append(cv2.pyrDown(pyr[-1]))
+    return pyr
+
+
+def _laplacian_pyramid(gpyr: list[np.ndarray]) -> list[np.ndarray]:
+    lap = []
+    for k in range(len(gpyr) - 1):
+        size = (gpyr[k].shape[1], gpyr[k].shape[0])
+        lap.append(gpyr[k] - cv2.pyrUp(gpyr[k + 1], dstsize=size))
+    lap.append(gpyr[-1])                        # coarsest level is the residual
+    return lap
+
+
+def multiband_blend(a: np.ndarray, b: np.ndarray, w: np.ndarray,
+                    levels: int = MULTIBAND_LEVELS) -> np.ndarray:
+    """Burt & Adelson multiresolution blend of `a` and `b` by weight `w`.
+
+    `w` is the weight of `a` in [0, 1] (so `b` gets `1 - w`). The blend is
+    done per spatial frequency: at each pyramid level the mask is the
+    Gaussian-decimated `w`, so the fine levels commit detail with a nearly
+    sharp mask -- a specimen goes wholly to one tile, no ghost -- while the
+    coarse levels blend with a mask smeared over many pixels, grading a
+    low-frequency brightness step across a wide band that no single-band
+    feather could match without also smearing the detail.
+
+    This is the archival ceiling the seam mask alone cannot reach: the seam
+    decides *where*, and given the same mask this makes the crossing
+    invisible at every scale rather than only the one the feather picks.
+    """
+    a = a.astype(np.float32)
+    b = b.astype(np.float32)
+    la = _laplacian_pyramid(_gaussian_pyramid(a, levels))
+    lb = _laplacian_pyramid(_gaussian_pyramid(b, levels))
+    gw = _gaussian_pyramid(w.astype(np.float32), levels)
+    n = len(la)
+    blended = []
+    for k in range(n):
+        wk = gw[k]
+        if la[k].ndim == 3:
+            wk = wk[:, :, None]
+        blended.append(wk * la[k] + (1.0 - wk) * lb[k])
+    out = blended[-1]
+    for k in range(n - 2, -1, -1):
+        size = (blended[k].shape[1], blended[k].shape[0])
+        out = cv2.pyrUp(out, dstsize=size) + blended[k]
+    return out
+
+
 def weights(lumas: list[np.ndarray],
             positions: list[tuple[float, float]],
             shapes: list[tuple[int, int]],
