@@ -25,6 +25,23 @@ msgstr "Discard"
 msgid "stack.discard.tooltip"
 msgstr "Delete this stack, slices and all."
 
+#. The same two buttons while a mosaic is being laid: Finish seals the
+#. field as a tile and Discard drops just that field, both leaving the
+#. mosaic running, so they say that rather than "merge" or "delete".
+msgid "stack.seal.action"
+msgstr "Seal tile"
+
+msgid "stack.seal.tooltip"
+msgstr ""
+"Seal this field as a mosaic tile and merge it in the background.\n"
+"The first tile sets the halo removal for the whole mosaic."
+
+msgid "stack.discard_field.action"
+msgstr "Discard field"
+
+msgid "stack.discard_field.tooltip"
+msgstr "Drop this field's slices. The mosaic keeps going."
+
 msgid "stack.close.action"
 msgstr "Close"
 

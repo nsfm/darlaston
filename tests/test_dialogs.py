@@ -136,6 +136,52 @@ def test_a_floating_panel_keeps_the_size_it_was_given(qapp):
     host.deleteLater()
 
 
+def test_the_help_bubble_can_never_trap_input(qapp):
+    """The bug that rebooted a machine: the title-bar help opened a
+    Qt.Popup, which grabs the keyboard and mouse globally, and under a
+    tiling window manager the grab could not be released. The fix is a
+    child widget with several exits. This pins the properties that make
+    it impossible to get stuck."""
+    from PySide6 import QtCore, QtGui
+
+    from darlaston.ui.floating import FloatingPanel, _InfoBubble
+
+    host = QtWidgets.QWidget()
+    host.resize(600, 400)
+    panel = FloatingPanel("slide map", host)
+    panel.set_info("Some tips about tracking.")
+    host.show()
+    qapp.processEvents()
+
+    panel._show_info()
+    bubble = panel._info_bubble
+    assert bubble is not None
+
+    # A child of the panel, never a top-level popup: a child cannot grab
+    # global input, which is the whole reason the old one could trap.
+    assert bubble.parent() is panel
+    assert not (bubble.windowFlags()
+                & QtCore.Qt.WindowType.Popup), "a Popup can grab input"
+    assert not bubble.isWindow(), "must not be its own window"
+
+    # Exit 1: clicking the mark again toggles it shut.
+    panel._show_info()
+    assert panel._info_bubble is None
+
+    # Exit 2: Escape.
+    panel._show_info()
+    panel._info_bubble.keyPressEvent(
+        QtGui.QKeyEvent(QtCore.QEvent.Type.KeyPress,
+                        QtCore.Qt.Key.Key_Escape, QtCore.Qt.KeyboardModifier.NoModifier))
+    assert panel._info_bubble is None
+
+    # Exit 3: clicking the bubble itself.
+    panel._show_info()
+    panel._info_bubble.mousePressEvent(None)
+    assert panel._info_bubble is None
+    host.deleteLater()
+
+
 def test_dialog_buttons_carry_no_system_icons(qapp, settings):
     """Standard buttons pull an icon from the *system* icon theme -- a
     black tick or cross on a desktop whose icons were drawn for a light

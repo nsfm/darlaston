@@ -47,7 +47,22 @@ class StageTracker:
     #: 3:2 frame gave x 23% of its own width and y 35% of its height, for
     #: no physical reason -- the measurable range is a property of each
     #: axis separately.
-    MAX_STEP = 0.35
+    #:
+    #: 0.45 leans on a contract with the measurement side: the pipeline
+    #: verifies any shift past 0.35 of an axis against the pixels
+    #: (`_shift_verified` -- the keyframe must reappear where the shift
+    #: says, and no rival offset with enough overlap to testify may
+    #: explain the scene nearly as well) and zeroes the confidence when
+    #: it cannot. So everything this gate sees in the 0.35-0.45 band has
+    #: already shown its work, and the band that used to be y's blind
+    #: spot -- the measured Y undershoot, 426 to 547 preview px -- is
+    #: travel again. Wrapped lies from just past half a frame fail the
+    #: verification floor; the one liar this cannot catch is a jump so
+    #: large its true overlap is a sliver (past ~0.8 of the axis) over
+    #: ground that happens to repeat, and the relocalizer -- which
+    #: recognises places rather than measuring shifts -- is the
+    #: designed recovery for exactly that class.
+    MAX_STEP = 0.45
 
     #: Re-anchor once the view has slid this far from the keyframe, as a
     #: fraction of the correlated image's shorter side. Far enough that the
@@ -542,10 +557,20 @@ class SlideMap:
     # ---- building --------------------------------------------------------
 
     def observe(self, pos: tuple[float, float] | None, preview: np.ndarray,
-                tracking: bool) -> bool:
-        """Offer the current frame. Returns True if the map changed."""
+                tracking: bool, steady: bool = True) -> bool:
+        """Offer the current frame. Returns True if the map changed.
+
+        `steady` is the caller's word that this frame is worth keeping:
+        not smeared by motion blur, and not measured in the shadow of a
+        gated jump, when the position is suspect until the relocalizer
+        has had its chance to corroborate. The map is the relocalizer's
+        reference library as well as a picture -- banking one blurred or
+        misplaced frame does not just draw a smudge, it poisons the very
+        machinery that would have recovered the position. Refusing to
+        paint costs a moment of coverage; painting a lie costs the map.
+        """
         self._since_paint += 1
-        if pos is None or not tracking:
+        if pos is None or not tracking or not steady:
             return False
         w = preview.shape[1]
         if self._last_paint is not None:

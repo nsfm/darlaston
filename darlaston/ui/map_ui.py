@@ -12,6 +12,8 @@ When mosaic mode arrives, captured tiles paint over the reconnaissance layer.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -204,10 +206,15 @@ class _Canvas(QtWidgets.QWidget):
                 colour = QtGui.QColor(200, 60, 50)
             else:
                 colour = QtGui.QColor(theme.BRASS)
-                if not last:
+                if not last and tile.state != "stacking":
                     colour.setAlpha(140)
-            p.setPen(QtGui.QPen(colour, 1.4 if last or tile.state == "failed"
-                                else 1.0))
+            pen = QtGui.QPen(colour, 1.4 if last or tile.state in
+                             ("failed", "stacking") else 1.0)
+            if tile.state == "stacking":
+                # The field being racked right now: a dashed, live outline,
+                # so it reads as in progress rather than a committed frame.
+                pen.setStyle(QtCore.Qt.PenStyle.DashLine)
+            p.setPen(pen)
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             p.drawRect(rect)
             if tile.label:
@@ -253,6 +260,90 @@ class _Canvas(QtWidgets.QWidget):
         p.end()
 
 
+class _SpeedGauge(QtWidgets.QWidget):
+    """A dithered bar against the blur limit, the speed read inside it.
+
+    Same dissolve grammar as the sensor sliders -- solid zone colour,
+    then an ordered-dither ramp -- which says 'a quantity, and an
+    estimate', both true here. No handle, because the value is an
+    estimate and there is nothing to point at precisely. The scale runs
+    to 1.3x the limit, and the fill wears green below 0.7, brass to 1.0,
+    red past it, so peripheral vision reads the zone without the number.
+    """
+
+    #: Where the drawn scale ends, as a multiple of the limit.
+    FULL = 1.3
+    #: How far the leading edge dissolves back, in device pixels; shared
+    #: with the fill so the text colour splits exactly at the solid edge.
+    DISSOLVE = 16.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._ratio = 0.0
+        self._text = ""
+        self.tone = theme.GOOD
+        self.setFixedSize(132, 18)
+
+    def set(self, ratio: float, text: str) -> None:
+        tone = (theme.BAD if ratio >= 1.0
+                else theme.BRASS if ratio >= 0.7 else theme.GOOD)
+        changed = (abs(ratio - self._ratio) > 0.01 or text != self._text
+                   or tone != self.tone)
+        self._ratio, self._text, self.tone = ratio, text, tone
+        if changed:
+            self.update()
+
+    def paintEvent(self, _event) -> None:
+        from .widgets import BG_TEXT, dithered_fill
+
+        with QtGui.QPainter(self) as p:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            rect = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(rect, 3.0, 3.0)
+            p.setClipPath(path)
+
+            p.fillRect(self.rect(), QtGui.QColor("#141614"))
+            frac = min(self._ratio / self.FULL, 1.0)
+            dithered_fill(p, rect, frac, QtGui.QColor(self.tone),
+                          dissolve=self.DISSOLVE)
+            # The solid edge sits DISSOLVE pixels back from the fill edge.
+            split = max(rect.left(),
+                        rect.left() + rect.width() * frac - self.DISSOLVE)
+
+            # The limit, where the map begins refusing frames: the one
+            # threshold worth a mark. Faint, so the colour still leads.
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 70), 1))
+            x = rect.left() + rect.width() / self.FULL
+            p.drawLine(QtCore.QPointF(x, rect.top()),
+                       QtCore.QPointF(x, rect.bottom()))
+
+            # The reading, inside the bar, drawn twice under opposite
+            # clips: dark where it sits over the fill, light over the
+            # ground, so it reads at any level without an outline. Split
+            # at the solid edge, before the dissolve, the same as the
+            # sliders.
+            font = p.font()
+            font.setPixelSize(11)
+            p.setFont(font)
+            box = QtCore.QRectF(0, 0, self.width(), self.height())
+            align = (QtCore.Qt.AlignmentFlag.AlignCenter)
+            for clip, colour in (
+                    (QtCore.QRectF(0, 0, split, self.height()), BG_TEXT),
+                    (QtCore.QRectF(split, 0, self.width() - split,
+                                   self.height()), theme.DIM)):
+                p.save()
+                p.setClipRect(clip, QtCore.Qt.ClipOperation.IntersectClip)
+                p.setPen(colour)
+                p.drawText(box, align, self._text)
+                p.restore()
+
+            p.setClipping(False)
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE), 1))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(rect, 3.0, 3.0)
+
+
 class SlideMapPanel(QtWidgets.QWidget):
     """The map, its controls, and a one-line status.
 
@@ -270,6 +361,11 @@ class SlideMapPanel(QtWidgets.QWidget):
     #: leave the button lying.
     mosaic_requested = QtCore.Signal(bool)
     undo_tile = QtCore.Signal()
+    #: The operator asked to calibrate tracking drift. First-class on the
+    #: map because this is where a new user meets tracking -- results are
+    #: acceptable uncalibrated, so the map is seen long before anyone
+    #: goes looking for a calibration panel.
+    calibrate_drift = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -284,6 +380,15 @@ class SlideMapPanel(QtWidgets.QWidget):
         #: the map is where the eyes already are when tracking misbehaves,
         #: and the fields count this replaced stopped earning the space.
         self._advisory: str | None = None
+        #: The banking quality bar's memory: the gated count last seen,
+        #: and how many tracked frames of holdoff remain after a gate.
+        self._gated_seen = 0
+        self._paint_hold = 0
+        #: A provisional tile is on the map for the field being stacked
+        #: right now, so a stacked mosaic shows the work as it happens
+        #: rather than only when a tile seals on the slide to the next
+        #: field -- the asymmetry that read as "stacking does nothing".
+        self._stacking = False
 
         self.pin_btn = QtWidgets.QPushButton(_("map.pin.action"))
         self.pin_btn.setProperty("role", "seg")
@@ -309,33 +414,78 @@ class SlideMapPanel(QtWidgets.QWidget):
         self.undo_btn.clicked.connect(self.undo_tile)
         self.undo_btn.hide()
 
+        self.calib_btn = QtWidgets.QPushButton(_("map.calibrate.action"))
+        self.calib_btn.setProperty("role", "seg")
+        self.calib_btn.setToolTip(_("map.calibrate.tooltip"))
+        self.calib_btn.clicked.connect(self.calibrate_drift)
+
         self.status = QtWidgets.QLabel("")
         self.status.setProperty("role", "key")
         self.status.setWordWrap(True)
 
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(4)
-        row.addWidget(self.mosaic_btn)
-        row.addWidget(self.undo_btn)
-        row.addStretch(1)
-        row.addWidget(self.pin_btn)
-        row.addWidget(self.clear_btn)
+        # The speed gauge: true stage speed against the blur limit the
+        # current exposure and magnification set. A drawn bar rather
+        # than digits -- raw values changed too fast to read and the
+        # colour was doing all the work -- smoothed over a few frames so
+        # it moves like a needle, with a number beside it that only
+        # changes when it means to. Same arithmetic the banking bar
+        # refuses frames by, so the gauge never says fine while the map
+        # disagrees.
+        self.speed = _SpeedGauge()
+        self.speed.setToolTip(_("map.speed.tooltip"))
+        self._speed_ema: float | None = None
+        self.speed.setVisible(False)
+
+        # The status line and the gauge share a row of their own: both
+        # are things you read, and crushing them in beside the buttons is
+        # what made the buttons cramped.
+        readout = QtWidgets.QHBoxLayout()
+        readout.setSpacing(6)
+        readout.addWidget(self.status, 1)
+        readout.addWidget(self.speed, 0, QtCore.Qt.AlignmentFlag.AlignRight
+                          | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+        # The buttons get their own row and share it evenly: each expands
+        # to an equal share of the width, so they read as one toolbar
+        # rather than a scatter of different-width segments. Undo takes no
+        # space until a mosaic is open, and the rest simply widen to fill.
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.setSpacing(4)
+        for b in (self.mosaic_btn, self.undo_btn, self.calib_btn,
+                  self.pin_btn, self.clear_btn):
+            b.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
+            buttons.addWidget(b, 1)
 
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(5)
         col.addWidget(self.canvas, 1)
-        col.addWidget(self.status)
-        col.addLayout(row)
+        col.addLayout(readout)
+        col.addLayout(buttons)
 
         self._pos: tuple[float, float] | None = None
         self._frame: tuple[int, int] = (0, 0)
         self._tracking = False
 
     def preferred_size(self, host: QtWidgets.QWidget) -> tuple[int, int]:
-        """About a third of the view wide, bounded, plus room for controls."""
-        w = int(max(280, min(500, host.width() * 0.34)))
-        return w, int(w * 0.58) + 76
+        """About a third of the view wide, bounded, plus room for the two
+        control rows."""
+        w = int(max(300, min(500, host.width() * 0.34)))
+        return w, int(w * 0.58) + 92
+
+    #: Estimated motion blur, in preview pixels, above which a frame is
+    #: not banked. Picked, not measured: bounded by the field observation
+    #: that tracking is crisp at 2-5 ms exposure and mushy at 10-20 ms
+    #: under the same cranking, which brackets the acceptable smear at
+    #: single digits. A synthetic-blur bench could sharpen this number.
+    BLUR_LIMIT = 8.0
+
+    #: Tracked frames to hold painting after a gated jump, while the
+    #: position is suspect. Sized to outlast the relocalizer's continuous
+    #: check cadence (every 8 frames), so a wrong position is corrected
+    #: before the map resumes recording it.
+    GATE_HOLD = 12
 
     # ---- feed ------------------------------------------------------------
 
@@ -352,7 +502,33 @@ class SlideMapPanel(QtWidgets.QWidget):
         self._pos = pos
         self._frame = (w, h)
         self._tracking = tracking
-        changed = self.model.observe(pos, s.preview, tracking)
+        # The banking quality bar. Two ways a tracked frame can still be
+        # unworthy of the map: it is smeared -- blur is speed times the
+        # fraction of the frame interval the shutter was open, so the
+        # same crank blurs four times as much at 20 ms as at 5 ms, which
+        # is exactly the difference the operator can see in tracking
+        # quality -- or it landed near a gated jump, when the position
+        # is suspect until the relocalizer has had its ~8-frame chance
+        # to corroborate. On glass, one frame banked in that shadow
+        # morphed the map and skewed everything after, because the
+        # wrongly-placed paint is what the relocalizer then matched
+        # against. Refusing costs a beat of coverage on ground the very
+        # next calm frame will cover anyway.
+        stats = s.stats
+        fps = float(stats.get("analysed_fps") or 30.0) or 30.0
+        exposure_us = float(stats.get("exposure_us") or 0.0)
+        speed = (math.hypot(s.xy_offset[0], s.xy_offset[1])
+                 if s.xy_offset is not None else 0.0)
+        blur = speed * exposure_us * fps / 1e6
+        if s.track_gated < self._gated_seen:          # tracker was reset
+            self._gated_seen = s.track_gated
+        if s.track_gated > self._gated_seen:
+            self._gated_seen = s.track_gated
+            self._paint_hold = self.GATE_HOLD
+        elif self._paint_hold and tracking:
+            self._paint_hold -= 1
+        steady = blur <= self.BLUR_LIMIT and not self._paint_hold
+        changed = self.model.observe(pos, s.preview, tracking, steady)
         self.canvas.set_state(pos, (w, h), tracking, changed)
         self.pin_btn.setEnabled(pos is not None)
         self._update_status()
@@ -361,6 +537,38 @@ class SlideMapPanel(QtWidgets.QWidget):
         """Refuse frames measured under an origin older than `generation`.
         Handed back by `reset_tracking` at every clear."""
         self._min_gen = int(generation)
+
+    #: Exponential smoothing for the gauge, per frame. 0.1 at ~30 fps is
+    #: a third-of-a-second time constant -- heavier than a needle wants
+    #: to feel, but the raw per-frame speed is chaotic enough that the
+    #: extra averaging is what makes the number readable rather than a
+    #: blur of digits.
+    SPEED_SMOOTH = 0.1
+    #: Below this, in um/s, the reading is pinned to zero. A parked stage
+    #: still measures a pixel or two of tremor per frame, and a gauge
+    #: flickering 0-1 while nothing moves reads as broken. Under the
+    #: hand-tremor floor the tracker itself already ignores.
+    SPEED_FLOOR = 3.0
+
+    def set_speed(self, um_s: float | None,
+                  limit_um_s: float | None) -> None:
+        """The stage's true speed against the blur limit, smoothed."""
+        if um_s is None:
+            self.speed.setVisible(False)
+            self._speed_ema = None
+            return
+        prev = self._speed_ema if self._speed_ema is not None else um_s
+        self._speed_ema = (1 - self.SPEED_SMOOTH) * prev \
+            + self.SPEED_SMOOTH * um_s
+        v = 0.0 if self._speed_ema < self.SPEED_FLOOR else self._speed_ema
+        # Rounded coarsely so the digits settle: to 0.1 mm/s, or to the
+        # nearest 5 um/s. Finer than that is churn the eye cannot use.
+        if v >= 1000:
+            text = _("map.speed.mm", v=f"{v / 1000:.1f}")
+        else:
+            text = _("map.speed.um", v=f"{round(v / 5) * 5:.0f}")
+        self.speed.set(v / limit_um_s if limit_um_s else 0.0, text)
+        self.speed.setVisible(True)
 
     def set_advisory(self, text: str | None) -> None:
         """What tracking wants said, or None when nothing does. Takes
@@ -385,6 +593,31 @@ class SlideMapPanel(QtWidgets.QWidget):
             self.model.add_tile(pos, preview, state=state, label=label)
         self.canvas.update()
         self._update_status()
+
+    def begin_stacking(self, pos, preview) -> None:
+        """Show the field currently being stacked, live. A provisional
+        tile that `end_stacking` replaces with the sealed one, so a
+        stacked mosaic paints as it works rather than only on slide-away."""
+        if pos is None or preview is None:
+            return
+        if self._stacking:
+            self.model.pop_tile()
+        self.model.add_tile(pos, preview, state="stacking", label="")
+        self._stacking = True
+        self.canvas.update()
+
+    def update_stacking(self, label: str) -> None:
+        """The slice count on the in-progress tile, as slices land."""
+        if self._stacking and self.model.tiles:
+            self.model.tiles[-1].label = label
+            self.canvas.update()
+
+    def end_stacking(self) -> None:
+        """Drop the provisional tile; the sealed one is added next."""
+        if self._stacking:
+            self.model.pop_tile()
+            self._stacking = False
+            self.canvas.update()
 
     def set_tile_state(self, index: int, state: str) -> None:
         self.model.set_tile_state(index, state)

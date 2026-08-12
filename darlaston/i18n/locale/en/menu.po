@@ -316,3 +316,15 @@ msgid "menu.capture.scale_bar.live.tooltip"
 msgstr ""
 "Draws the bar over the preview, exactly as the photograph will carry it.\n"
 "Nothing is written to a file, and the raw is untouched either way."
+
+#. Slide-anchored dots over the preview: the tracker's belief made
+#. visible. They stay glued to the specimens while panning for exactly
+#. as long as the tracking is right.
+msgid "menu.capture.guides.pips"
+msgstr "Tracking pips"
+
+msgid "menu.capture.guides.pips.tooltip"
+msgstr ""
+"Dots pinned to the slide by the stage tracker.\n"
+"They stay glued to the specimens while you pan; if they slip against "
+"the picture, so did the tracking."

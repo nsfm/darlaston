@@ -208,6 +208,11 @@ class Settings:
     white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
     framing_grid: str = "none"   # none | thirds | grid | reel | tall
     framing_cross: bool = False
+    #: Slide-anchored dots over the preview: the tracker's belief made
+    #: visible. They stay glued to the specimens while panning exactly as
+    #: long as tracking is right, which makes them both a debugging
+    #: instrument and the seed of point-to-point stage measurement.
+    framing_pips: bool = False
     #: The rendering the operator is working in: none | invert | swap |
     #: grey. Carried by everything that is a picture -- live view,
     #: presentation, stream, JPEG, the DNG's embedded preview -- and by

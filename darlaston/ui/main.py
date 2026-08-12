@@ -196,6 +196,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_preview = None
         self._tile_merges: list[tuple[int, Path]] = []
         self._tile_merging: int | None = None
+        #: The halo-removal bound chosen for this mosaic, locked by its
+        #: first stacked tile and inherited by the rest. None until the
+        #: first tile picks it; reset when a new mosaic begins.
+        self._mosaic_slope: float | None = None
         #: Take the next auto-exposure step at full stride. Set by things
         #: that are known to change the light rather than measured to have
         #: changed it: swapping objective loses four to sixteen times the
@@ -333,6 +337,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cross_action.setToolTip(_("menu.capture.guides.cross.tooltip"))
         self.cross_action.toggled.connect(
             lambda on: self._set_framing(cross=on))
+        self.pips_action = guides.addAction(_("menu.capture.guides.pips"))
+        self.pips_action.setCheckable(True)
+        self.pips_action.setChecked(self.settings.framing_pips)
+        self.pips_action.setToolTip(_("menu.capture.guides.pips.tooltip"))
+        self.pips_action.toggled.connect(
+            lambda on: self._set_framing(pips=on))
         # The rendering the operator is working in. Beside the guides
         # because it is the same kind of thing -- how the picture is
         # shown, chosen while shooting -- but unlike them it carries into
@@ -581,8 +591,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slidemap.reset_requested.connect(self._reset_tracking)
         self.slidemap.mosaic_requested.connect(self._on_mosaic_requested)
         self.slidemap.undo_tile.connect(self._on_undo_tile)
+        self.slidemap.calibrate_drift.connect(self._calibrate_drift)
         self.map_window = FloatingPanel("slide map", self.view)
         self.map_window.set_relative(0.02, 0.58)
+        self.map_window.set_info(_("map.tips.tooltip"))
         _fill(self.map_window, self.slidemap)
 
         self.calib_panel = CalibrationPanel()
@@ -898,6 +910,10 @@ class MainWindow(QtWidgets.QMainWindow):
                      or self._first_scope())
             self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
+            # The camera's calibrated rolling-shutter readout, or zero
+            # and no correction. Lives with the profile because
+            # remounting the body is what invalidates it.
+            self.pipeline.set_readout(profile.readout_us)
             self.objective.set_turret(self.setup.scope.turret)
             self._sync_optovar()
             self._push_turret()
@@ -1733,6 +1749,28 @@ class MainWindow(QtWidgets.QMainWindow):
     def _do_lut(self) -> None:
         self.calibration.build_preview_lut(self.setup)
 
+    def _calibrate_drift(self) -> None:
+        """The tracking-drift ritual: fit the camera's rolling-shutter
+        readout from passes the operator closes on one feature. Modal,
+        fed live frames through the fan-out while it runs."""
+        if self.setup is None:
+            return
+        from .calib_ui import DriftDialog
+
+        dlg = DriftDialog(self.pipeline, self.setup.camera, self)
+        if self._last_preview is not None:
+            dlg.set_frame_height(self._last_preview.shape[0])
+        self._drift_dialog = dlg
+        try:
+            dlg.exec()
+        finally:
+            self._drift_dialog = None
+        if dlg.saved:
+            # The constant lives with the camera: remounting or rotating
+            # the body is what invalidates it, not anything per-session.
+            self.library.file_camera(self.setup.camera)
+            self.library.save()
+
     @QtCore.Slot(object)
     def _on_calib_progress(self, progress: Progress) -> None:
         self.calib_panel.set_progress(progress)
@@ -1859,6 +1897,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tile_frame = (w, h)
             self._tile_preview = (self._last_preview.copy()
                                   if self._last_preview is not None else None)
+            # Paint the field live: a stacked mosaic now shows the tile
+            # being worked from its first slice, the same immediate
+            # feedback a single-shot tile gives, rather than appearing
+            # from nothing when it seals on the slide to the next field.
+            self.slidemap.begin_stacking(self._tile_anchor, self._tile_preview)
+        if self.mosaic is not None:
+            self.slidemap.update_stacking(f"×{s.index}")
         self._read_slice_for_preview(self.stack_session.dir / s.filename)
         # Nothing here about the queue. It lives in the gauge under the
         # stack window now: the strip is where "hold still -- exposing"
@@ -1940,11 +1985,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 # rhythm -- rack, pause, rack, pause, slide -- with no
                 # button between fields.
                 self.assembly.reset()
+                self.assembly.set_context(True)
                 self.stack_window.place((420, 330))
                 self.stack_window.show()
                 self.stack_trigger.arm()
                 self.strip.set_note(_("note.stacked_mosaic"))
                 return
+            self.assembly.set_context(False)
             self.stack_session = StackSession(self.settings.capture_root,
                                       self.subject.subject)
             if self.setup is not None:
@@ -2037,6 +2084,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # are exactly the ones most likely to still be in the queue when
         # somebody presses Finish.
         self._settle_slices()
+        if self.mosaic is not None:
+            # Finish in a mosaic seals this field as a tile, exactly as
+            # sliding to the next field does: unchecking stack routes
+            # through _on_stack_toggled, whose mosaic branch adopts the
+            # slices into the mosaic and background-merges them with the
+            # mosaic's one locked profile, and the map shows the tile. The
+            # standalone merge below instead writes a merged file the
+            # mosaic never sees -- which is why pressing Finish rather than
+            # sliding left the map blank and the tile lost to the mosaic.
+            self.focus.stack.setChecked(False)
+            return
         if len(self.stack_session.slices) < 2:
             self.assembly.set_merging(None, None,
                                       "need at least two slices")
@@ -2134,6 +2192,9 @@ class MainWindow(QtWidgets.QMainWindow):
         done, self.stack_session = self.stack_session, None
         anchor, self._tile_anchor = self._tile_anchor, None
         preview, self._tile_preview = self._tile_preview, None
+        # The provisional live tile goes now; the sealed one takes its
+        # place below, at the same position.
+        self.slidemap.end_stacking()
         if done is None or self.mosaic is None:
             return
         import shutil
@@ -2164,6 +2225,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tile_merges.append((index, Path(directory)))
         self._next_tile_merge()
 
+    def _tile_merge_slope(self) -> tuple[float, bool]:
+        """The halo-removal bound for the next mosaic tile, and whether
+        this tile has to pick it interactively.
+
+        One profile for the whole mosaic: removal changes by specimen,
+        not by region, so forty tiles must not be forty different answers
+        stitched into one picture. When removal is on, the *first* tile
+        picks the bound on its own real stacked data and every tile after
+        inherits it silently. "off" removes nothing; "last" uses the
+        stored bound without asking.
+        """
+        mode = self.settings.stack_halo_mode
+        if mode == "off":
+            return 0.0, False
+        if self._mosaic_slope is not None:
+            return self._mosaic_slope, False          # locked by tile one
+        if mode == "choose":
+            return self.settings.stack_clamp_slope, True   # pick, this tile
+        return self.settings.stack_clamp_slope, False      # "last": silent
+
     def _next_tile_merge(self) -> None:
         if self._tile_merging is not None or not self._tile_merges:
             return
@@ -2172,13 +2253,21 @@ class MainWindow(QtWidgets.QMainWindow):
         smoothing = self.settings.stack_smoothing
         feather = self.settings.stack_feather
         masking = self.settings.stack_mask_background
-        # Locked for the whole mosaic, and never asked. Forty tiles would
-        # be forty questions, and worse, forty different answers stitched
-        # into one picture -- so a tile takes the stored bound whatever
-        # the mode says, which also keeps a tile identical to the same
-        # stack merged on its own.
-        slope_ = (0.0 if self.settings.stack_halo_mode == "off"
-                  else self.settings.stack_clamp_slope)
+        slope_, pick = self._tile_merge_slope()
+        choose = None
+        if pick:
+            # The first tile's chosen bound becomes the mosaic's, captured
+            # off the worker thread as the picker returns it. Dismissing
+            # the dialog locks the stored default instead, so the rest of
+            # the mosaic still stays consistent.
+            from .sampler_ui import bridge
+            base = bridge(self, self.bridge.stack_merge)
+
+            def choose(*a, _base=base):
+                picked = _base(*a)
+                self._mosaic_slope = (float(picked) if picked is not None
+                                      else self.settings.stack_clamp_slope)
+                return picked
 
         def work():
             from ..process.stack import merge
@@ -2187,7 +2276,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # stitcher reads bayer tiles.
                 merge(directory, output="bayer", smoothing=smoothing,
                       feather=feather, mask_background=masking,
-                      clamp_slope=slope_)
+                      clamp_slope=slope_, choose_slope=choose)
                 self.bridge.tile_merge.emit((index, True, ""))
             except Exception as exc:
                 self.bridge.tile_merge.emit((index, False, str(exc)))
@@ -2443,6 +2532,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if on:
             self.mosaic = MosaicSession(self.settings.capture_root,
                                         self.subject.subject)
+            # A fresh mosaic picks its halo profile anew, on its first
+            # stacked tile.
+            self._mosaic_slope = None
             if self.setup is not None:
                 obj = self.setup.scope.turret.objective
                 self.mosaic.set_meta(
@@ -2561,6 +2653,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._gated_seen = s.track_gated
             UI_METER.skip("relocalizer")
             return
+        # The drift ritual measures the tracker's raw rolling-shutter
+        # accumulation, and the relocalizer's whole job is to abolish
+        # exactly that over trodden ground -- so a correction landing
+        # mid-pass would eat the drift being measured and under-read the
+        # readout, worse the further the pass revisits mapped terrain.
+        # It goes quiet for the duration; the tracker runs uncorrected,
+        # which is the honest ground truth the ritual is built on.
+        if getattr(self, "_drift_dialog", None) is not None:
+            UI_METER.skip("relocalizer")
+            return
         start = time.perf_counter()
         fix = self.relocator.observe(s.preview, s.stage_pos,
                                      s.stage_tracking,
@@ -2595,10 +2697,41 @@ class MainWindow(QtWidgets.QMainWindow):
                          else _("advice.track.blank"))
         if now < getattr(self, "_fast_until", 0.0):
             lines.append(_("advice.track.fast"))
+            # The lever that actually helps, said while it is relevant:
+            # blur scales with how long the shutter stays open, so the
+            # same crank that defeats tracking at 12 ms is measurable at
+            # 4 ms. Only offered when the exposure has room to give.
+            exposure_us = s.stats.get("exposure_us", 0)
+            if exposure_us > 8000:
+                lines.append(_("advice.track.exposure"))
+            # And the number itself, when the scale is known: the map
+            # stops banking at BLUR_LIMIT pixels of smear, so the same
+            # limit read backwards is the honest speed limit --
+            # magnification and exposure set it, not taste.
+            um = self._preview_um_per_px(s.preview.shape[1])
+            if um and exposure_us:
+                um_s = (self.slidemap.BLUR_LIMIT * um * 1e6) / exposure_us
+                speed = (f"{um_s / 1000:.1f} mm/s" if um_s >= 1000
+                         else f"{um_s:.0f} µm/s")
+                lines.append(_("advice.track.speed", speed=speed))
         # Said on the slide map's own status line: that panel is where
         # the eyes already are when tracking misbehaves, and the live
         # view stays a viewfinder rather than a message board.
         self.slidemap.set_advisory(" · ".join(lines) if lines else None)
+
+        # And the speed gauge: the same blur arithmetic the banking bar
+        # refuses frames by, shown as a live number so the hand learns
+        # the zone instead of discovering the edge.
+        um_px = self._preview_um_per_px(s.preview.shape[1])
+        fps = s.stats.get("analysed_fps", 0.0)
+        exposure_us = s.stats.get("exposure_us", 0)
+        if um_px and fps and s.xy_offset is not None:
+            speed_um_s = math.hypot(s.xy_offset[0], s.xy_offset[1]) * fps * um_px
+            limit = ((self.slidemap.BLUR_LIMIT * um_px * 1e6 / exposure_us)
+                     if exposure_us else None)
+            self.slidemap.set_speed(speed_um_s, limit)
+        else:
+            self.slidemap.set_speed(None, None)
 
     def _sync_track_wanted(self) -> None:
         """Run the tracker only while something consumes its answer: the
@@ -2610,7 +2743,12 @@ class MainWindow(QtWidgets.QMainWindow):
                   or self.mosaic is not None
                   or self.stack_session is not None
                   or self.focus.sweep.isChecked()
-                  or self.timelapse.running)
+                  or self.timelapse.running
+                  # The pips are a consumer too: dots pinned to the
+                  # slide need a tracker awake to pin them.
+                  or self.settings.framing_pips
+                  # As is the drift ritual, which is made of tracking.
+                  or getattr(self, "_drift_dialog", None) is not None)
         if wanted == getattr(self, "_track_wanted", True):
             return
         self._track_wanted = wanted
@@ -2745,7 +2883,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return context
 
     def _set_framing(self, grid: str | None = None,
-                     cross: bool | None = None) -> None:
+                     cross: bool | None = None,
+                     pips: bool | None = None) -> None:
         """Change a framing guide and remember it.
 
         Saved immediately rather than on some later confirmation, because
@@ -2756,10 +2895,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.framing_grid = grid
         if cross is not None:
             self.settings.framing_cross = bool(cross)
+        if pips is not None:
+            self.settings.framing_pips = bool(pips)
         self.view.framing_grid = self.settings.framing_grid
         self.view.framing_cross = self.settings.framing_cross
         self.view.update()
         self.settings.save()
+
+    #: Pip spacing, as a fraction of the frame width. Half a field: close
+    #: enough that panning always has a few in view, sparse enough that
+    #: they read as landmarks rather than a lattice.
+    PIP_STEP = 0.5
+
+    def _pip_points(self, s, rot: int, mirror: bool) -> list:
+        """Grid nodes of slide space visible in this frame, as normalised
+        points on the *shown* picture -- through the same orientation
+        mapping every other overlay takes."""
+        h, w = s.preview.shape[:2]
+        px, py = s.stage_pos
+        step = self.PIP_STEP * w
+        points = []
+        gx0 = math.floor((px - w / 2) / step)
+        gy0 = math.floor((py - h / 2) / step)
+        for gx in range(gx0, gx0 + math.ceil(w / step) + 2):
+            for gy in range(gy0, gy0 + math.ceil(h / step) + 2):
+                fx = gx * step - px + w / 2
+                fy = gy * step - py + h / 2
+                if 0.0 <= fx <= w and 0.0 <= fy <= h:
+                    nx, ny, _, _ = orient.rect_to_view(
+                        (fx / w, fy / h, 0.0, 0.0), rot, mirror)
+                    points.append((nx, ny))
+        return points
 
     def _set_rendering(self, mode: str) -> None:
         """Change the working rendering and remember it.
@@ -3322,6 +3488,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._auto_expose_guarded(s)
         self._sync_track_wanted()
         self._keep_tracking(s)
+        drift = getattr(self, "_drift_dialog", None)
+        if drift is not None:
+            drift.observe(s)
         # Blankness is only read by the stack trigger, so it is only worth
         # computing while a stack is open. Pushed from here rather than
         # tracked through the session's several beginnings and ends.
@@ -3370,6 +3539,14 @@ class MainWindow(QtWidgets.QMainWindow):
                        if s.peaking is not None else None)
             UI_METER.since("rendering", start)
         self.view.set_frame(shown, peaking)
+        # Slide-anchored pips: the tracker's belief drawn over the
+        # picture. Only while tracking, so a lost position never wears
+        # confident dots.
+        if (self.settings.framing_pips and s.stage_pos is not None
+                and s.stage_tracking):
+            self.view.set_pips(self._pip_points(s, rot, mirror))
+        else:
+            self.view.set_pips(None)
         self._offer_present(s, shown)
         self.slidemap.update_live(s)
         # Kept before `observe`, because observe is what fires the capture

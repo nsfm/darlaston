@@ -110,3 +110,71 @@ msgid "calib.lut.tooltip"
 msgstr ""
 "Measures what the ISP does to the sensor data, so the histogram can "
 "report real headroom.\nTakes an exposure ramp, so it needs a few seconds."
+
+#. ---- the tracking-drift ritual -------------------------------------------
+#. A rolling shutter rescales vertical tracking by speed x readout time,
+#. which walks the map one way over up-and-down passes. The ritual fits
+#. the readout time from passes the operator closes by re-centring the
+#. same feature -- their re-centring is the ground truth.
+
+#. The button that opens this ritual lives on the slide map, not here;
+#. its label and tooltip are under map.calibrate.
+
+msgid "calib.drift.title"
+msgstr "Tracking drift"
+
+msgid "calib.drift.intro"
+msgstr ""
+"Centre a distinctive feature and press Start. You will crank away and "
+"return to it three times; returning to the same feature is what makes "
+"the measurement true."
+
+#. Shown while the ground is not ready: tracking must be locked and the
+#. field must have real structure. Blank glass cannot testify.
+msgid "calib.drift.waiting"
+msgstr "waiting for tracking over structured ground"
+
+msgid "calib.drift.start"
+msgstr "Start"
+
+msgid "calib.drift.centred"
+msgstr "Centred"
+
+#. {fields} is a small number of fields of view.
+msgid "calib.drift.pass"
+msgstr ""
+"Crank slowly and steadily at least {fields} fields, then come back "
+"to the same feature. Press Centred when it is back in the middle. "
+"Further is better; cranking down or up both work; slow and even is "
+"what matters."
+
+msgid "calib.drift.again"
+msgstr ""
+"Good. Once more, slow and steady: about {fields} fields and back, "
+"then Centred."
+
+msgid "calib.drift.short"
+msgstr ""
+"That pass travelled too little to measure. Go about {fields} fields "
+"down and back, then Centred."
+
+msgid "calib.drift.verify"
+msgstr ""
+"The correction is now live. One more pass to verify it: down and "
+"back, then Centred."
+
+msgid "calib.drift.failed"
+msgstr "That could not be fitted. Press Start to try again."
+
+msgid "calib.drift.done"
+msgstr "Done."
+
+#. {before}/{after} are pixels of drift per pass; {us} microseconds.
+msgid "calib.drift.result"
+msgstr ""
+"Drift was {before} px per pass; with the correction it measured "
+"{after} px. Readout {us} µs. Save to keep it with this camera."
+
+#. {fields} is fields travelled this pass, e.g. "1.8".
+msgid "calib.drift.travel"
+msgstr "{fields} fields travelled this pass"

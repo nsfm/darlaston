@@ -12,10 +12,13 @@ so and not whenever the view happens to look empty.
 """
 from __future__ import annotations
 
+import numpy as np
 from PySide6 import QtCore, QtWidgets
 
 from ..i18n import _
+from ..live.driftcal import DriftCalibration
 from . import theme
+from .framed import FramedDialog
 
 
 class _Row(QtWidgets.QWidget):
@@ -215,3 +218,184 @@ class CalibrationPanel(QtWidgets.QWidget):
         self.progress.setValue(progress.done)
         self.status.setText(progress.message)
         self.status.setStyleSheet(f"color: {theme.BRASS};")
+
+
+class DriftDialog(FramedDialog):
+    """The tracking-drift ritual: closed passes over one feature.
+
+    The operator's re-centring is the ground truth -- a pass that truly
+    closes has zero net travel, so the residual tracked position is the
+    rolling shutter's accumulated lie, and two passes fit the readout
+    time. A third pass runs with the correction live and reports both
+    numbers, so the calibration demonstrates itself before it is saved.
+
+    Fed frames by the main window while open; owns nothing but a
+    `DriftCalibration` and the numbers it produces.
+    """
+
+    #: Measuring passes before the fit. Two is the floor for a fit that
+    #: is more than one division; the verify pass makes three.
+    PASSES = 2
+    #: How far a pass should travel, in fields, before Centred means
+    #: anything. Advisory in the copy; enforced only by MIN_EVIDENCE.
+    #: More is strictly better -- the drift signal grows with travel
+    #: while the re-centring error stays a few pixels -- now that the
+    #: relocalizer is held off for the ritual, so nothing eats the
+    #: drift over ground revisited on the way back. Three is the floor,
+    #: not the ceiling.
+    FIELDS = 3
+    #: The relocalizer's texture floor, reused: the ritual needs real
+    #: ground for the same reason a probe does. Blank glass cannot
+    #: testify about drift.
+    TEXTURE_FLOOR = 4.0
+
+    def __init__(self, pipeline, camera, parent=None) -> None:
+        super().__init__(parent, width=440)
+        self.setWindowTitle(_("calib.drift.title"))
+        self._pipeline = pipeline
+        self._camera = camera
+        self._cal: DriftCalibration | None = None
+        self._verify: DriftCalibration | None = None
+        self._fitted: float | None = None
+        self._drift_after: float | None = None
+        self._last_y: float | None = None
+        self._ready = False
+        self.saved = False
+
+        col = self.content
+        col.setSpacing(10)
+        self.instruction = QtWidgets.QLabel(_("calib.drift.intro"))
+        self.instruction.setWordWrap(True)
+        self.travel = QtWidgets.QLabel("")
+        self.travel.setProperty("role", "key")
+        self.action = QtWidgets.QPushButton(_("calib.drift.start"))
+        self.action.setEnabled(False)
+        self.action.clicked.connect(self._pressed)
+        self.result = QtWidgets.QLabel("")
+        self.result.setWordWrap(True)
+        col.addWidget(self.instruction)
+        col.addWidget(self.travel)
+        col.addWidget(self.action)
+        col.addWidget(self.result)
+        col.addStretch(1)
+
+        self.buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Save
+            | QtWidgets.QDialogButtonBox.StandardButton.Close)
+        self.buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Save).setEnabled(False)
+        self.buttons.accepted.connect(self._save)
+        self.buttons.rejected.connect(self.reject)
+        col.addWidget(self.buttons)
+        self.finish()
+
+    # ---- the feed --------------------------------------------------------
+
+    def observe(self, s) -> None:
+        """One live frame, from the main window's fan-out."""
+        pos, tracking = s.stage_pos, s.stage_tracking
+        if self._cal is None:
+            # Waiting to start: the button arms over tracked, textured
+            # ground -- blank glass cannot testify about drift.
+            textured = (s.track_small is not None
+                        and float(np.std(s.track_small)) >= self.TEXTURE_FLOOR)
+            self._ready = bool(tracking and pos is not None and textured)
+            if pos is not None:
+                self._pos_y = pos[1]
+            self.action.setEnabled(self._ready)
+            if not self._ready:
+                self.travel.setText(_("calib.drift.waiting"))
+            else:
+                self.travel.setText("")
+            return
+        if pos is None or not tracking:
+            self._last_y = None
+            return
+        y = pos[1]
+        if self._last_y is not None:
+            dy = y - self._last_y
+            fps = s.stats.get("analysed_fps", 30.0) or 30.0
+            live = self._verify if self._verify is not None else self._cal
+            live.observe(dy * fps, dy)
+            self.travel.setText(_("calib.drift.travel",
+                                  fields=f"{live.fields_travelled:.1f}"))
+        self._last_y = y
+        self._pos_y = y
+
+    # ---- the ritual ------------------------------------------------------
+
+    def _pressed(self) -> None:
+        if self._cal is None:
+            # Measure raw drift. Any correction already on the camera
+            # would leave each pass reporting only its *residual*, so a
+            # second calibration would fit the difference from the
+            # current constant rather than the truth -- which is exactly
+            # how a re-run lands lower than the first and the map keeps
+            # drifting. Restored on the way out if nothing is saved.
+            self._pipeline.set_readout(0.0)
+            self._cal = DriftCalibration(self._frame_h())
+            self._cal.begin_pass(self._pos_y if hasattr(self, "_pos_y")
+                                 else 0.0)
+            self._last_y = None
+            self.action.setText(_("calib.drift.centred"))
+            self.instruction.setText(_("calib.drift.pass",
+                                       fields=self.FIELDS))
+            return
+        live = self._verify if self._verify is not None else self._cal
+        drift = live.mark(getattr(self, "_pos_y", 0.0))
+        if self._verify is not None:
+            self._finish(drift)
+            return
+        if drift is None:
+            self.instruction.setText(_("calib.drift.short",
+                                       fields=self.FIELDS))
+            self._cal.begin_pass(getattr(self, "_pos_y", 0.0))
+            return
+        done = len(self._cal.passes)
+        if done < self.PASSES:
+            self.instruction.setText(_("calib.drift.again",
+                                       fields=self.FIELDS))
+            self._cal.begin_pass(getattr(self, "_pos_y", 0.0))
+            return
+        fitted = self._cal.fit()
+        if fitted is None:
+            self.instruction.setText(_("calib.drift.failed"))
+            self._cal = None
+            self.action.setText(_("calib.drift.start"))
+            return
+        self._fitted = fitted
+        self._pipeline.set_readout(fitted)
+        self._verify = DriftCalibration(self._frame_h())
+        self._verify.begin_pass(getattr(self, "_pos_y", 0.0))
+        self._last_y = None
+        self.instruction.setText(_("calib.drift.verify", fields=self.FIELDS))
+
+    def _finish(self, drift_after: float | None) -> None:
+        before = (sum(abs(d) for d, _x in self._cal.passes)
+                  / max(len(self._cal.passes), 1))
+        after = abs(drift_after) if drift_after is not None else 0.0
+        self._drift_after = after
+        self.instruction.setText(_("calib.drift.done"))
+        self.result.setText(_("calib.drift.result",
+                              before=f"{before:.0f}", after=f"{after:.0f}",
+                              us=f"{self._fitted:.0f}"))
+        self.action.setEnabled(False)
+        self.buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Save).setEnabled(True)
+
+    def _frame_h(self) -> int:
+        return getattr(self, "_h", 1216)
+
+    def set_frame_height(self, h: int) -> None:
+        self._h = int(h)
+
+    def _save(self) -> None:
+        self._camera.readout_us = float(self._fitted or 0.0)
+        self.saved = True
+        self.accept()
+
+    def reject(self) -> None:
+        # Walked away: the pipeline goes back to the profile's truth,
+        # whatever this session's experiment said.
+        self._pipeline.set_readout(self._camera.readout_us)
+        super().reject()

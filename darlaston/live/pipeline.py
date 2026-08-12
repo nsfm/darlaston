@@ -230,7 +230,18 @@ class LivePipeline:
         self._key: np.ndarray | None = None
         self._key_offset: tuple[float, float] = (0.0, 0.0)
         self._key_pending: np.ndarray | None = None
+        #: The keyframe before windowing. The overlap check that verifies
+        #: a large shift needs real pixels at the frame's edges, which is
+        #: exactly where the Hann taper has already erased them.
+        self._key_raw: np.ndarray | None = None
+        self._key_pending_raw: np.ndarray | None = None
         self._hann: np.ndarray | None = None
+        #: Rolling-shutter readout time, microseconds, signed by the
+        #: sweep direction; zero disables the correction. From the
+        #: camera profile, measured by the calibration ritual.
+        self._readout_us = 0.0
+        #: Smoothed vertical speed, track px/s, for that correction.
+        self._vy_track = 0.0
         #: Channel destinations, reused across frames. Allocating fresh
         #: 2.2 MP planes per frame cost 3217 minor page faults -- the kernel
         #: mapping and zeroing megabytes thirty times a second -- and that,
@@ -904,6 +915,7 @@ class LivePipeline:
         if self._hann is None or self._hann.shape[:2] != (h, w):
             self._hann = cv2.createHanningWindow((w, h), cv2.CV_32F)
             self._key = self._key_pending = None
+            self._key_raw = self._key_pending_raw = None
             self._key_offset = (0.0, 0.0)
         # OpenCV 5's phaseCorrelate windows its inputs IN PLACE, and the
         # current frame is kept as the next frame's `prev` -- which used to
@@ -925,8 +937,33 @@ class LivePipeline:
         # with the confidence sitting near 1.0.
         if self._key is None:
             self._key, self._key_offset = cur, (0.0, 0.0)
+            self._key_raw = small.copy()
             return None, None, 0.0
         (dx, dy), response = cv2.phaseCorrelate(self._key, cur)
+        # Rolling-shutter correction, when the readout has been
+        # calibrated. The row sweep rescales every measured vertical
+        # shift by 1/(1 + v*T/h) -- invisible from inside the stream,
+        # since both frames wear the same warp, which is why T comes
+        # from the calibration ritual rather than from any measurement
+        # here. First order, ~1% at cranking speeds; the velocity is
+        # last frame's estimate, whose lag costs a second-order term.
+        if self._readout_us and dy:
+            dy *= 1.0 + self._vy_track * self._readout_us / 1e6 / h
+        # A shift beyond the safe zone must show its work. Past 0.35 of
+        # an axis the number can still be exact, but it is also where a
+        # *wrapped* measurement can land: a true shift past half the
+        # frame reports its alias -- wrong sign, magnitude N - |true| --
+        # sometimes with a response above the confidence floor (measured
+        # 0.14-0.17 on the mock at 0.55 of the frame). The overlap check
+        # tells the two apart on the unwindowed pixels: the true shift's
+        # predicted overlap agrees at 0.5-0.9, the alias's at 0.1-0.2
+        # (spike/tracking/alias_bench.py). Failing it zeroes the
+        # response, so the tracker gates and counts the frame exactly as
+        # it would any other unmeasurable jump. ~0.2 ms, paid only when
+        # a large shift is on the table.
+        if ((abs(dx) > self.SAFE_STEP * w or abs(dy) > self.SAFE_STEP * h)
+                and not self._shift_verified(small, dx, dy)):
+            response = 0.0
         sx = full_shape[1] / w
         sy = full_shape[0] / h
         key_offset = (dx * sx, dy * sy)
@@ -937,18 +974,111 @@ class LivePipeline:
                   key_offset[1] - self._key_offset[1])
         self._key_offset = key_offset
         self._key_pending = cur
+        self._key_pending_raw = small.copy()
+        # Vertical speed in track pixels per second, lightly smoothed,
+        # for the next frame's rolling-shutter correction. The smoothing
+        # weight was swept against jittery cranking
+        # (spike/tracking/jitter_probe.py) and barely moved the residual:
+        # mild jitter corrects to a few px at any weight, and wild jitter
+        # is limited by the nonlinear regime, not the velocity estimate.
+        # So this stays where it was rather than gaining a knob.
+        self._vy_track = (0.7 * self._vy_track
+                          + 0.3 * (motion[1] / sy) * self._rate)
         return key_offset, motion, float(response)
+
+    #: Shifts up to this fraction of each axis are trusted on the
+    #: correlation alone -- the pre-verification gate, and the tracker's
+    #: old MAX_STEP. Between here and the tracker's 0.45 an offset is
+    #: only passed through with a nonzero response after `_shift_verified`
+    #: has confirmed it against the pixels, which is the contract that
+    #: makes the tracker's wider gate safe.
+    SAFE_STEP = 0.35
+
+    #: Minimum overlap agreement for a large shift to count as verified.
+    #: Bench: correct shifts in the verified band score 0.86-0.99 after
+    #: the high-pass; wrapped lies score 0.00-0.16. The floor sits far
+    #: under the correct cluster with a decade over the lies.
+    VERIFY_FLOOR = 0.40
+
+    #: A rival explanation kills a verification when it scores this
+    #: fraction of the candidate's own agreement...
+    RIVAL = 0.75
+    #: ...but only if its overlap is meaty enough to testify. Thin
+    #: slivers of sparse ground match somewhere on any slide, and they
+    #: refused every legitimate shift on the bench until their testimony
+    #: was struck; 32 rows is where the sliver noise ended and the real
+    #: rivals -- the true shift hiding behind a wallpaper match --
+    #: remained.
+    RIVAL_MEAT = 32
+
+    def _shift_verified(self, small: np.ndarray, dx: float, dy: float) -> bool:
+        """Does the keyframe reappear where this shift says -- uniquely?
+
+        Two questions, on the unwindowed pixels (the Hann taper has
+        erased exactly the edges a large shift lives in). First, the
+        predicted overlap must actually agree. Second, no *other* offset
+        along the suspect axis may explain the scene nearly as well: a
+        repetitive scene -- a stage micrometer is a perfect grating, a
+        test plate is arranged rows -- can match confidently at wrong
+        offsets, and a fast crank across one produced a silently wrong
+        position in an earlier draft of this check, which is the one
+        outcome worse than the gated loss it replaces. Ambiguous scenes
+        are refused whole: the tracker gates, the count ticks, and the
+        relocalizer -- which recognises places rather than measuring
+        shifts -- remains the recovery path, as it also remains the
+        backstop for the one case this scan cannot see (a jump past
+        ~0.8 of the frame, whose true overlap is too thin to testify).
+
+        All of it benched in spike/tracking/alias_bench.py: the verified
+        band accepts at 5/5 with rival margins near 1.0, wrapped lies
+        refuse at the floor, a blank field refuses by texture, and a
+        clean acceptance costs ~0.2 ms -- paid only when a large shift
+        is on the table.
+        """
+        key8 = self._key_raw
+        if key8 is None:
+            return False
+        h, w = small.shape[:2]
+        best = _overlap_agreement(key8, small, dx, dy)
+        if best is None or best < self.VERIFY_FLOOR:
+            return False
+        bar = max(self.VERIFY_FLOOR, self.RIVAL * best)
+        if abs(dy) > self.SAFE_STEP * h:
+            for ry in range(-(h - self.RIVAL_MEAT),
+                            h - self.RIVAL_MEAT + 1, 3):
+                if abs(ry - dy) <= 6:
+                    continue
+                score = _overlap_agreement(key8, small, dx, float(ry))
+                if score is not None and score >= bar:
+                    return False
+        if abs(dx) > self.SAFE_STEP * w:
+            for rx in range(-(w - self.RIVAL_MEAT),
+                            w - self.RIVAL_MEAT + 1, 3):
+                if abs(rx - dx) <= 6:
+                    continue
+                score = _overlap_agreement(key8, small, float(rx), dy)
+                if score is not None and score >= bar:
+                    return False
+        return True
+
+    def set_readout(self, us: float) -> None:
+        """The camera's calibrated rolling-shutter readout time. Applies
+        from the next frame; zero switches the correction off."""
+        self._readout_us = float(us or 0.0)
 
     def _drop_key(self) -> None:
         """Forget the correlation reference. Analysis thread only."""
         self._key = None
         self._key_pending = None
+        self._key_raw = None
+        self._key_pending_raw = None
         self._key_offset = (0.0, 0.0)
 
     def _rekey(self) -> None:
         """Adopt the current frame as the new anchor point."""
         if self._key_pending is not None:
             self._key = self._key_pending
+            self._key_raw = self._key_pending_raw
             self._key_offset = (0.0, 0.0)
 
     #: The sharpness field is computed at half the preview's linear size.
@@ -983,3 +1113,41 @@ class LivePipeline:
         mag = gx * gx + gy * gy
         mag = cv2.GaussianBlur(mag, (0, 0), 4.0 / k)
         return cv2.sqrt(mag)
+
+
+def _overlap_agreement(key8: np.ndarray, cur8: np.ndarray,
+                       dx: float, dy: float) -> float | None:
+    """How well the keyframe reappears where a candidate shift predicts.
+
+    Content at key (x, y) reappears at cur (x + dx, y + dy) under
+    phaseCorrelate's convention (settled empirically in
+    spike/tracking/alias_bench.py; the first draft had it backwards and
+    the sign probe caught it). Normalised correlation over the predicted
+    overlap, None when the overlap is too thin to say anything -- a
+    sliver of smooth background self-correlates anywhere, which is how a
+    wrong shift earns a confident score.
+    """
+    h, w = key8.shape[:2]
+    ix, iy = int(round(-dx)), int(round(-dy))
+    kx0, kx1 = max(0, ix), min(w, w + ix)
+    ky0, ky1 = max(0, iy), min(h, h + iy)
+    if kx1 - kx0 < 8 or ky1 - ky0 < 8:
+        return None
+    a = key8[ky0:ky1, kx0:kx1].astype(np.float32)
+    b = cur8[ky0 - iy:ky1 - iy, kx0 - ix:kx1 - ix].astype(np.float32)
+    # High-passed before correlating, so only structure can vote. Plain
+    # correlation let the background carry wrong candidates: a strip of
+    # smooth vignetted ground matches other smooth ground at 0.5-0.7,
+    # which is how a wrapped 900 px jump scored its way through an early
+    # draft of this check and turned a lost jump into a silently wrong
+    # one. Subtracting a local mean leaves edges and specimens, which
+    # either line up or do not.
+    a -= cv2.boxFilter(a, -1, (9, 9))
+    b -= cv2.boxFilter(b, -1, (9, 9))
+    # And an overlap with no structure has no vote at all -- the same
+    # refusal the relocalizer's texture floor makes, for the same
+    # reason: blank agrees with blank at any shift you like.
+    if float(a.std()) < 1.5 or float(b.std()) < 1.5:
+        return None
+    denom = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    return float((a * b).sum() / denom) if denom > 1e-6 else 0.0

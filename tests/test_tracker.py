@@ -50,6 +50,30 @@ def test_absurd_jumps_are_rejected():
     assert not locked
 
 
+def test_the_gate_band_is_no_longer_ys_blind_spot():
+    """The deliberate change the earlier pin existed for. A 55 px shift
+    on the track frame -- 36% of y's height, squarely in the band that
+    used to be discarded whole -- is now accepted on both axes, because
+    the pipeline verifies everything past 0.35 against the pixels
+    before this gate ever sees it. The gate still ends at 0.45: past
+    that sits too close to the half-frame wraparound to trust."""
+    shape = (152, 228)                    # the track frame, h x w
+    x = StageTracker()
+    x.anchor((5.0, 5.0), 0.9, shape)
+    _, locked, _ = x.anchor((55.0, 0.0), 0.9, shape)
+    assert locked and x.gated == 0, "x absorbs the band, as always"
+
+    y = StageTracker()
+    y.anchor((5.0, 5.0), 0.9, shape)
+    _, locked, _ = y.anchor((0.0, 55.0), 0.9, shape)
+    assert locked and y.gated == 0, "y absorbs it now too"
+
+    far = StageTracker()
+    far.anchor((5.0, 5.0), 0.9, shape)
+    _, locked, _ = far.anchor((0.0, 70.0), 0.9, shape)   # 0.46 of y
+    assert not locked and far.gated == 1, "past 0.45 stays gated"
+
+
 def test_no_position_until_first_lock():
     t = StageTracker()
     assert t.position is None
@@ -147,6 +171,40 @@ def _rig():
         frame.release()
 
     return cam, pipe, push, got
+
+
+def test_mock_motion_blur_is_opt_in_and_exposure_scaled():
+    """Off by default -- it would change what every moving test sees --
+    and when on, the streak follows the shutter: the same move blurs at
+    a long exposure and stays crisp at a short one."""
+    def frame(exposure_us, blur):
+        cam = MockCamera(fps=30.0)
+        cam.open()
+        cam.motion_blur = blur
+        cam.set_exposure(exposure_us)
+        res = _RESOLUTIONS[2]
+        buf = np.empty((res.height, res.width, 3), np.uint8)
+        cam._render_into(buf, res)          # establishes _blur_from
+        x, y = cam.stage_xy
+        cam.stage_xy = (x + 300.0, y)       # a fast move between frames
+        cam._render_into(buf, res)
+        cam.close()
+        return buf.copy()
+
+    import cv2
+
+    def crispness(img):
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.Laplacian(g, cv2.CV_64F).var()
+
+    # Each blurred frame against its own same-exposure sharp baseline:
+    # the mock folds exposure into brightness, so comparing across
+    # exposures would measure darkness, not smear.
+    r_long = crispness(frame(16000, True)) / crispness(frame(16000, False))
+    r_short = crispness(frame(2000, True)) / crispness(frame(2000, False))
+    assert r_long < 0.6, f"long exposure plus motion must smear ({r_long:.2f})"
+    assert r_short > 1.5 * r_long, \
+        f"the streak must follow the shutter ({r_short:.2f} vs {r_long:.2f})"
 
 
 def test_guard_measures_motion_across_the_capture_gap():
@@ -353,8 +411,8 @@ def test_the_step_limit_is_per_axis():
     pos, locked = t.advance((0.30 * 1824, 0.0), 0.9, shape)
     assert locked, "a shift well inside the frame width was rejected"
 
-    # 40% of the height is past the limit for y.
-    _, locked = t.advance((0.0, 0.40 * 1216), 0.9, shape)
+    # 46% of the height is past the limit for y.
+    _, locked = t.advance((0.0, 0.46 * 1216), 0.9, shape)
     assert not locked
 
 
@@ -435,7 +493,9 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
 
     def signal(gen, pos):
         return types.SimpleNamespace(preview=frame, stage_pos=pos,
-                                     stage_tracking=True, track_gen=gen)
+                                     stage_tracking=True, track_gen=gen,
+                                     track_gated=0, xy_offset=None,
+                                     stats={})
 
     panel.update_live(signal(0, (10.0, 10.0)))
     assert panel.model.terrain.ready, "tracking never painted terrain"
@@ -450,6 +510,114 @@ def test_the_map_refuses_frames_from_before_its_clear(qapp):
     assert panel.model.terrain.ready, "fresh frames must still paint"
 
 
+def test_a_mosaic_locks_its_halo_profile_on_the_first_tile(window):
+    """Removal changes by specimen, not by region: the first stacked
+    tile of a mosaic picks the halo bound, and every tile after inherits
+    it silently rather than asking again -- or worse, answering
+    differently and stitching forty answers into one picture."""
+    win = window()
+
+    win.settings.stack_halo_mode = "off"
+    assert win._tile_merge_slope() == (0.0, False), "off removes nothing"
+
+    win.settings.stack_halo_mode = "choose"
+    win.settings.stack_clamp_slope = 0.7
+    win._mosaic_slope = None
+    slope, pick = win._tile_merge_slope()
+    assert pick, "the first tile must pick, on real data"
+
+    # Tile one's pick locks the profile; the rest inherit it silently.
+    win._mosaic_slope = 0.42
+    assert win._tile_merge_slope() == (0.42, False), "the rest inherit"
+
+    # A fresh mosaic starts the choice over.
+    win._on_mosaic_requested(True)
+    assert win._mosaic_slope is None
+    win._on_mosaic_requested(False)
+
+    # 'last' honours the stored bound without ever asking.
+    win.settings.stack_halo_mode = "last"
+    win._mosaic_slope = None
+    assert win._tile_merge_slope() == (0.7, False), "last never asks"
+
+
+def test_a_stacked_tile_shows_live_and_seals_in_place(qapp):
+    """The bug: a stacked mosaic painted nothing until a tile sealed on
+    the slide to the next field, while single captures painted per shot,
+    so stacking read as doing nothing. The field being racked now shows
+    live as a provisional tile, which the sealed one then replaces --
+    without leaving two tiles at one spot."""
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    panel = SlideMapPanel()
+    preview = np.full((60, 80, 3), 120, np.uint8)
+
+    panel.begin_stacking((100.0, 50.0), preview)
+    assert len(panel.model.tiles) == 1
+    assert panel.model.tiles[-1].state == "stacking", "live tile is distinct"
+    panel.update_stacking("×3")
+    assert panel.model.tiles[-1].label == "×3"
+
+    # Sealing: the provisional goes, the real tile takes its place. One
+    # tile, not two, at the field.
+    panel.end_stacking()
+    panel.tile_added((100.0, 50.0), preview, state="merging", label="×3")
+    assert len(panel.model.tiles) == 1
+    assert panel.model.tiles[-1].state == "merging"
+
+    # A field passed through with no slices leaves nothing behind.
+    panel.begin_stacking((300.0, 0.0), preview)
+    assert len(panel.model.tiles) == 2
+    panel.end_stacking()
+    assert len(panel.model.tiles) == 1, "an abandoned field must not linger"
+
+
+def test_the_map_banks_only_what_the_tracker_is_calm_about(qapp):
+    """The banking quality bar, from the on-glass report: during a fast
+    crank the map banked blurred frames, and one frame banked in the
+    shadow of a gated jump -- position suspect, not yet corroborated --
+    morphed the map and skewed everything after, because the misplaced
+    paint is what the relocalizer then matched against."""
+    import types
+
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    frame = np.full((60, 80, 3), 120, np.uint8)
+
+    def signal(pos, offset=None, gated=0, exposure=4000):
+        return types.SimpleNamespace(
+            preview=frame, stage_pos=pos, stage_tracking=True, track_gen=0,
+            track_gated=gated, xy_offset=offset,
+            stats={"analysed_fps": 30.0, "exposure_us": exposure})
+
+    # A fast frame at a long exposure smears; the same speed at a short
+    # exposure does not. 100 px/frame at 30 fps: 12 ms of shutter is
+    # 36 px of streak, 2 ms is 6 px.
+    smeared = SlideMapPanel()
+    smeared.update_live(signal((0.0, 0.0), offset=(100.0, 0.0),
+                               exposure=12000))
+    assert not smeared.model.terrain.ready, "a smeared frame was banked"
+    smeared.update_live(signal((0.0, 0.0), offset=(100.0, 0.0),
+                               exposure=2000))
+    assert smeared.model.terrain.ready, "short exposure must still bank"
+
+    # After a gate, painting holds until the position has had its chance
+    # to be corroborated -- and resumes on its own once it has.
+    held = SlideMapPanel()
+    held.update_live(signal((0.0, 0.0)))
+    assert held.model.terrain.ready
+    fields = held.model.terrain.fields_painted
+    held.update_live(signal((500.0, 0.0), gated=1))
+    for i in range(SlideMapPanel.GATE_HOLD - 1):
+        held.update_live(signal((500.0 + i, 0.0), gated=1))
+    assert held.model.terrain.fields_painted == fields, \
+        "the map painted while the position was suspect"
+    for i in range(4):
+        held.update_live(signal((520.0 + i, 0.0), gated=1))
+    assert held.model.terrain.fields_painted > fields, \
+        "painting never resumed after the holdoff"
+
+
 def test_clearing_the_map_fences_in_the_same_press(window):
     """One route: the panel's clear resets the tracking origin and sets
     the stale-frame fence together, whichever path asked for it."""
@@ -461,24 +629,29 @@ def test_clearing_the_map_fences_in_the_same_press(window):
         "the clear did not fence out frames from the old origin")
 
 
-def test_the_gate_is_a_fraction_of_each_axis():
-    """Documented, not endorsed: on a landscape frame the same jump in
-    pixels survives in x and is discarded whole in y, because the
-    measurable range is a fraction of each axis's own extent. This is
-    the mechanism behind the dead-reckoning undershoot in y -- see the
-    TODO entry -- and this test pins the current behaviour so a fix
-    shows up as a deliberate change here."""
+def test_the_gate_is_a_fraction_of_each_axis_and_y_keeps_500_now():
+    """The dead-reckoning undershoot's pin, deliberately changed. A
+    500 px jump used to survive in x (gate 638) and be discarded whole
+    in y (gate 426); with the verified band the y gate reaches 547 and
+    the same jump survives both axes. The gate is still a fraction of
+    each axis's own extent, so the two still part ways -- just past the
+    band's edge now."""
     shape = (1216, 1824)
     t = StageTracker()
     t.anchor((0.0, 0.0), 0.9, shape)
     _pos, locked, _rekey = t.anchor((500.0, 0.0), 0.9, shape)
-    assert locked, "x should keep a 500 px jump: the gate is 638 there"
+    assert locked, "x keeps a 500 px jump, as it always did"
 
     t = StageTracker()
     t.anchor((0.0, 0.0), 0.9, shape)
     _pos, locked, _rekey = t.anchor((0.0, 500.0), 0.9, shape)
-    assert not locked and t.gated == 1, (
-        "y's gate is 426 px: the same jump is discarded whole")
+    assert locked and t.gated == 0, (
+        "y keeps it too now: 500 px is inside the verified band")
+
+    t = StageTracker()
+    t.anchor((0.0, 0.0), 0.9, shape)
+    _pos, locked, _rekey = t.anchor((0.0, 550.0), 0.9, shape)
+    assert not locked and t.gated == 1, "past the band, y still gates"
 
 
 def test_a_blind_tracker_costs_nothing_and_claims_nothing():
@@ -558,6 +731,120 @@ def test_a_refix_plants_the_position_and_drops_the_key():
     cam.close()
 
 
+def test_the_speed_gauge_shares_its_zones_with_the_banking_bar(qapp):
+    """Green banks, red refuses -- the gauge and the banking bar read
+    the same arithmetic, so the gauge can never say fine while the map
+    is quietly dropping frames."""
+    from darlaston.ui import theme
+    from darlaston.ui.map_ui import SlideMapPanel
+
+    panel = SlideMapPanel()
+    panel.set_speed(None, None)
+    assert panel.speed.isHidden()
+
+    panel.set_speed(100.0, 1000.0)              # a tenth of the limit
+    assert not panel.speed.isHidden()
+    assert "µm/s" in panel.speed._text
+    assert panel.speed.tone == theme.GOOD
+
+    # The gauge is smoothed, so the zones are reached, not jumped to.
+    for _ in range(40):
+        panel.set_speed(800.0, 1000.0)          # closing on the edge
+    assert panel.speed.tone == theme.BRASS
+
+    for _ in range(40):
+        panel.set_speed(1500.0, 1000.0)         # past it: the map refuses
+    assert "mm/s" in panel.speed._text
+    assert panel.speed.tone == theme.BAD
+
+    panel.set_speed(None, None)
+    assert panel.speed.isHidden()
+
+
+def test_pips_are_slide_anchored_and_orientation_aware(window):
+    """A pip is a point of slide space: centred on a grid node it sits
+    dead centre, panning right moves it left, and it rides the same
+    orientation mapping as every other overlay."""
+    import types
+
+    win = window()
+    s = types.SimpleNamespace(preview=np.zeros((120, 160, 3), np.uint8),
+                              stage_pos=(0.0, 0.0))
+    pts = [(round(x, 3), round(y, 3)) for x, y in win._pip_points(s, 0, False)]
+    assert (0.5, 0.5) in pts, "a grid node under the centre sits dead centre"
+
+    s.stage_pos = (40.0, 0.0)                  # half a pip step to the right
+    pts = [(round(x, 3), round(y, 3)) for x, y in win._pip_points(s, 0, False)]
+    assert (0.25, 0.5) in pts, "panning right must carry the pip left"
+
+    s.stage_pos = (0.0, 0.0)
+    turned = [(round(x, 3), round(y, 3))
+              for x, y in win._pip_points(s, 90, False)]
+    assert (0.5, 0.5) in turned, "the centre survives any rotation"
+
+
+def test_pips_reach_the_view_only_while_tracking(qapp, window):
+    from darlaston.live.pipeline import LiveSignals
+
+    win = window()
+    got = []
+    win.view.set_pips = lambda p: got.append(p)
+
+    def sig(tracking):
+        return LiveSignals(
+            seq=1, timestamp=1.0, preview=np.zeros((6, 8, 3), np.uint8),
+            histogram=np.zeros(256, np.int32), clipped_fraction=0.0,
+            focus_metric=1.0, focus_fraction_of_peak=1.0,
+            focus_trace=np.zeros(4, np.float32),
+            stage_pos=(0.0, 0.0), stage_tracking=tracking,
+            stats={"analysed_fps": 30.0, "delivered": 1, "dropped": 0,
+                   "exposure_us": 8000, "gain_pct": 100})
+
+    # Fed straight into the slot rather than published: the mock camera's
+    # own live thread also publishes, and racing it for the newest-frame
+    # cell made this test order-dependent under the full suite.
+    import types
+
+    win.settings.framing_pips = True
+    queue = [sig(True)]
+    win._newest = types.SimpleNamespace(take=lambda: queue.pop()
+                                        if queue else None,
+                                        put=lambda v: None, replaced=0)
+    win._on_signals(None)
+    assert got and got[-1], "tracking with pips on must deliver points"
+
+    queue.append(sig(False))
+    win._on_signals(None)
+    assert got[-1] is None, "a lost position must never wear confident dots"
+
+
+def test_the_relocalizer_goes_quiet_during_the_drift_ritual(window):
+    """The ritual measures the tracker's raw drift; the relocalizer
+    exists to abolish exactly that. So while the drift dialog is open,
+    the relocalizer must not observe or correct -- or it would eat the
+    drift being measured."""
+    import types
+
+    win = window()
+    calls = []
+    win.relocator.observe = lambda *a, **k: calls.append(1)
+
+    s = types.SimpleNamespace(
+        preview=np.zeros((120, 160, 3), np.uint8), stage_pos=(5.0, 5.0),
+        stage_tracking=True, stats={}, xy_offset=None, track_gen=1,
+        track_gated=0, track_small=None)
+
+    win._track_wanted = True
+    win._drift_dialog = None
+    win._keep_tracking(s)
+    assert calls, "the relocalizer runs in ordinary operation"
+
+    calls.clear()
+    win._drift_dialog = object()               # the ritual is open
+    win._keep_tracking(s)
+    assert not calls, "the relocalizer must not run during the ritual"
+
+
 def test_the_window_says_what_tracking_is_doing(window):
     """The advisories: lost is said after it is sustained, a gated step
     is said the moment it happens, and neither is said while the
@@ -572,6 +859,7 @@ def test_the_window_says_what_tracking_is_doing(window):
     def signal(tracking, gated=0):
         return types.SimpleNamespace(preview=frame, stage_pos=(0.0, 0.0),
                                      stage_tracking=tracking,
+                                     stats={}, xy_offset=None,
                                      track_gen=1, track_gated=gated,
                                      track_small=None)
 
