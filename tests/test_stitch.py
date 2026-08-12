@@ -8,6 +8,7 @@ real thing and read the real number out of the real file.
 """
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -101,7 +102,110 @@ def test_a_composite_can_be_read_back_as_pixels(tmp_path):
     assert float(lit.mean()) > 1000.0, "the composite came back nearly black"
 
 
-def test_an_interrupted_write_leaves_no_file_to_be_misread(tmp_path):
+def _write_tile(path: Path, raw: np.ndarray) -> None:
+    meta = CaptureMetadata(
+        make="Test", model="Bench",
+        comment=f"objective=40x um_per_px={TILE_UM_PER_PX:g} slide=none",
+        focal_plane_per_mm=416.67, unique_id="t")
+    preview = dng.make_preview(raw, bayer=True, white=4095)
+    dng.write_bayer_streamed(path, lambda s, c: raw[s:s + c], raw.shape[0],
+                             raw.shape[1], preview=preview, pattern="GBRG",
+                             white=4095, meta=meta, bits=12)
+
+
+def test_multiband_reconstructs_where_the_tiles_agree(tmp_path):
+    """The band split has to put the mosaic back together. Two tiles cut from
+    one source agree exactly in their overlap, so the multiband composite --
+    low frequencies from a downscaled pyramid, high frequencies committed and
+    added per band -- must land on the same picture the single-band blend
+    does. If the two bands do not reconstruct, this drifts."""
+    from darlaston.process.wiggle import _read_composite
+
+    # Tiles the size real composite tiles are (~900 px): at 128 px the low-res
+    # pyramid is so coarse the round trip alone costs ~2%, which is a property
+    # of tile size, not of the wiring. At this size the reconstruction of two
+    # agreeing tiles is under a percent, concentrated at the sharp feature edge.
+    rng = np.random.default_rng(0)
+    H, W, tw = 256, 1152, 640
+    src = rng.normal(2000, 60, (H, W)).clip(0, 4095)
+    src[90:170, 520:700] = 3400                # a feature sitting in the overlap
+    _write_tile(tmp_path / "a.dng", src[:, :tw].astype(np.uint16))
+    _write_tile(tmp_path / "b.dng", src[:, W - tw:].astype(np.uint16))
+    session = MosaicSession(tmp_path, subject="recon")
+    session.adopt(tmp_path / "a.dng", pos=(0.0, 0.0), frame=(tw, H))
+    session.adopt(tmp_path / "b.dng", pos=(float(W - tw), 0.0), frame=(tw, H))
+    positions = [(tw / 2, H / 2), (W - tw / 2, H / 2)]
+    shapes = [(H, tw), (H, tw)]
+
+    made = stitch.composite(session, positions, scale=1.0, shapes=shapes,
+                            multiband=False)
+    single, _ = _read_composite(made)
+    made = stitch.composite(session, positions, scale=1.0, shapes=shapes,
+                            multiband=True)
+    multi, _ = _read_composite(made)
+
+    assert multi.shape == single.shape
+    # Agreeing tiles: the two blends must land on the same picture, bar the
+    # small reconstruction error of the pyramid round trip.
+    diff = np.abs(multi.astype(np.float32) - single.astype(np.float32))
+    lit = single.max(axis=2) > 0
+    rel = float(diff[lit].mean()) / (float(single[lit].mean()) + 1e-6)
+    # Under 1.5%: the residual is the pyramid round trip at the hard synthetic
+    # edge (a 1400-count step); a wiring fault reads as 10%+, which is what
+    # this guards. Real diatom edges at capture scale are softer still.
+    assert rel < 0.015, f"multiband drifted from the single-band blend ({rel:.3%})"
+
+
+def test_multiband_grades_a_step_the_seam_leaves_sharp(tmp_path):
+    """The payoff. Two tiles that agree in texture but differ in brightness
+    (unnormalised exposure) with a specimen in their overlap: the seam routes
+    around the specimen and commits the background to one tile across a narrow
+    feather, which turns the 6% brightness step into a sharp edge. Multiband
+    grades that low-frequency step across the whole overlap while leaving the
+    committed detail alone, so the blurred step is markedly gentler."""
+    from darlaston.process import seam
+    from darlaston.process.wiggle import _read_composite
+
+    rng = np.random.default_rng(0)
+    H, W, tw = 256, 1152, 640
+    bg = rng.normal(1500, 40, (H, W)).astype(np.float32)
+    yy, xx = np.mgrid[0:H, 0:W]
+    bg[np.sqrt((xx - 576.) ** 2 + (yy - 128.) ** 2) < 28] += 1800  # specimen
+    _write_tile(tmp_path / "a.dng", bg[:, :tw].clip(0, 4095).astype(np.uint16))
+    _write_tile(tmp_path / "b.dng",
+                (bg[:, W - tw:] * 1.06).clip(0, 4095).astype(np.uint16))
+    session = MosaicSession(tmp_path, subject="step")
+    session.adopt(tmp_path / "a.dng", pos=(0.0, 0.0), frame=(tw, H))
+    session.adopt(tmp_path / "b.dng", pos=(float(W - tw), 0.0), frame=(tw, H))
+    pos = [(tw / 2., H / 2.), (W - tw / 2., H / 2.)]
+    shapes = [(H, tw), (H, tw)]
+
+    # Seam multipliers as stitch() computes them, with a small residual so the
+    # seam fires and commits the background across a narrow feather.
+    lum = [stitch.luma_half(stitch.read_tile(session.dir, t))
+           for t in session.tiles]
+    mult, _ = seam.weights(lum, [(tw / 2., H / 2.),
+                                 (W - tw / 2. + 7, H / 2. + 4)], shapes, 1.0)
+    assert min(float(m.min()) for m in mult) < 0.999, "the seam did not fire"
+
+    made = stitch.composite(session, pos, scale=1.0, shapes=shapes,
+                            seam_mult=mult, multiband=False)
+    seam_only, _ = _read_composite(made)
+    made = stitch.composite(session, pos, scale=1.0, shapes=shapes,
+                            seam_mult=mult, multiband=True)
+    banded, _ = _read_composite(made)
+
+    def step_gradient(img):
+        # The low-frequency step: blur away the texture, take a background row
+        # band clear of the specimen, and find the steepest brightness change.
+        b = cv2.GaussianBlur(img[20:60, 480:660].astype(np.float32).mean(2),
+                             (0, 0), 10).mean(axis=0)
+        return float(np.abs(np.diff(b)).max())
+
+    sharp = step_gradient(seam_only)
+    graded = step_gradient(banded)
+    assert graded < 0.75 * sharp, \
+        f"multiband did not grade the step (seam {sharp:.0f}, mb {graded:.0f})"
     """Everything that makes a DNG readable is patched in at the very end,
     so a write that stops early left a file whose strip offsets were all
     still zero -- and our own reader follows offset 0 into the header and

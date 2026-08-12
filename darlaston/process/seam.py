@@ -235,6 +235,48 @@ def multiband_blend(a: np.ndarray, b: np.ndarray, w: np.ndarray,
     return out
 
 
+def multiband_composite(placed, levels: int = MULTIBAND_LEVELS) -> np.ndarray:
+    """Weighted multiband blend of N tiles sharing a canvas.
+
+    `placed` is an iterable yielding `(img, weight)` pairs, each already
+    positioned on the common canvas (zero outside the tile's footprint):
+    `img` is HxWxC, `weight` is HxW. Tiles are consumed one at a time and
+    never all held at once, so the caller streams them off disk while only
+    the pyramid accumulators stay resident.
+
+    The blend normalises by the summed weight at every level -- the
+    compositor's acc/wacc generalised from one band to the whole pyramid --
+    so the weights need not partition unity (the raised-cosine window times
+    the seam multiplier does not). This is the low-frequency workhorse of the
+    streaming compositor: run at a downscale where the whole pyramid is cheap,
+    it grades a brightness step wide while committing a specimen's low
+    frequencies, and the high frequencies are committed and added per band at
+    full scale. The weight suppresses each tile's zero-cliff at its own edge,
+    so no fill is needed.
+    """
+    lacc: list[np.ndarray] | None = None
+    wacc: list[np.ndarray] | None = None
+    for img, weight in placed:
+        gp = _gaussian_pyramid(weight.astype(np.float32), levels)
+        lp = _laplacian_pyramid(_gaussian_pyramid(img.astype(np.float32),
+                                                  levels))
+        if lacc is None:
+            lacc = [np.zeros_like(l) for l in lp]
+            wacc = [np.zeros(g.shape[:2], np.float32) for g in gp]
+        for k in range(len(lp)):
+            w = gp[k]
+            lacc[k] += lp[k] * (w[:, :, None] if lp[k].ndim == 3 else w)
+            wacc[k] += w
+    if lacc is None:
+        raise ValueError("multiband_composite got no tiles")
+    out = lacc[-1] / np.maximum(wacc[-1], 1e-6)[..., None]
+    for k in range(len(lacc) - 2, -1, -1):
+        size = (lacc[k].shape[1], lacc[k].shape[0])
+        out = cv2.pyrUp(out, dstsize=size) \
+            + lacc[k] / np.maximum(wacc[k], 1e-6)[..., None]
+    return out
+
+
 def weights(lumas: list[np.ndarray],
             positions: list[tuple[float, float]],
             shapes: list[tuple[int, int]],

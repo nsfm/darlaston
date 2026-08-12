@@ -285,6 +285,49 @@ def blend_multiband(scene):
     return out, w
 
 
+def _canvas_ab(scene):
+    """Both tiles and the seam ownership fraction, painted on the canvas with
+    each tile's non-coverage filled by the other -- the shared prep for the
+    multiband and streaming blends."""
+    wa, wb = _seam_windows(scene)
+    a_img, a_wt, a_cov = _canvas_tile(scene, scene.tile_a, scene.ax, scene.ay,
+                                      wa)
+    b_img, b_wt, b_cov = _canvas_tile(
+        scene, scene.tile_b, int(round(scene.bx_believed)),
+        int(round(scene.by_believed)), wb)
+    a_img = np.where(a_cov, a_img, b_img)
+    b_img = np.where(b_cov, b_img, a_img)
+    total = a_wt + b_wt
+    w = np.where(total > 0, a_wt / np.maximum(total, 1e-9), 1.0)
+    return a_img, b_img, w
+
+
+def blend_stream(scene, down=4):
+    """The streaming-compatible multiband, as the reworked compositor will do
+    it. Split at a cutoff scale: the low band is a *full* multiband but at
+    1/`down` resolution, where it is cheap enough to hold and its per-level
+    mask both commits a specimen's low frequencies and grades the brightness
+    step wide; the high band is the detail above the cutoff, committed to one
+    tile by the sharp seam mask and blended band by band. Sum them. No full
+    pyramid at full resolution ever exists -- which is what lets the real
+    compositor stream bands to the writer instead of holding a canvas."""
+    a_img, b_img, w = _canvas_ab(scene)
+    H, W = scene.H, scene.W
+    lo = (max(1, W // down), max(1, H // down))
+
+    def D(x):
+        return cv2.resize(x, lo, interpolation=cv2.INTER_AREA)
+
+    def U(x):
+        return cv2.resize(x, (W, H), interpolation=cv2.INTER_LINEAR)
+
+    low = U(seam.multiband_blend(D(a_img), D(b_img), D(w)))
+    a_hi = a_img - U(D(a_img))
+    b_hi = b_img - U(D(b_img))
+    high = w * a_hi + (1.0 - w) * b_hi          # detail committed, sharp mask
+    return low + high, w
+
+
 def blend_lfc(scene, down=8):
     """Low-frequency compensation: a measured dead-end, kept as one.
 
@@ -402,6 +445,7 @@ def main():
         for blend_name, blend in (("feather", blend_feather),
                                   ("seam", blend_seam),
                                   ("multiband", blend_multiband),
+                                  ("stream", blend_stream),
                                   ("lfc", blend_lfc)):
             out, ratio = blend(scene)
             s = seam_on_specimen(scene, ratio) * 100
