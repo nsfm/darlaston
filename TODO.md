@@ -34,7 +34,6 @@ This document tracks upcoming features, concerns, and ideas.
 
 - [ ] **Map scale changes with the objective.** Clearing on setup-dialog accept is wired; the objective _stepper_ and future turret auto-detection are not. When magnification becomes known per objective, positions could be rescaled instead of discarded.
 - [ ] **The slide map as a finding aid.** The other half of the plate idea, still open: export the accumulated map, pins, thumbnails, µm coordinates, as a printable sheet. For a catalogued mount that is an archival artifact, and Victorian mounters drew them by hand.
-- [ ] **The Y undershoot: mechanism found, fix unshipped.** Probed synthetically through the real pipeline (2026-08-08): steady tracking is clean on both axes at every speed (worst −0.4%, zero gating), and defocus wobble up to 8 µm changes nothing. What reproduces the loss is a jump arriving between two analysed frames: the per-axis gate is 0.35 of each axis's own extent, 638 px in x but 426 px in y on a landscape frame, and a gated jump is discarded _whole_. So travel in the 426 to 638 px band survives in x and vanishes in y — and dropped frames while cranking fast are exactly what makes multi-hundred-pixel inter-frame steps, which is why it shows at 25×, where a small field makes the hand fast in pixels. Monotonic, one direction, proportional to how often it trips. Fix candidates, in order of ambition: raise the gate toward the physical half-frame limit (0.45 of the axis buys y 426 → 547 px, cheap, partial); or disambiguate the wraparound — a shift past the gate has exactly two candidates, the measured offset and offset ± the frame extent, and directly comparing overlap agreement at both xtends the measurable range to half the frame and possibly past it. The second is a real algorithm and wants a bench before it ships. A characterisation test in test_tracker.py pins today's behaviour so the fix shows up as a deliberate change.
 
 ## Presentation
 
@@ -227,7 +226,7 @@ This document tracks upcoming features, concerns, and ideas.
       fell" are different claims and only the second is defensible. The
       bench already has a synthetic glow case to measure against.
 
-## Developer quality-of-live
+## Developer quality-of-life
 
 - [ ] **CLI tools & docs**
 - [ ] **Refactoring**, there are a lot of big files that need breaking down
