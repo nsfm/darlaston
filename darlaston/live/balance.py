@@ -28,9 +28,55 @@ UNITY = (1.0, 1.0, 1.0)
 #: Beyond this, a gain is not a correction, it is a mistake -- a region
 #: picked on something that is not grey at all, or on a blown highlight
 #: where one channel has already clipped and reads far darker than it is.
-#: Eight stops either way is far more than any real illuminant needs and
-#: still leaves room for a deeply orange halogen lamp at low volts.
+#: Four stops either way, in linear light, is far more than any real
+#: illuminant needs and still leaves room for a deeply orange halogen lamp
+#: at low volts. In display terms it is a 3.5x ratio.
 MAX_GAIN = 16.0
+
+#: The gains are kept as *linear-light* ratios, because that is what the
+#: capture path multiplies into a DNG's AsShotNeutral, where they meet
+#: linear sensor values. The preview is display-encoded, so a pick off its
+#: means is linearised before the ratio is taken, and the lookup that
+#: applies the gain to the preview linearises each code, scales, and
+#: re-encodes.
+#:
+#: What that does and does not change, measured: a power law commutes with
+#: a scale, so the preview lookup built this way is the *same* lookup the
+#: old display-domain code produced (to within one code, wherever the
+#: clamp does not bind). The preview was never the thing being fixed; the
+#: number written into the file was. A display ratio of 1.33 used to go
+#: into the file as 1.33 where the linear truth was 1.87, so every picked
+#: trim under-corrected the raw. The preview's own residual cast comes
+#: from elsewhere -- clipping, and the ISP's curve not being a power law
+#: -- and is dealt with where it arises.
+GAMMA = 2.2
+
+
+def from_display_ratio(gains) -> tuple[float, float, float]:
+    """Gains stored by an older build, which kept display-domain ratios,
+    carried into linear light. Idempotence is not possible -- a number
+    does not say which domain it is in -- so the settings file says."""
+    r, g, b = sane(gains)
+    return sane((r ** GAMMA, 1.0, b ** GAMMA))
+
+
+def _linear(v):
+    """A display-gamma value (0..255) as linear light in 0..1."""
+    return (np.asarray(v, np.float32) / 255.0) ** GAMMA
+
+
+def gains_from_means(b: float, g: float, r: float
+                     ) -> tuple[float, float, float]:
+    """Neutralising gains from BGR channel means, derived in linear light.
+
+    Green is the reference (see `sane`). The means arrive display-encoded --
+    from `cv2.mean` of an 8-bit patch -- so they are linearised before the
+    ratio is taken, which is the whole correctness of the thing.
+    """
+    rl, gl, bl = float(_linear(r)), float(_linear(g)), float(_linear(b))
+    if min(rl, gl, bl) <= 0:
+        return UNITY
+    return sane((gl / rl, 1.0, gl / bl))
 
 
 def sane(gains) -> tuple[float, float, float]:
@@ -66,9 +112,7 @@ def from_region(bgr: np.ndarray) -> tuple[float, float, float]:
     if a.ndim == 2:                      # mono: there is nothing to balance
         return UNITY
     b, g, r = (float(a[..., i].mean()) for i in range(3))
-    if min(r, g, b) <= 0:
-        return UNITY
-    return sane((g / r, 1.0, g / b))
+    return gains_from_means(b, g, r)
 
 
 def lut(gains) -> np.ndarray | None:
@@ -86,10 +130,17 @@ def lut(gains) -> np.ndarray | None:
     r, g, b = sane(gains)
     if (r, g, b) == UNITY:
         return None
-    ramp = np.arange(256, dtype=np.float32)
+    # The gain is a linear-light scaling, so each display value is taken to
+    # linear, scaled, and returned. Under a pure power law this is the same
+    # table as scaling the code by gain ** (1 / GAMMA) directly; it is
+    # written this way so the one stored quantity -- a linear ratio -- is
+    # the thing applied, and the file and the preview cannot drift apart
+    # by a conversion one of them forgot.
+    lin = (np.arange(256, dtype=np.float32) / 255.0) ** GAMMA
     table = np.empty((1, 256, 3), np.uint8)
     for channel, gain in enumerate((b, g, r)):        # cv2 order
-        table[0, :, channel] = np.clip(ramp * gain + 0.5, 0, 255)
+        corrected = np.clip(lin * gain, 0.0, 1.0) ** (1.0 / GAMMA)
+        table[0, :, channel] = np.clip(corrected * 255.0 + 0.5, 0, 255)
     return table
 
 
