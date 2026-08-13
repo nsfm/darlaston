@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 from ..capture.mosaic import MosaicSession, Tile
-from . import depthmap, develop, dng
+from . import depthmap, develop, dng, seam
 
 _log = logging.getLogger(__name__)
 
@@ -518,6 +518,118 @@ _TIFF_LIMIT = 4_200_000_000
 #: Float accumulator budget for one band. Sets how tall the bands are; the
 #: only cost of smaller bands is re-reading tiles that straddle more of them.
 _BAND_BYTES = 256_000_000
+#: The multiband low-frequency band is blended at this fraction of composite
+#: scale. A full Laplacian pyramid over the whole canvas will not fit at 272
+#: MP, but at 1/8 it is tiny, and it only carries the low frequencies -- a
+#: brightness step graded wide -- while the high frequencies are committed to
+#: one tile and added band by band at full scale. See process.seam.
+_MULTIBAND_DOWN = 8
+
+
+def _tile_rgb(raw: np.ndarray, pattern: str, flat: np.ndarray | None,
+              sw: int, sh: int) -> np.ndarray:
+    """A tile demosaiced, shading-corrected, and resized to (sw, sh): the
+    float BGR both the low band and the high band blend, in the 0..4095
+    domain. Factored so the two passes process a tile identically -- any
+    drift between them would show as a seam between the bands."""
+    rgb = cv2.cvtColor(raw, _DEMOSAIC.get(pattern, cv2.COLOR_BayerGR2BGR))
+    small = cv2.resize(rgb, (sw, sh),
+                       interpolation=cv2.INTER_AREA).astype(np.float32)
+    if flat is not None:
+        # Achromatic: the profile is measured on luma, so it corrects shading
+        # without inventing a colour cast it never measured.
+        small /= cv2.resize(flat, (sw, sh),
+                            interpolation=cv2.INTER_LINEAR)[:, :, None]
+    return small
+
+
+def _low_band(session: MosaicSession, positions: list[tuple[float, float]],
+              shapes: list[tuple[int, int]], seam_mult: list[np.ndarray] | None,
+              scale: float, pattern: str, flat: np.ndarray | None,
+              levels: int, down: int) -> tuple[np.ndarray, tuple[int, int]]:
+    """The low-frequency *correction* multiband makes to the plain blend.
+
+    Two low-resolution composites of the same tiles at 1/`down` scale: the
+    ordinary single-band feather, and a full multiband blend
+    (`seam.multiband_composite`, per pyramid level). Their difference is
+    returned. Where a tile sits alone both composites equal that tile, so the
+    difference is exactly zero -- the compositor's full-resolution blend is
+    left untouched there, no reconstruction error, no ringing on a specimen's
+    edges. The difference is nonzero only in overlaps, where multiband grades
+    an unnormalised brightness step wider than the seam feather can; and it is
+    low-resolution and smooth, so upsampling it into a band cannot ring.
+
+    Tiles are streamed through one at a time, so only the low-res accumulators
+    stay resident. Returns the correction (BGR float) and its (width, height).
+    """
+    lscale = scale / down
+    geom = plan(positions, shapes, lscale)
+    cw, ch = geom["w"], geom["h"]
+    w0, h0 = geom["origin"]
+
+    # First a plain low-res composite. It is the *fill*: every tile's Laplacian
+    # pyramid is built over the whole canvas, and where a tile is absent it
+    # must continue into something smooth or the zero cliff at its edge spreads
+    # inward and darkens the blend. The low-res tiles are tiny, so they are
+    # kept from this pass and reused for the multiband rather than re-read.
+    acc = np.zeros((ch, cw, 3), np.float32)
+    wacc = np.zeros((ch, cw), np.float32)
+    tiles_low = []
+    for ti, (tile, pos, (th, tw)) in enumerate(
+            zip(session.tiles, positions, shapes)):
+        sw, sh = max(2, int(tw * lscale)), max(2, int(th * lscale))
+        x = max(0, int(round((pos[0] - tw / 2 - w0) * lscale)))
+        y = max(0, int(round((pos[1] - th / 2 - h0) * lscale)))
+        raw = read_tile(session.dir, tile)
+        rgb = _tile_rgb(raw, pattern, flat, sw, sh)
+        del raw
+        win = _window(sh, sw)
+        if seam_mult is not None:
+            win = win * cv2.resize(seam_mult[ti], (sw, sh),
+                                   interpolation=cv2.INTER_LINEAR)
+        x1, y1 = min(x + sw, cw), min(y + sh, ch)
+        acc[y:y1, x:x1] += rgb[:y1 - y, :x1 - x] * win[:y1 - y, :x1 - x, None]
+        wacc[y:y1, x:x1] += win[:y1 - y, :x1 - x]
+        tiles_low.append((rgb, win, (x, y, x1, y1)))
+
+    covered = wacc > 0
+    comp = np.zeros_like(acc)
+    comp[covered] = acc[covered] / wacc[covered, None]
+    if covered.any():                          # border tiles fill into the mean
+        comp[~covered] = comp[covered].mean(axis=0)
+    del acc, wacc
+
+    def placed():
+        for rgb, win, (x, y, x1, y1) in tiles_low:
+            img = comp.copy()
+            img[y:y1, x:x1] = rgb[:y1 - y, :x1 - x]
+            wt = np.zeros((ch, cw), np.float32)
+            wt[y:y1, x:x1] = win[:y1 - y, :x1 - x]
+            yield img, wt
+
+    return seam.multiband_composite(placed(), levels) - comp, (cw, ch)
+
+
+def _low_strip(low: np.ndarray, top: int, bot: int, cw: int, ch: int
+               ) -> np.ndarray:
+    """The low band upsampled to fill just the rows [top, bot) of the full
+    canvas. Only the low-res rows under the band (plus a one-row halo for a
+    continuous interpolation) are enlarged, so the whole-canvas upsample is
+    never formed -- what lets the compositor stream a band at a time."""
+    lch = low.shape[0]
+    ratio = ch / lch
+    lr0 = max(0, int(np.floor(top / ratio)) - 1)
+    lr1 = min(lch, int(np.ceil(bot / ratio)) + 1)
+    f0 = int(round(lr0 * ratio))
+    f1 = int(round(lr1 * ratio))
+    up = cv2.resize(low[lr0:lr1], (cw, max(1, f1 - f0)),
+                    interpolation=cv2.INTER_LINEAR)
+    a = max(0, top - f0)
+    out = up[a:a + (bot - top)]
+    if out.shape[0] < bot - top:              # last-row rounding: hold the edge
+        out = np.pad(out, ((0, bot - top - out.shape[0]), (0, 0), (0, 0)),
+                     mode="edge")
+    return out
 
 
 def plan(positions: list[tuple[float, float]],
@@ -542,6 +654,8 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
               scale: float = 0.25, pattern: str = "GBRG",
               flat: np.ndarray | None = None,
               shapes: list[tuple[int, int]] | None = None,
+              seam_mult: list[np.ndarray] | None = None,
+              multiband: bool = False,
               progress=None) -> Path:
     """Blend the tiles at their solved positions into one linear DNG.
 
@@ -555,6 +669,20 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
 
     The cost is re-reading tiles that straddle a band boundary, which is
     bounded and cheap next to not being able to do it at all.
+
+    `seam_mult`, when given, is a per-tile field in [0, 1] (at the ownership
+    scale `process.seam` decides) that multiplies into each tile's window --
+    routing the transition between two tiles around any specimen in their
+    overlap instead of feathering across it. It is 1 wherever the seam found
+    nothing to move, so the blend is unchanged where it was already clean.
+
+    `multiband` splits the blend by spatial frequency (Burt & Adelson): the
+    low frequencies come from a whole-mosaic pyramid held at 1/`_MULTIBAND_DOWN`
+    scale (`_low_band`), which grades an unnormalised brightness step across a
+    wide band; the high frequencies are committed to one tile by the seam
+    window and added band by band here. Only the low band is ever held whole,
+    and it is tiny, so this costs no full-resolution pyramid. Without it the
+    band is the plain single-band feather (or seam) -- exactly today.
     """
     if shapes is None:
         shapes = []
@@ -585,28 +713,38 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
     neutral = None
     bands = (ch + band_h - 1) // band_h
 
+    # The low-frequency correction multiband makes to the plain blend, held
+    # whole (it is tiny) and added as a strip to each band below. Zero wherever
+    # a tile sits alone, so the full-resolution blend is untouched there; it
+    # only widens a brightness step's grade across an overlap. The cutoff
+    # decimates by _MULTIBAND_DOWN, but never so far that the smallest tile's
+    # low-res pyramid loses its shape.
+    correction = None
+    if multiband:
+        smallest = min(min(sw, sh) for _, _, sw, sh in boxes)
+        down = max(1, min(_MULTIBAND_DOWN, smallest // 32))
+        correction, _ = _low_band(session, positions, shapes, seam_mult, scale,
+                                  pattern, flat, seam.MULTIBAND_LEVELS, down)
+
     for bi, top in enumerate(range(0, ch, band_h)):
         bot = min(ch, top + band_h)
         acc = np.zeros((bot - top, cw, 3), np.float32)
         wacc = np.zeros((bot - top, cw), np.float32)
-        for tile, (x, y, sw, sh) in zip(session.tiles, boxes):
+        for ti, (tile, (x, y, sw, sh)) in enumerate(zip(session.tiles, boxes)):
             if y >= bot or y + sh <= top:
                 continue                      # this tile misses the band
             raw = read_tile(session.dir, tile)
             if neutral is None:
                 neutral = dng.grey_world_neutral(raw)
-            rgb = cv2.cvtColor(raw,
-                               _DEMOSAIC.get(pattern, cv2.COLOR_BayerGR2BGR))
+            small = _tile_rgb(raw, pattern, flat, sw, sh)
             del raw
-            small = cv2.resize(rgb, (sw, sh),
-                               interpolation=cv2.INTER_AREA).astype(np.float32)
-            del rgb
-            if flat is not None:
-                # Achromatic: the profile is measured on luma, so it corrects
-                # shading without inventing a colour cast it never measured.
-                small /= cv2.resize(flat, (sw, sh),
-                                    interpolation=cv2.INTER_LINEAR)[:, :, None]
             win = _window(sh, sw)
+            if seam_mult is not None:
+                # Route the seam around specimens: narrow the window to the
+                # side of the seam this tile owns. Upsampled from the coarse
+                # ownership scale; the feather is broad, so linear is enough.
+                win = win * cv2.resize(seam_mult[ti], (sw, sh),
+                                       interpolation=cv2.INTER_LINEAR)
 
             # Intersect the tile with the band, in both coordinate frames.
             y0 = max(y, top)
@@ -621,6 +759,11 @@ def composite(session: MosaicSession, positions: list[tuple[float, float]],
         covered = wacc > 0
         blended = np.zeros_like(acc)
         blended[covered] = acc[covered] / wacc[covered, None]
+        if correction is not None:
+            # Add multiband's low-frequency correction under this band -- only
+            # its rows are upsampled, so no full-resolution copy is ever formed.
+            # It is zero off the overlaps, so the plain blend stands there.
+            blended += _low_strip(correction, top, bot, cw, ch)
         # BGR from OpenCV back to the RGB a linear DNG expects. Scaled x16:
         # the blend of 12-bit tiles lands in 0..4095, and writing that
         # against the 16-bit white level shipped every mosaic four stops
@@ -716,10 +859,12 @@ def stitch(directory: Path | str, scale: float = 0.25,
         del raw
     positions, edges = register(session, lumas, shapes)
     flat = estimate_flat(lumas)
+    seam_mult, _ = seam.weights(lumas, positions, shapes, scale)
     del lumas
     geom = plan(positions, shapes, scale)
     path = composite(session, positions, scale=scale, flat=flat,
-                     shapes=shapes, progress=progress)
+                     shapes=shapes, seam_mult=seam_mult, multiband=True,
+                     progress=progress)
     # A stacked mosaic knows its own shape: blend the tiles' depth maps
     # the same way, and every depth render works on the whole
     # arrangement rather than one field.
@@ -735,6 +880,7 @@ def stitch(directory: Path | str, scale: float = 0.25,
         "tiles": len(session.tiles),
         "edges": len(edges),
         "refined": sum(1 for e in edges if e.refined),
+        "seamed": sum(1 for m in seam_mult if float(m.min()) < 0.999),
         "flattened": flat is not None,
         "depth_map": depth_path is not None,
         "falloff": (round(float(1.0 - flat.min() / flat.max()) * 100, 1)
