@@ -117,4 +117,5 @@ testpaths = ["tests"]
 # have to know about this to get a true answer.
 markers = [
     "serial: asserts something about elapsed time; must not run in parallel",
+    "wincam: needs Windows and a registered virtual camera; see ci.yml",
 ]

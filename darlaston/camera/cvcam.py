@@ -62,8 +62,8 @@ REFUSED_FOURCC = ("H264", "HEVC", "MPG4", "MJPGH264")
 #: is measured and real: on a USB 2.0 industrial camera at 1920x1080,
 #: YUYV gave 5.0 fps against MJPG's 9.3. So the *preview* may still
 #: choose speed; this is the order for a capture.
-PREFERRED_FOURCC = ("Y16 ", "GREY", "YUYV", "UYVY", "YU12", "NV12", "RGB3",
-                    "RGB4", "MJPG")
+PREFERRED_FOURCC = ("Y16 ", "GREY", "YUYV", "YUY2", "UYVY", "YU12", "NV12",
+                    "RGB3", "RGB4", "MJPG")
 
 
 def usable_formats(formats: list[str]) -> list[str]:

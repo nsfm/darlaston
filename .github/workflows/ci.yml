@@ -61,6 +61,71 @@ jobs:
         # re-run, which is worse than a slow one.
         run: pytest -q
 
+  # The Windows camera backend, against a real DirectShow device. There
+  # is no camera on a hosted runner, so one is registered: Unity Capture
+  # is a DirectShow source filter that pyvirtualcam feeds from Python,
+  # and it is what pyvirtualcam's own CI uses, so the combination is
+  # known to work on this image. It shows up to enumeration with a
+  # format list and without camera controls, which is exactly the shape
+  # of device the backend has to describe honestly.
+  #
+  # The full suite does not run here yet: a handful of tests import the
+  # V4L2 module, which imports fcntl, which Windows has not got. The
+  # platform-neutral camera tests run, then the virtual-camera ones.
+  wincam:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      UC_SHA: 3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2
+      UC_SHA256: 72812F5363D8ECB45632253F8C8C888844B1B62E27616F3C8CC21064CCDE25E5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64          # the filter DLL is 64-bit
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pyvirtualcam==0.15.0
+      - name: Register the virtual camera
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = "$env:RUNNER_TEMP\UnityCaptureFilter64.dll"
+          Invoke-WebRequest "https://raw.githubusercontent.com/schellingb/UnityCapture/$env:UC_SHA/Install/UnityCaptureFilter64.dll" -OutFile $dll
+          if ((Get-FileHash $dll -Algorithm SHA256).Hash -ne $env:UC_SHA256) { throw 'hash mismatch' }
+          # /s is not optional: without it regsvr32 shows a dialog and the job hangs.
+          $p = Start-Process regsvr32 -ArgumentList "/s `"$dll`"" -Wait -PassThru -Verb RunAs
+          if ($p.ExitCode -ne 0) { throw "regsvr32 exit $($p.ExitCode)" }
+          Get-ChildItem 'Registry::HKEY_CLASSES_ROOT\CLSID\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\Instance' |
+            ForEach-Object { (Get-ItemProperty $_.PSPath).FriendlyName }
+      - name: Camera tests that need no camera
+        run: python -m pytest -q tests/test_dshow.py tests/test_sweep.py
+      - name: Producer and the virtual-camera tests
+        shell: pwsh
+        env:
+          DARLASTON_WINCAM: "1"
+        run: |
+          $ready = "$env:RUNNER_TEMP\wincam.ready"
+          $p = Start-Process python -ArgumentList "tools\wincam_producer.py `"$ready`"" -PassThru -NoNewWindow `
+                 -RedirectStandardOutput "$env:RUNNER_TEMP\producer.out" -RedirectStandardError "$env:RUNNER_TEMP\producer.err"
+          try {
+            for ($i = 0; $i -lt 30 -and -not (Test-Path $ready); $i++) { Start-Sleep 1 }
+            if (-not (Test-Path $ready)) { Get-Content "$env:RUNNER_TEMP\producer.err"; throw 'producer not ready' }
+            Start-Sleep 1
+            python -m pytest -q -m wincam tests/test_wincam.py
+            if ($LASTEXITCODE -ne 0) { throw "pytest failed ($LASTEXITCODE)" }
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: What the listing says on this machine
+        env:
+          DARLASTON_WINCAM: "1"
+        run: darlaston --list-cameras
+        continue-on-error: true
+
   build:
     runs-on: ubuntu-latest
     steps:
