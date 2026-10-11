@@ -201,3 +201,56 @@ msgstr "balanced"
 
 msgid "sampler.choice.gentle"
 msgstr "least removal"
+
+
+#. ---- the focus motor's row ----------------------------------------------
+#. Shown only when the camera has a motorised focus the program can drive.
+
+#. Two short buttons either side of the slider. Lower case, like "depth".
+msgid "stack.focus.near.action"
+msgstr "near"
+
+msgid "stack.focus.near.tooltip"
+msgstr "Mark where the slider is as the near end of the stack."
+
+msgid "stack.focus.far.action"
+msgstr "far"
+
+msgid "stack.focus.far.tooltip"
+msgstr "Mark where the slider is as the far end of the stack."
+
+msgid "stack.focus.slider.tooltip"
+msgstr ""
+"The camera's focus motor. Drag it to find the near and far ends of the "
+"subject by eye."
+
+msgid "stack.focus.slices.tooltip"
+msgstr "How many slices the sweep takes between the two marks."
+
+msgid "stack.focus.auto.action"
+msgstr "AF"
+
+msgid "stack.focus.auto.tooltip"
+msgstr ""
+"Let the camera focus itself once, then take the motor back. A quick way "
+"to find the first plane."
+
+msgid "stack.focus.sweep.action"
+msgstr "Sweep"
+
+msgid "stack.focus.stop.action"
+msgstr "Stop"
+
+msgid "stack.focus.sweep.tooltip"
+msgstr ""
+"Drive the motor from the near mark to the far mark, capturing a slice at "
+"each stop, then finish the stack."
+
+msgid "stack.focus.unmarked"
+msgstr "mark the near and far ends"
+
+msgid "stack.focus.marked"
+msgstr "near {near} · far {far}"
+
+msgid "stack.focus.progress"
+msgstr "slice {done} of {total}"

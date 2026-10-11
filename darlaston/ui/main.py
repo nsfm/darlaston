@@ -31,6 +31,7 @@ from ..calib.store import flat_key
 from ..capture import CaptureResult, StillCapture
 from ..capture.mosaic import MosaicSession
 from ..capture.stack import StackSession, StackTrigger
+from ..capture.sweep import FocusSweep, plan as plan_sweep
 from ..capture.timelapse import Timelapse, TimelapseStatus
 from ..cpu import apply_thread_budget
 from .. import __version__, log
@@ -189,6 +190,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mosaic: MosaicSession | None = None
         self.stack_session: StackSession | None = None
         self.stack_trigger = StackTrigger(self._fire_stack_slice)
+        #: The other way to collect a stack: the program drives the focus
+        #: motor, where the camera has one. Fires through the same shutter
+        #: as the trigger, and only one of the two watches at a time.
+        self.focus_sweep = FocusSweep(self._focus_axis, self._fire_stack_slice)
         # Stacked-mosaic state: the current tile's anchor position, frame
         # dims, a preview for the minimap, and the background merge queue.
         self._tile_anchor: tuple[float, float] | None = None
@@ -626,6 +631,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stack_window = FloatingPanel("stack, assembling", self.view)
         self.assembly.close_requested.connect(self.stack_window.hide)
         self.assembly.configure(self.settings)
+        self.assembly.focus_row.moved.connect(self._on_focus_slider)
+        self.assembly.focus_row.autofocus_requested.connect(self._on_autofocus)
+        self.assembly.focus_row.sweep_requested.connect(self._start_sweep)
+        self.assembly.focus_row.stop_requested.connect(self._stop_sweep)
         self.stack_window.set_relative(0.55, 0.55)
         # Under the assembly, inside the same panel: the gauge belongs
         # beside the work rather than in the strip that tells the operator
@@ -1847,6 +1856,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._adopt_tile(result)
         elif not result.ok and self.stack_session is not None:
             self.stack_trigger.capture_failed()
+            self.focus_sweep.capture_failed()
 
     def _refresh_gauge(self) -> None:
         """Ten times a second, and cheap: two ints off the queue."""
@@ -1864,6 +1874,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.stack_session is not None:
             self._exposed_metrics.append(self._focus_at_capture)
             self.stack_trigger.slice_landed()
+            self.focus_sweep.slice_landed()
+            if self.focus_sweep.active:
+                self.assembly.focus_row.set_running(
+                    True, self.focus_sweep.done, self.focus_sweep.total)
 
     def _adopt_slice(self, result: CaptureResult) -> None:
         """A slice landed. Adopt it, advance the trigger, feed the assembly.
@@ -1986,12 +2000,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 # button between fields.
                 self.assembly.reset()
                 self.assembly.set_context(True)
+                self.assembly.set_focus_axis(self._focus_axis())
                 self.stack_window.place((420, 330))
                 self.stack_window.show()
                 self.stack_trigger.arm()
                 self.strip.set_note(_("note.stacked_mosaic"))
                 return
             self.assembly.set_context(False)
+            self.assembly.set_focus_axis(self._focus_axis())
             self.stack_session = StackSession(self.settings.capture_root,
                                       self.subject.subject)
             if self.setup is not None:
@@ -2006,6 +2022,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.strip.set_note(_("note.stack_armed"))
         else:
             self.stack_trigger.disarm()
+            self._stop_sweep(quietly=True)
             if self.mosaic is not None:
                 # Chip off mid-mosaic keeps what was racked: the current
                 # field's slices seal into their tile right now.
@@ -2135,6 +2152,83 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stack_ending = False
         self.stack_window.hide()
         self.strip.set_note(_("note.stack_discarded"))
+
+    # ---- the focus motor -------------------------------------------------
+
+    def _focus_axis(self):
+        """The camera's motor, if it has one and the camera is open."""
+        backend = self.session.backend if self.session is not None else None
+        return backend.focus_axis if backend is not None else None
+
+    def _on_focus_slider(self, position: int) -> None:
+        axis = self._focus_axis()
+        if axis is not None and not self.focus_sweep.active:
+            axis.set(position)
+
+    def _on_autofocus(self) -> None:
+        """Let the camera find a plane, then take the motor back.
+
+        One and a half seconds is longer than any UVC autofocus measured
+        takes to converge, and the motor is ours again whether or not it
+        got there -- a sweep over a motor the camera is still driving is
+        two hands on one knob.
+        """
+        axis = self._focus_axis()
+        if axis is None or self.focus_sweep.active:
+            return
+        axis.set_auto(True)
+
+        def take_back() -> None:
+            now = self._focus_axis()
+            if now is None:
+                return
+            now.set_auto(False)
+            self.assembly.focus_row.show_position(now.get())
+        QtCore.QTimer.singleShot(1500, take_back)
+
+    def _start_sweep(self, near: int, far: int, count: int) -> None:
+        axis = self._focus_axis()
+        if axis is None or self.stack_session is None and self.mosaic is None:
+            return
+        positions = plan_sweep(near, far, count, axis.range().step)
+        self.stack_trigger.disarm()
+        if not self.focus_sweep.start(positions):
+            self.stack_trigger.arm()
+            return
+        self.assembly.focus_row.set_running(True, 0, len(positions))
+        self.strip.set_note(_("note.sweep_started"))
+
+    def _stop_sweep(self, quietly: bool = False) -> None:
+        if not self.focus_sweep.active:
+            return
+        self.focus_sweep.abort()
+        self.assembly.focus_row.set_running(False)
+        axis = self._focus_axis()
+        if axis is not None:
+            self.assembly.focus_row.show_position(axis.get())
+        if not quietly:
+            self.stack_trigger.arm()
+            self.strip.set_note(_("note.sweep_stopped"))
+
+    def _on_sweep_finished(self) -> None:
+        """The motor reached the far mark, or something stopped it."""
+        sweep = self.focus_sweep
+        sweep.finished = False
+        self.assembly.focus_row.set_running(False)
+        axis = self._focus_axis()
+        if axis is not None:
+            self.assembly.focus_row.show_position(axis.get())
+        if sweep.failed:
+            self.strip.set_note(_("note.sweep_failed", why=sweep.failed))
+            self.stack_trigger.arm()
+            return
+        self.strip.set_note(_("note.sweep_done"))
+        if self.mosaic is not None:
+            # A stacked mosaic: the tile seals when the stage slides on,
+            # exactly as a hand-racked one does. Hand the knob back.
+            self.stack_trigger.arm()
+            return
+        self._finish_stack()
 
     def _fire_stack_slice(self) -> bool:
         """The trigger pulling the shutter. Runs on the UI thread, from the
@@ -3552,7 +3646,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Kept before `observe`, because observe is what fires the capture
         # and this is the number that describes the plane it fires at.
         self._focus_at_capture = s.focus_metric
-        self.stack_trigger.observe(s)
+        if self.focus_sweep.active:
+            # The motor has the knob; the hand-racking trigger would
+            # read every move as a rack and fire over the top of it.
+            self.focus_sweep.observe(s)
+        else:
+            self.stack_trigger.observe(s)
+        if self.focus_sweep.finished:
+            self._on_sweep_finished()
         self._maybe_seal_tile(s)
         self._last_preview = s.preview
         if s.turret_event is not None:
@@ -3893,6 +3994,37 @@ def _list_cameras() -> int:
     else:
         print("ToupTek family: none on the bus")
 
+    if _sys.platform.startswith("win"):
+        # The whole description, every device, because this listing is
+        # the one thing a person on another machine can send back. What
+        # the driver said about formats, sizes and controls is the
+        # ground truth for a camera nobody here has.
+        from ..camera.dshow import enumerate_cameras as _dshow_enum
+        from ..camera.dshow import exposure_to_us
+        found = _dshow_enum()
+        print(f"\nDirectShow / UVC: {len(found)} capture device"
+              f"{'' if len(found) == 1 else 's'}")
+        for d in found:
+            print(f"  [{d['index']}] {d['name']}")
+            print(f"      path: {d['path'] or '(none)'}")
+            print(f"      id:   {d['display']}")
+            print(f"      key:  {d['key']}   fingerprint: "
+                  f"{d.get('fingerprint', '')}")
+            print(f"      formats: {' '.join(d['formats']) or '(none)'}"
+                  f"   usable: {' '.join(d.get('usable') or []) or '(none)'}")
+            print(f"      sizes:   "
+                  f"{' '.join(f'{w}x{h}' for w, h in d['sizes']) or '(none)'}")
+            for c in d["controls"]:
+                extra = ""
+                if c["name"] == "Exposure":
+                    extra = (f"  = {exposure_to_us(c['min'])} us .. "
+                             f"{exposure_to_us(c['max'])} us")
+                print(f"      control {c['name']}: {c['min']}..{c['max']} "
+                      f"step {c['step']} default {c['default']} "
+                      f"caps {c['flags']}{extra}")
+            if not d["controls"]:
+                print("      controls: none reported")
+        return 0
     if not linux:
         print("\nV4L2 / UVC: Linux only. On this platform an ordinary "
               "webcam is not reachable this way.")
@@ -3973,24 +4105,30 @@ def main() -> int:
         allow_synthetic = False
         presence = None                      # synthetic is always there
     elif args.usb:
-        if not sys.platform.startswith("linux"):
+        if sys.platform.startswith("win"):
+            def make() -> CameraBackend:
+                from ..camera.dshow import DshowBackend
+                return DshowBackend()
+            presence = lambda: True
+        elif not sys.platform.startswith("linux"):
             # cv2 can open a webcam here through the platform's own
             # framework, but everything that finds one and describes it is
             # V4L2 ioctls against /dev/video. Saying so beats connecting to
             # nothing in silence.
-            print("--usb needs V4L2, which is Linux only. A ToupTek-family "
-                  "camera works on this platform; an ordinary webcam does "
-                  "not, yet.")
+            print("--usb needs V4L2 or DirectShow, which is Linux or "
+                  "Windows. A ToupTek-family camera works on this "
+                  "platform; an ordinary webcam does not, yet.")
             return 2
-        def make() -> CameraBackend:
-            from ..camera.v4l2 import V4L2Backend
-            return V4L2Backend()
+        else:
+            def make() -> CameraBackend:
+                from ..camera.v4l2 import V4L2Backend
+                return V4L2Backend()
+            # Any capture node at all, since `--usb` means "the first one".
+            # Asking `enumerate_cameras()` instead ran a full capability walk
+            # over every device on the machine once a second, for ever.
+            import glob as _glob
+            presence = lambda: bool(_glob.glob("/dev/video*"))
         allow_synthetic = False
-        # Any capture node at all, since `--usb` means "the first one".
-        # Asking `enumerate_cameras()` instead ran a full capability walk
-        # over every device on the machine once a second, for ever.
-        import glob as _glob
-        presence = lambda: bool(_glob.glob("/dev/video*"))
     else:
         # No flag. Look at what is actually attached, across every access
         # model, and open the likeliest -- or the one chosen last time.

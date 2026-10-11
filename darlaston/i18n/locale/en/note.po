@@ -134,3 +134,18 @@ msgstr "Streaming the presentation at {url}"
 
 msgid "note.present.stream.failed"
 msgstr "Port {port} is already in use, so the stream did not start."
+
+
+#. ---- the motorised stack ------------------------------------------------
+
+msgid "note.sweep_started"
+msgstr "sweeping the focus motor; hands off the fine focus"
+
+msgid "note.sweep_done"
+msgstr "sweep complete"
+
+msgid "note.sweep_stopped"
+msgstr "sweep stopped; the slices so far are kept"
+
+msgid "note.sweep_failed"
+msgstr "sweep stopped: {why}"
