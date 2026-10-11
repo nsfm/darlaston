@@ -71,9 +71,10 @@ def main() -> int:
 
     section("open with params (size + RGB24 fourcc first)")
     for index in range(max(1, len(found))):
-        # Integers only: the params sequence refuses a float.
+        # Signed 32-bit integers only: the params sequence refuses a
+        # float, and RGB24's Data1 is above INT_MAX as written.
         params = [cv2.CAP_PROP_FRAME_WIDTH, 640, cv2.CAP_PROP_FRAME_HEIGHT, 480,
-                  cv2.CAP_PROP_FOURCC, int(0xe436eb7d)]
+                  cv2.CAP_PROP_FOURCC, int(0xe436eb7d) - (1 << 32)]
         cap = cv2.VideoCapture(index, cv2.CAP_DSHOW, params)
         print(f"index {index} DSHOW+params isOpened:", cap.isOpened())
         if cap.isOpened():
