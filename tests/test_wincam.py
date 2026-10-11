@@ -31,6 +31,33 @@ from darlaston.camera import discovery, dshow  # noqa: E402
 VIRTUAL = "Unity Video Capture"
 
 
+def _can_build_a_graph() -> bool:
+    """Does this machine have qedit's sample grabber, which OpenCV's
+    DirectShow capture is built on? A Windows Server image can lack
+    the whole optional media feature, and then every open fails with
+    no reason -- a different fact from the backend being wrong."""
+    import ctypes
+    from ctypes import byref, c_void_p
+
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+        ptr = c_void_p()
+        ctypes.oledll.ole32.CoCreateInstance(
+            byref(dshow.GUID.of("C1F400A0-3F08-11D3-9F0B-006008039E37")), None,
+            ctypes.c_uint32(1),
+            byref(dshow.GUID.of("00000000-0000-0000-C000-000000000046")),
+            byref(ptr))
+        return bool(ptr.value)
+    except OSError:
+        return False
+
+
+needs_graph = pytest.mark.skipif(
+    not _can_build_a_graph(),
+    reason="no qedit sample grabber on this machine, so OpenCV cannot "
+           "build a DirectShow capture graph; enumeration is still tested")
+
+
 def _virtual() -> dict:
     found = [d for d in dshow.enumerate_cameras() if VIRTUAL in d["name"]]
     assert found, [d["name"] for d in dshow.enumerate_cameras()]
@@ -49,6 +76,7 @@ def test_enumeration_sees_the_virtual_camera():
     assert d["fingerprint"]
 
 
+@needs_graph
 def test_the_index_we_describe_is_the_index_opencv_opens():
     import cv2
 
@@ -69,6 +97,7 @@ def test_the_index_we_describe_is_the_index_opencv_opens():
         cap.release()
 
 
+@needs_graph
 def test_the_backend_streams_and_captures_the_producers_picture():
     from tools.wincam_producer import QUADRANTS
 

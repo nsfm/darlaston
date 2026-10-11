@@ -98,6 +98,24 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]" pyvirtualcam==0.15.0 "${{ matrix.opencv }}"
           python -c "import cv2; print('cv2', cv2.__version__)"
+      # The server image may ship without the media stack OpenCV's
+      # DirectShow capture graph is built on. Ask for it; say whether
+      # it came. The probe below reports what is actually present.
+      - name: Media Foundation feature
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          try {
+            $f = Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop
+            "before: $($f.InstallState)"
+            if ($f.InstallState -ne 'Installed') {
+              $r = Install-WindowsFeature Server-Media-Foundation -ErrorAction Stop
+              "install: success=$($r.Success) restart=$($r.RestartNeeded)"
+            }
+          } catch { "feature query failed: $_" }
+          foreach ($d in 'qedit.dll','mfplat.dll','mf.dll','quartz.dll') {
+            "$d present: $(Test-Path "$env:SystemRoot\System32\$d")"
+          }
       - name: Register the virtual camera
         shell: pwsh
         run: |
