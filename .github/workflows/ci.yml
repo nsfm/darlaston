@@ -103,6 +103,25 @@ jobs:
             ForEach-Object { (Get-ItemProperty $_.PSPath).FriendlyName }
       - name: Camera tests that need no camera
         run: python -m pytest -q tests/test_dshow.py tests/test_sweep.py
+      # What OpenCV itself makes of the device, with its own video I/O
+      # logging on. Kept in the log on purpose: when the virtual-camera
+      # tests fail, this is the step that says why.
+      - name: Probe OpenCV against the virtual camera
+        shell: pwsh
+        continue-on-error: true
+        env:
+          OPENCV_VIDEOIO_DEBUG: "1"
+          OPENCV_LOG_LEVEL: "DEBUG"
+        run: |
+          $ready = "$env:RUNNER_TEMP\probe.ready"
+          $p = Start-Process python -ArgumentList "tools\wincam_producer.py `"$ready`"" -PassThru -NoNewWindow
+          try {
+            for ($i = 0; $i -lt 30 -and -not (Test-Path $ready); $i++) { Start-Sleep 1 }
+            Start-Sleep 1
+            python tools/wincam_probe.py
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
       - name: Producer and the virtual-camera tests
         shell: pwsh
         env:
