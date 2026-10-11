@@ -75,6 +75,14 @@ jobs:
   wincam:
     runs-on: windows-latest
     timeout-minutes: 30
+    name: wincam (${{ matrix.opencv }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both majors, because the first run found OpenCV 5.0.0's
+        # DirectShow path refusing to open a device it could see, and
+        # the pin in pyproject lets a fresh install land on either.
+        opencv: ["opencv-python-headless<5", "opencv-python-headless>=5"]
     env:
       UC_SHA: 3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2
       UC_SHA256: 72812F5363D8ECB45632253F8C8C888844B1B62E27616F3C8CC21064CCDE25E5
@@ -88,7 +96,8 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]" pyvirtualcam==0.15.0
+          python -m pip install -e ".[dev]" pyvirtualcam==0.15.0 "${{ matrix.opencv }}"
+          python -c "import cv2; print('cv2', cv2.__version__)"
       - name: Register the virtual camera
         shell: pwsh
         run: |
