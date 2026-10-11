@@ -62,12 +62,15 @@ jobs:
         run: pytest -q
 
   # The Windows camera backend, against a real DirectShow device. There
-  # is no camera on a hosted runner, so one is registered: Unity Capture
-  # is a DirectShow source filter that pyvirtualcam feeds from Python,
-  # and it is what pyvirtualcam's own CI uses, so the combination is
-  # known to work on this image. It shows up to enumeration with a
-  # format list and without camera controls, which is exactly the shape
-  # of device the backend has to describe honestly.
+  # is no camera on a hosted runner, so one is registered: the OBS
+  # virtual camera module, fed from Python by pyvirtualcam. Chosen over
+  # Unity Capture after a week of evidence in one afternoon: our own
+  # enumeration described Unity Capture perfectly and OpenCV's
+  # DirectShow open then refused it on both 4.x and 5.x for no reason
+  # it would give, while OpenCV carries code written for the OBS camera
+  # by name (NV12 forced, since 4.8.0). It shows up to enumeration with
+  # three formats at 1920x1080 and no camera controls, which is exactly
+  # the shape of device the backend has to describe honestly.
   #
   # The full suite does not run here yet: a handful of tests import the
   # V4L2 module, which imports fcntl, which Windows has not got. The
@@ -79,19 +82,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Both majors, because the first run found OpenCV 5.0.0's
-        # DirectShow path refusing to open a device it could see, and
-        # the pin in pyproject lets a fresh install land on either.
+        # Both majors: pyproject lets a fresh install land on either.
         opencv: ["opencv-python-headless<5", "opencv-python-headless>=5"]
     env:
-      UC_SHA: 3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2
-      UC_SHA256: 72812F5363D8ECB45632253F8C8C888844B1B62E27616F3C8CC21064CCDE25E5
+      OBS_ZIP_SHA256: CF9D26319A8533460070E7C476818158563B6810A903774A88FA608BF748499B
+      OBS_DLL_SHA256: 864725C9AAA6966C232EDEE4F7E686DAF5930D72675F3F0AB94EBA9C4DAA2BC8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          architecture: x64          # the filter DLL is 64-bit
+          architecture: x64          # the module is 64-bit
           cache: pip
       - name: Install
         run: |
@@ -113,19 +114,30 @@ jobs:
               "install: success=$($r.Success) restart=$($r.RestartNeeded)"
             }
           } catch { "feature query failed: $_" }
-          foreach ($d in 'qedit.dll','mfplat.dll','mf.dll','quartz.dll') {
-            "$d present: $(Test-Path "$env:SystemRoot\System32\$d")"
-          }
-      - name: Register the virtual camera
+      # Only the module and its placeholder picture come out of the
+      # 100 MB release archive; OBS itself is not installed. The module
+      # imports nothing but system DLLs and registers on its own.
+      - name: Register the OBS virtual camera
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $dll = "$env:RUNNER_TEMP\UnityCaptureFilter64.dll"
-          Invoke-WebRequest "https://raw.githubusercontent.com/schellingb/UnityCapture/$env:UC_SHA/Install/UnityCaptureFilter64.dll" -OutFile $dll
-          if ((Get-FileHash $dll -Algorithm SHA256).Hash -ne $env:UC_SHA256) { throw 'hash mismatch' }
+          $zip = "$env:RUNNER_TEMP\obs.zip"
+          Invoke-WebRequest https://github.com/obsproject/obs-studio/releases/download/26.1.1/OBS-Studio-26.1.1-Full-x64.zip -OutFile $zip
+          if ((Get-FileHash $zip).Hash -ne $env:OBS_ZIP_SHA256) { throw 'zip hash mismatch' }
+          $dst = "$env:RUNNER_TEMP\obsvcam"; New-Item -ItemType Directory $dst | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [IO.Compression.ZipFile]::OpenRead($zip)
+          foreach ($n in 'obs-virtualcam-module64.dll','placeholder.png') {
+            $e = $z.Entries | Where-Object FullName -eq "data/obs-plugins/win-dshow/$n"
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($e, "$dst\$n", $true)
+          }
+          $z.Dispose()
+          $dll = "$dst\obs-virtualcam-module64.dll"
+          if ((Get-FileHash $dll).Hash -ne $env:OBS_DLL_SHA256) { throw 'dll hash mismatch' }
           # /s is not optional: without it regsvr32 shows a dialog and the job hangs.
-          $p = Start-Process regsvr32 -ArgumentList "/s `"$dll`"" -Wait -PassThru -Verb RunAs
+          $p = Start-Process regsvr32 -ArgumentList "/n /i /s `"$dll`"" -Wait -PassThru -Verb RunAs
           if ($p.ExitCode -ne 0) { throw "regsvr32 exit $($p.ExitCode)" }
+          if (-not (Test-Path 'Registry::HKEY_CLASSES_ROOT\CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}')) { throw 'not registered' }
           Get-ChildItem 'Registry::HKEY_CLASSES_ROOT\CLSID\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\Instance' |
             ForEach-Object { (Get-ItemProperty $_.PSPath).FriendlyName }
       - name: Camera tests that need no camera

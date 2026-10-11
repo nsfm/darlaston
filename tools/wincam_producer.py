@@ -1,10 +1,14 @@
 """A virtual camera for the Windows CI runner, fed with a known picture.
 
 Runs for ever, painting four coloured quadrants with a stripe that
-changes every frame, through `pyvirtualcam` into the Unity Capture
-DirectShow filter -- which the DirectShow backend then enumerates,
-opens and reads like any other camera. The first argument is a file to
-write once the camera exists, so the test run can wait for it.
+changes every frame, through `pyvirtualcam` into the OBS virtual
+camera module -- which the DirectShow backend then enumerates, opens
+and reads like any other camera. The first argument is a file to write
+once the camera exists, so the test run can wait for it.
+
+1920x1080, because that is the one size the OBS module always offers,
+and a producer at any other size changes what the filter advertises
+depending on who started first.
 
 Not part of the application. Lives in tools/ with the other things that
 exist to measure the program rather than to be it.
@@ -18,9 +22,7 @@ import numpy as np
 import pyvirtualcam
 from pyvirtualcam import PixelFormat
 
-#: 640x480 is in Unity Capture's own capability list, so a consumer that
-#: asks for it gets the picture unscaled.
-W, H, FPS = 640, 480, 30
+W, H, FPS = 1920, 1080, 30
 
 #: BGR, one colour per quadrant. The tests check these by mean.
 QUADRANTS = {
@@ -44,8 +46,7 @@ def main() -> int:
     ready = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else None
     base = picture()
     with pyvirtualcam.Camera(W, H, FPS, fmt=PixelFormat.BGR,
-                             backend="unitycapture",
-                             device="Unity Video Capture") as cam:
+                             backend="obs") as cam:
         if ready is not None:
             ready.write_text(cam.device)
         n = 0

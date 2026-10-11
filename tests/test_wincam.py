@@ -28,7 +28,7 @@ if not sys.platform.startswith("win") or not os.environ.get("DARLASTON_WINCAM"):
 
 from darlaston.camera import discovery, dshow  # noqa: E402
 
-VIRTUAL = "Unity Video Capture"
+VIRTUAL = "OBS Virtual Camera"
 
 
 def _can_build_a_graph() -> bool:
@@ -67,11 +67,9 @@ def _virtual() -> dict:
 def test_enumeration_sees_the_virtual_camera():
     d = _virtual()
     assert d["key"].startswith("@device:sw:"), d["key"]
-    # Unity Capture writes "foo:bar" under DevicePath; it must not
-    # become the key, because every registered copy would share it.
-    assert "foo" not in d["key"]
-    assert (640, 480) in d["sizes"], d["sizes"]
-    assert "RGB3" in d["formats"] or "RGB4" in d["formats"], d["formats"]
+    assert d["path"] == "", "a software filter has no device path"
+    assert (1920, 1080) in d["sizes"], d["sizes"]
+    assert {"NV12", "I420", "YUY2"} & set(d["formats"]), d["formats"]
     assert d["controls"] == [], "no IAMCameraControl, so no sliders"
     assert d["fingerprint"]
 
@@ -84,8 +82,8 @@ def test_the_index_we_describe_is_the_index_opencv_opens():
     cap = cv2.VideoCapture(d["index"], cv2.CAP_DSHOW)
     try:
         assert cap.isOpened()
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         image = None
         for _ in range(60):
             ok, image = cap.read()
@@ -110,20 +108,21 @@ def test_the_backend_streams_and_captures_the_producers_picture():
         assert backend.focus_axis is None
         seen = []
         backend.start_stream(lambda f: (seen.append(f.data.copy()), f.release()))
-        for _ in range(100):
-            if len(seen) >= 5:
+        for _ in range(200):
+            if len(seen) >= 30:
                 break
             time.sleep(0.05)
         backend.stop_stream()
-        assert len(seen) >= 5, "no frames arrived from the virtual camera"
+        assert len(seen) >= 30, "no frames arrived from the virtual camera"
         frame = backend.grab_raw()
         h, w = frame.data.shape[:2]
-        # The filter rescales nearest-neighbour to whatever size was
-        # asked for, so the quadrants hold at any resolution.
+        # NV12 halves the colour resolution and the first frames may be
+        # the placeholder, so the regions are wide and the tolerance is
+        # loose; the quadrants are the claim, not the exact values.
         tl = frame.data[h // 8: h // 2 - h // 8, w // 8: w // 2 - w // 8].reshape(-1, 3)
         br = frame.data[h // 2 + h // 8: h - h // 8, w // 2 + w // 8: w - w // 8].reshape(-1, 3)
-        assert np.allclose(tl.mean(axis=0), QUADRANTS["top_left"], atol=12), tl.mean(axis=0)
-        assert np.allclose(br.mean(axis=0), QUADRANTS["bottom_right"], atol=12), br.mean(axis=0)
+        assert np.allclose(tl.mean(axis=0), QUADRANTS["top_left"], atol=20), tl.mean(axis=0)
+        assert np.allclose(br.mean(axis=0), QUADRANTS["bottom_right"], atol=20), br.mean(axis=0)
     finally:
         backend.close()
 
