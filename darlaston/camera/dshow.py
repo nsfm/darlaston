@@ -659,7 +659,13 @@ def _describe_in_child() -> list[dict] | None:
     except (ValueError, IndexError) as why:
         _log.warning("DirectShow probe answered nonsense: %s", why)
         return None
-    return found if isinstance(found, list) else None
+    if not isinstance(found, list):
+        return None
+    # JSON has no tuples. Sizes are compared and hashed as (w, h) pairs
+    # everywhere above here, so they come back as the pairs they left as.
+    for device in found:
+        device["sizes"] = [tuple(size) for size in device.get("sizes") or []]
+    return found
 
 
 def enumerate_cameras() -> list[dict]:
