@@ -925,8 +925,16 @@ class WindowsFrame:
                 return True, 0                   # ours; not DefWindowProc's
 
             if message in (WM_NCLBUTTONUP, WM_LBUTTONUP) and self._down:
-                self._capture(False)
+                # Read the press *before* letting go of the mouse.
+                # ReleaseCapture sends WM_CAPTURECHANGED into this very
+                # window procedure, synchronously, and the branch above
+                # clears the press on it -- so with the release first,
+                # `_down` was always empty by the time it was read, and
+                # no caption button ever fired. The first Windows tester
+                # reported the X doing nothing; the runner, on a real
+                # window, agreed.
                 fired, self._down = self._down, ""
+                self._capture(False)
                 self._hot = region if region in BUTTONS else ""
                 self._paint_state()
                 if fired == region:
