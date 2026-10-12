@@ -70,7 +70,8 @@ jobs:
   # it would give, while OpenCV carries code written for the OBS camera
   # by name (NV12 forced, since 4.8.0). It shows up to enumeration with
   # three formats at 1920x1080 and no camera controls, which is exactly
-  # the shape of device the backend has to describe honestly.
+  # the shape of device the backend has to describe honestly. (Before
+  # the pins, this job ran on both OpenCV majors and both passed.)
   #
   # The full suite does not run here yet: a handful of tests import the
   # V4L2 module, which imports fcntl, which Windows has not got. The
@@ -78,12 +79,6 @@ jobs:
   wincam:
     runs-on: windows-latest
     timeout-minutes: 30
-    name: wincam (${{ matrix.opencv }})
-    strategy:
-      fail-fast: false
-      matrix:
-        # Both majors: pyproject lets a fresh install land on either.
-        opencv: ["opencv-python-headless<5", "opencv-python-headless>=5"]
     env:
       OBS_ZIP_SHA256: CF9D26319A8533460070E7C476818158563B6810A903774A88FA608BF748499B
       OBS_DLL_SHA256: 864725C9AAA6966C232EDEE4F7E686DAF5930D72675F3F0AB94EBA9C4DAA2BC8
@@ -97,7 +92,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]" pyvirtualcam==0.15.0 "${{ matrix.opencv }}"
+          python -m pip install -e ".[dev]" pyvirtualcam==0.15.0
           python -c "import cv2; print('cv2', cv2.__version__)"
       # The server image may ship without the media stack OpenCV's
       # DirectShow capture graph is built on. Ask for it; say whether
