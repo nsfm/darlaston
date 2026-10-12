@@ -25,6 +25,9 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Camera Support
 
+- [ ] **ISP balance: unverified on the camera.** The pick drives ToupTek's RGB-gain white balance in a closed loop (`live/balance.py` `IspBalancer`), proven only against the mock's pretend ISP, whose scale is a guess. On the real E3ISPM the first things to learn: whether `put_WhiteBalanceGain` is accepted at all (a camera in Temp/Tint mode refuses it, and then the pick falls back to the LUT), how many codes make a stop, whether the gains survive `grab_raw`'s stop/start, and whether the loop converges in the six steps it allows. The magenta pollen slide is the test.
+- [ ] **The preview's residual cast, properly.** The pick's lookup assumes gamma 2.2 and the ISP runs its log curve, so a pick at a mid-tone leaves shadows 5-9 codes short of red and highlights the same over (reviewer's estimate against a log model). `calib/preview_lut.PreviewLUT` already measures the inverse curve per channel; deriving the pick as a ratio of `estimate_raw` means and building the lookup through that curve would make one pick hold across the whole range for real. If taken, `still.py` must stop multiplying the pick into the flat's balance, because the result would be absolute.
+- [ ] **Why focus, peaking and tracking misbehave on a bright magenta mount.** Not green-only luma: on the September 30 slide green is the best channel once red and blue are blown. The suspect is the ISP's colour matrix mixing clipped red and blue into the preview's green. Needs one live preview frame of that slide to measure; if the ISP balance above stops the clipping, the symptom may simply go.
 - [ ] **Sony Camera Remote SDK.**
 - [ ] **Ximea SDK.**
 - [ ] **Support for older Toup cameras.** Does support fail on the ToupView side or the SDK side? Can we load older SDKs?
