@@ -81,8 +81,28 @@ def test_the_close_button_closes_the_window(qapp, tmp_path, monkeypatch):
         u = _user32()
         lparam = _screen_lparam(win, x, y)
 
+        # Three rungs, so a failure says which one broke. The frame's own
+        # hit test, in Python; the window's nativeEvent override, handed a
+        # real MSG; and the message through Windows itself.
+        import ctypes
+        from ctypes import wintypes
+
+        direct = win._frame._hit_test(lparam)
+        assert direct == (True, HTCLOSE), f"frame._hit_test answered {direct}; geometry {frame}"
+
+        msg = wintypes.MSG()
+        msg.hwnd, msg.message, msg.wParam, msg.lParam = hwnd, WM_NCHITTEST, 0, lparam
+        via_override = win.nativeEvent(b"windows_generic_MSG", ctypes.addressof(msg))
+        assert tuple(via_override)[:2] == (True, HTCLOSE), \
+            f"nativeEvent answered {via_override!r} for a real MSG"
+
+        rect = wintypes.RECT()
+        u.GetWindowRect(hwnd, ctypes.byref(rect))
         hit = u.SendMessageW(hwnd, WM_NCHITTEST, 0, lparam)
-        assert hit == HTCLOSE, f"hit test over the X answered {hit}, geometry {frame}"
+        assert hit == HTCLOSE, (f"hit test over the X answered {hit}; window rect "
+                                f"{rect.left},{rect.top}-{rect.right},{rect.bottom}, "
+                                f"lParam x={lparam & 0xFFFF} y={lparam >> 16}, "
+                                f"visible={win.isVisible()} minimised={win.isMinimized()}")
         mid = u.SendMessageW(hwnd, WM_NCHITTEST, 0,
                              _screen_lparam(win, frame.width // 2, y))
         assert mid in (HTCAPTION, 1), f"the bar's middle answered {mid}"
