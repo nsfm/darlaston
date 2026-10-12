@@ -179,6 +179,11 @@ jobs:
       - name: The window frame on a real HWND
         env:
           DARLASTON_WINFRAME: "1"
+          # conftest forces offscreen unless this is already set, and
+          # offscreen hands out window ids that are not windows. The
+          # first run of this test passed two of its three rungs against
+          # a handle GetWindowRect said was nothing.
+          QT_QPA_PLATFORM: windows
         run: python -m pytest -q -m wincam tests/test_winframe.py
       - name: What the listing says on this machine
         env:

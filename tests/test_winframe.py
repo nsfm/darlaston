@@ -66,6 +66,10 @@ def test_the_close_button_closes_the_window(qapp, tmp_path, monkeypatch):
     from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
 
+    from PySide6 import QtWidgets
+    assert QtWidgets.QApplication.platformName() == "windows", \
+        "offscreen hands out window ids that are not windows; nothing below is real"
+
     win = MainWindow(lambda: MockCamera(fps=30.0))
     closed = []
     try:

@@ -558,7 +558,12 @@ class WindowsFrame:
             win = _structs()
             ctypes = win.ctypes
             self.hwnd = int(self.window.winId())
-            if not self.hwnd:
+            if not self.hwnd or not ctypes.windll.user32.IsWindow(
+                    ctypes.c_void_p(self.hwnd)):
+                # A window id that is not a window: the offscreen platform
+                # hands those out, and every call below would then fail
+                # silently and leave this claiming a frame it never took.
+                self.hwnd = 0
                 return False
 
             # Windows 11 rounds a standard frame for you. Strip the frame
