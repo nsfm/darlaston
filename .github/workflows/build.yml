@@ -217,7 +217,7 @@ jobs:
           python packaging/notes.py | tee NOTES.md
           echo "--- attaching ---"
           ls -lh incoming/*/*
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           files: incoming/*/*
