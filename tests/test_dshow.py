@@ -329,7 +329,8 @@ def test_a_child_that_answers_is_believed(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
         a[0], 0, stdout="probing: X5CAM4K8MPA\n" + json.dumps(answer) + "\n", stderr=""))
     got = dshow.enumerate_cameras()
-    assert got == json.loads(json.dumps(answer)), "what the child printed, tuples and all"
+    assert got == answer, "what the child printed, with the size pairs back as pairs"
+    assert all(isinstance(size, tuple) for size in got[0]["sizes"])
 
 
 def test_a_child_that_dies_leaves_the_names(monkeypatch):
