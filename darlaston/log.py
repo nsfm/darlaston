@@ -27,6 +27,15 @@ MAX_BYTES = 1_000_000
 KEEP = 3
 
 _started = False
+#: Kept open for faulthandler, which needs a real descriptor at the
+#: moment of a fault and cannot open one then.
+_crash_file = None
+
+
+def _now() -> str:
+    import datetime
+
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def state_dir() -> Path:
@@ -46,6 +55,11 @@ def state_dir() -> Path:
 def path() -> Path:
     """The log file, so the interface can tell somebody where to look."""
     return state_dir() / "darlaston.log"
+
+
+def crash_path() -> Path:
+    """Where a hard fault's stack lands, if one ever does."""
+    return state_dir() / "darlaston-crash.log"
 
 
 def setup(level: int = logging.INFO) -> Path | None:
@@ -78,6 +92,25 @@ def setup(level: int = logging.INFO) -> Path | None:
         written = target
     except OSError:
         pass          # no home to write to; the console handler still helps
+
+    # A hard fault -- an access violation inside a vendor library, a bad
+    # pointer handed to COM -- ends the process with no Python traceback
+    # and, in the frozen build, no console to have printed one to. The
+    # first Windows user saw exactly that: "it exits before the window".
+    # faulthandler writes the Python stack of every thread at the moment
+    # of the fault to a file we keep open for the purpose, beside the log,
+    # so the next such report names the frame.
+    global _crash_file
+    try:
+        import faulthandler
+
+        _crash_file = open(state_dir() / "darlaston-crash.log", "a",
+                           encoding="utf-8")
+        _crash_file.write(f"\n---- started {_now()} ----\n")
+        _crash_file.flush()
+        faulthandler.enable(file=_crash_file, all_threads=True)
+    except Exception:
+        _crash_file = None
 
     # Only when there is one. In the frozen build `sys.stderr` can be None
     # outright, and handing that to StreamHandler makes every log call
