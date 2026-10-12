@@ -108,6 +108,10 @@ CLIP_SATURATED = 0.25
 #: noisy reading. Recovery from eight stops over takes under a second at
 #: thirty frames.
 CLIP_STOPS = 2.0
+#: A share of a channel at full scale past which that channel counts as
+#: blown, where every channel is being judged. Two percent: a slide edge
+#: or a hot pixel line is less, a blown mountant is far more.
+CLIP_HONEST = 0.02
 
 
 @dataclass(frozen=True)

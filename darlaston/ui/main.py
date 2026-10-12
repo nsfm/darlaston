@@ -251,6 +251,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.save()
         self.pipeline.set_white_balance(self.settings.white_balance_gains)
         self.pipeline.set_balance_rect(self.DEFAULT_WB_RECT)
+        #: A pick in progress inside the camera's own ISP, and whether
+        #: the camera currently carries a balance of ours. The second
+        #: decides how the exposure loop reads clipping: with the ISP
+        #: balanced, a blown red or blue channel is real and the loop
+        #: must back off for it; without, blue is routinely blown by the
+        #: ISP's own fixed boost and only green is honest.
+        self._isp_loop: balance.IspBalancer | None = None
+        self._isp_balanced = False
+        self._isp_wait_until = 0
         self._refresh_wb()
         self._refresh_disk()
         self._disk_timer = QtCore.QTimer(self)
@@ -975,6 +984,14 @@ class MainWindow(QtWidgets.QMainWindow):
         actual = self.session.actual_settings()
         if actual is None:
             return
+        # The balance the camera carried last time, back into its ISP
+        # before the first pick; the display trim was retired when it
+        # was written, so nothing is applied twice.
+        self._isp_balanced = False
+        codes = self.settings.isp_white_balance
+        backend = self.session.backend
+        if codes and backend is not None and backend.isp_white_balance() is not None:
+            self._isp_balanced = backend.set_isp_white_balance(tuple(codes))
         us, gain = actual
         for widget, value in ((self.exposure, self._us_to_slider(us)),
                               (self.gain, gain)):
@@ -1300,11 +1317,24 @@ class MainWindow(QtWidgets.QMainWindow):
             lock_exposure=bool(self.settings.auto_exposure_lock_time))
         level = exposure_ctl.measure_hist(signals.histogram)
         hurry, self._ae_hurry = self._ae_hurry, False
+        clipped = exposure_ctl.clipped_share(signals.histogram)
+        if self._isp_balanced:
+            # With the camera's own balance in place every channel is
+            # honest, and a blown red or blue is a blown channel -- not
+            # the ISP's fixed blue boost, which is why green alone is
+            # judged otherwise. A magenta mount metered on green blew
+            # 85% of red before this. The loop sizes its retreat by the
+            # clipped share only once the level reads saturated, so a
+            # blown channel is reported as exactly that.
+            worst = max(getattr(signals, "channel_clipped", None) or (0.0,))
+            if worst > exposure_ctl.CLIP_HONEST:
+                clipped = max(clipped, worst)
+                level = max(level, exposure_ctl.SATURATED_LEVEL)
         moved = exposure_ctl.step(
             state, limits, level,
             reactivity=float(self.settings.auto_exposure_reactivity),
             hurry=hurry,
-            clipped=exposure_ctl.clipped_share(signals.histogram))
+            clipped=clipped)
         if moved == state:
             return
 
@@ -1678,6 +1708,27 @@ class MainWindow(QtWidgets.QMainWindow):
         sample = self.pipeline.balance_sample
         if sample is None:
             return
+        backend = self.session.backend
+        codes = backend.isp_white_balance() if backend is not None else None
+        if codes is not None:
+            # The camera has a white-balance stage of its own, and it
+            # scales the sensor's data before anything clips, so the pick
+            # goes there: a closed loop on the picture, because the
+            # codes' scale is the vendor's secret. Measured on a magenta
+            # mount: metered on green, 85% of red and 83% of blue were
+            # blown in the preview and no display gain could reach them.
+            self._isp_loop = balance.IspBalancer(codes)
+            self._isp_wait_until = 0
+            self.strip.set_note(_("note.wb.isp"))
+            self._isp_step()
+            return
+        if balance.patch_is_clipped(sample, self.pipeline.balance_sample_clipped):
+            # Without an ISP to reach, a blown patch cannot be balanced,
+            # only lied about: the patch would go grey and everything
+            # dimmer keep its cast. Say so instead.
+            self.strip.set_note(_("note.wb.clipped"))
+            self._refresh_wb()
+            return
         b, g, r = sample
         gains = balance.gains_from_means(b, g, r)
         self.settings.white_balance_gains = list(gains)
@@ -1686,12 +1737,62 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline.set_white_balance(gains)
         self._refresh_wb()
 
+    def _isp_step(self) -> None:
+        """One turn of the loop driving the camera's own balance.
+
+        Each write is followed by a wait for the pipeline to have seen
+        three frames since, because the ISP applies the change on the
+        next readout and the sample is of the last frame analysed; a
+        clock would read the old frame twice at a long exposure and
+        teach the loop a slope of zero.
+        """
+        loop = self._isp_loop
+        if loop is None:
+            return
+        backend = self.session.backend
+        if backend is None or not self.session.status.is_live:
+            self._isp_loop = None
+            return
+        if self.pipeline.analysed < self._isp_wait_until:
+            QtCore.QTimer.singleShot(40, self._isp_step)
+            return
+        sample = self.pipeline.balance_sample
+        if sample is None:
+            QtCore.QTimer.singleShot(80, self._isp_step)
+            return
+        proposed = loop.propose(sample, self.pipeline.balance_sample_clipped)
+        if proposed is None:
+            self._isp_loop = None
+            self._isp_balanced = True
+            self.settings.isp_white_balance = list(loop.codes)
+            # The display trim retires: the camera carries the balance,
+            # and a LUT on top would correct the correction.
+            self.settings.white_balance_gains = list(balance.UNITY)
+            self.settings.save()
+            self.pipeline.set_white_balance(balance.UNITY)
+            self.strip.set_note(_("note.wb.isp_done") if loop.reason == "neutral"
+                                else _("note.wb.isp_stopped", why=loop.reason))
+            self._refresh_wb()
+            return
+        if not backend.set_isp_white_balance(proposed):
+            self._isp_loop = None
+            self.strip.set_note(_("note.wb.isp_stopped", why="refused"))
+            return
+        self._isp_wait_until = self.pipeline.analysed + 3
+        QtCore.QTimer.singleShot(40, self._isp_step)
+
     def _reset_white_balance(self) -> None:
         """Back to the sensor's own colour, which is worth being able to
         see: an uncorrected preview says something about the lamp that a
         corrected one hides."""
         self.view.arm_balance(False)
         self.strip.set_note("")
+        self._isp_loop = None
+        backend = self.session.backend
+        if backend is not None and backend.isp_white_balance() is not None:
+            backend.set_isp_white_balance((0, 0, 0))     # the model default
+        self._isp_balanced = False
+        self.settings.isp_white_balance = None
         self.settings.white_balance_gains = list(balance.UNITY)
         self.settings.save()
         self.pipeline.set_white_balance(balance.UNITY)
@@ -1711,12 +1812,13 @@ class MainWindow(QtWidgets.QMainWindow):
             armed = False
         self.wb_pick.setEnabled(live)
         self.wb_pick.setChecked(armed)
-        self.wb_reset.setEnabled(gains != balance.UNITY)
+        balanced = gains != balance.UNITY or bool(self.settings.isp_white_balance)
+        self.wb_reset.setEnabled(balanced)
         # Brass lettering where there is something to do, filled while it
         # is being done. A control that looks the same whether or not it
         # can be pressed is one people stop trying.
         _invite(self.wb_pick, live and not armed)
-        _invite(self.wb_reset, gains != balance.UNITY)
+        _invite(self.wb_reset, balanced)
         self.wb_swatch.set_gains(gains)
         # The numbers are still here, for whoever wants them, where they
         # cost no space: nobody reads "R 1.33 B 0.60" and pictures a warm

@@ -211,6 +211,10 @@ class Settings:
     #: the file path multiplies into a raw. A number cannot say which it
     #: is, so the file does, and a legacy file is converted once on load.
     white_balance_domain: str = "display"
+    #: The camera's own white-balance codes (R, G, B), when the pick was
+    #: driven into the ISP rather than into the display LUT. None when
+    #: the camera has no such stage or it was never used.
+    isp_white_balance: list | None = None
     framing_grid: str = "none"   # none | thirds | grid | reel | tall
     framing_cross: bool = False
     #: Slide-anchored dots over the preview: the tracker's belief made

@@ -142,10 +142,30 @@ class MockCamera(CameraBackend):
         #: cameras have none, and the mock should look like most cameras
         #: unless a test or a demo asks otherwise.
         self._focus: _MockFocus | None = None
+        #: A colour cast on the scene, as B, G, R multipliers, so the
+        #: white-balance machinery has something to take out. Neutral by
+        #: default: most of the suite wants a grey world.
+        self.cast: tuple[float, float, float] = (1.0, 1.0, 1.0)
+        #: The pretend ISP's R, G, B codes, once a test grows one.
+        self._isp: tuple[int, int, int] = (0, 0, 0)
+        self._has_isp = False
 
     @property
     def focus_axis(self) -> FocusAxis | None:
         return self._focus
+
+    def grow_isp_white_balance(self) -> None:
+        """Give the synthetic camera a white-balance stage of its own."""
+        self._has_isp = True
+
+    def isp_white_balance(self) -> tuple[int, int, int] | None:
+        return self._isp if self._has_isp else None
+
+    def set_isp_white_balance(self, codes) -> bool:
+        if not self._has_isp:
+            return False
+        self._isp = tuple(max(-127, min(127, int(c))) for c in codes)
+        return True
 
     def grow_focus_motor(self) -> "_MockFocus":
         """Give the synthetic camera a motor. Returns it."""
@@ -448,10 +468,20 @@ class MockCamera(CameraBackend):
                 else:
                     img[:, w - covered:] *= 0.015
 
-        u8 = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        buf[:, :, 0] = u8
-        buf[:, :, 1] = u8
-        buf[:, :, 2] = u8
+        if self.cast == (1.0, 1.0, 1.0) and self._isp == (0, 0, 0):
+            u8 = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+            buf[:, :, 0] = u8
+            buf[:, :, 1] = u8
+            buf[:, :, 2] = u8
+            return
+        # A tinted mount or a warm lamp, then the pretend ISP's gains on
+        # top: one stop per 64 codes, which is a guess at the real
+        # camera's scale and deliberately not what the balancer assumes.
+        # `cast` is B, G, R like the frame; the codes are R, G, B like
+        # the SDK. Zipping them straight put red's code on blue.
+        for channel, (tint, code) in enumerate(zip(self.cast, reversed(self._isp))):
+            scaled = img * (255.0 * tint * (2.0 ** (code / 64.0)))
+            buf[:, :, channel] = np.clip(scaled, 0, 255).astype(np.uint8)
 
     def _scale_field(self, h: int, w: int) -> np.ndarray:
         key = (h, w, self._exposure_us, self._gain_pct)

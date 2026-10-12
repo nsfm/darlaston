@@ -198,6 +198,7 @@ class LivePipeline:
         #: made the control need several presses to converge.
         self._wb_rect = (0.40, 0.40, 0.20, 0.20)
         self._wb_sample: tuple[float, float, float] | None = None
+        self._wb_sample_clipped = (0.0, 0.0, 0.0)
         self._coverage = FocusCoverage()
         self._sweeping = False
         self._custom: tuple[float, float, float, float] | None = None
@@ -330,6 +331,18 @@ class LivePipeline:
     def balance_sample(self) -> tuple[float, float, float] | None:
         """Mean B, G, R of that rect from the *uncorrected* frame."""
         return self._wb_sample
+
+    @property
+    def analysed(self) -> int:
+        """Frames analysed so far. A caller that changed the camera and
+        wants to see the result waits for this to move, not for a clock:
+        at a half-second exposure a timer sees the old frame twice."""
+        return self._analysed
+
+    @property
+    def balance_sample_clipped(self) -> tuple[float, float, float]:
+        """Share of that rect's pixels at full scale, per channel, B G R."""
+        return self._wb_sample_clipped
 
     def start_sweep(self) -> None:
         """Begin accumulating coverage, on a fresh accumulator.
@@ -829,6 +842,7 @@ class LivePipeline:
         # means over a small rect, so the cost is not worth measuring, and
         # this is the only moment the uncorrected values still exist.
         self._wb_sample = None
+        self._wb_sample_clipped = (0.0, 0.0, 0.0)
         if data.ndim == 3:
             fh, fw = data.shape[:2]
             bx, by, bw, bh = wb_rect
@@ -840,6 +854,16 @@ class LivePipeline:
                 # 0.065 ms. `cv2.mean` returns B, G, R, alpha, which is
                 # the order this was already building.
                 self._wb_sample = tuple(cv2.mean(patch)[:3])
+                # And how much of each channel is blown, because a
+                # balance taken off a clipped patch is a balance of the
+                # clipping -- and which channel is blown says which way
+                # to step. The patch is a few thousand pixels; three
+                # counts are cheaper than the means were.
+                area = float(patch.shape[0] * patch.shape[1])
+                self._wb_sample_clipped = tuple(
+                    float(cv2.countNonZero(
+                        cv2.inRange(patch[..., c], 254, 255))) / area
+                    for c in range(3))
 
         self._analysed += 1
         self._tick.set()
