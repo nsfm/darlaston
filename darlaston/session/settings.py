@@ -206,6 +206,11 @@ class Settings:
     #: calibration store keyed to the optical configuration. This one is
     #: per bench and per habit; that one is per objective and per lamp.
     white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
+    #: Which domain the gains above are in. Older builds stored the
+    #: display-domain ratio; this one stores linear light, which is what
+    #: the file path multiplies into a raw. A number cannot say which it
+    #: is, so the file does, and a legacy file is converted once on load.
+    white_balance_domain: str = "display"
     framing_grid: str = "none"   # none | thirds | grid | reel | tall
     framing_cross: bool = False
     #: Slide-anchored dots over the preview: the tracker's belief made
