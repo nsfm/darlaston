@@ -67,6 +67,25 @@ if __name__ == "__main__":
     # and then forking for ever.
     multiprocessing.freeze_support()
 
+    # A windowed Windows executable never attaches to the console it was
+    # started from: `darlaston --list-cameras` in PowerShell printed
+    # nothing, and the person reporting that was right. For any flag that
+    # exists to be read, borrow the parent's console and point stdout and
+    # stderr at it. The probe child is launched with pipes, which are
+    # valid handles already, so it is left alone.
+    if sys.platform.startswith("win") and sys.stdout is None and any(
+            flag.startswith("--") for flag in sys.argv[1:]):
+        try:
+            import ctypes
+
+            ATTACH_PARENT_PROCESS = -1
+            if ctypes.windll.kernel32.AttachConsole(ATTACH_PARENT_PROCESS):
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                print()          # the prompt has already been drawn over
+        except Exception:
+            pass
+
     if "--selftest" in sys.argv[1:]:
         raise SystemExit(selftest())
 

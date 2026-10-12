@@ -3962,7 +3962,32 @@ def _group(title: str, first: QtWidgets.QWidget | QtWidgets.QLayout,
 
 
 def _list_cameras() -> int:
-    """Everything on this machine darlaston could drive, and how well."""
+    """Everything on this machine darlaston could drive, and how well.
+
+    Said twice: to the console, and into the log file, because on
+    Windows the console may not be there to read (a windowed executable
+    attaches to none unless asked) and the log is the thing a person on
+    another machine can still send.
+    """
+    import builtins
+
+    written = log.setup(logging.INFO)
+    said: list[str] = []
+
+    def tee(*parts, **kw):
+        line = kw.get("sep", " ").join(str(p) for p in parts)
+        said.append(line)
+        builtins.print(line, **kw)
+
+    try:
+        return _list_cameras_to(tee)
+    finally:
+        _log.info("--list-cameras%s:\n%s",
+                  "" if written else " (no log file could be written)",
+                  "\n".join(said))
+
+
+def _list_cameras_to(print) -> int:       # noqa: A002 -- shadowed on purpose
     import sys as _sys
 
     from ..camera import usb

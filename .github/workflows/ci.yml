@@ -173,6 +173,13 @@ jobs:
           } finally {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           }
+      # Our own title bar, on a real window handle: the native platform
+      # plugin, not offscreen, because the caption buttons are answered
+      # through non-client messages that only a real HWND receives.
+      - name: The window frame on a real HWND
+        env:
+          DARLASTON_WINFRAME: "1"
+        run: python -m pytest -q -m wincam tests/test_winframe.py
       - name: What the listing says on this machine
         env:
           DARLASTON_WINCAM: "1"
