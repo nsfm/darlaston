@@ -296,6 +296,35 @@ class ToupcamBackend(CameraBackend):
         )
         return self._info
 
+    #: The SDK's RGB-gain white balance runs -127..127 per channel around a
+    #: model default of 0. The header says that much and no more: what one
+    #: code does to the picture is not written down, which is why the
+    #: caller converges on it by watching rather than computing.
+    ISP_WB_RANGE = (-127, 127)
+
+    def isp_white_balance(self) -> tuple[int, int, int] | None:
+        if self._cam is None:
+            return None
+        try:
+            r, g, b = self._cam.get_WhiteBalanceGain()
+            return (int(r), int(g), int(b))
+        except Exception:
+            # A camera in Temp/Tint mode refuses RGB-gain calls; it is
+            # then a camera whose ISP we do not drive, not an error.
+            return None
+
+    def set_isp_white_balance(self, codes: tuple[int, int, int]) -> bool:
+        if self._cam is None:
+            return False
+        lo, hi = self.ISP_WB_RANGE
+        clamped = [max(lo, min(hi, int(c))) for c in codes]
+        try:
+            self._cam.put_WhiteBalanceGain(clamped)
+            return True
+        except Exception as exc:
+            _log.debug("ISP white balance refused %s: %r", clamped, exc)
+            return False
+
     def _serial(self) -> str:
         try:
             return self._cam.SerialNumber()

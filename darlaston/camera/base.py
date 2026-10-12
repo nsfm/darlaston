@@ -171,6 +171,25 @@ class CameraBackend(ABC):
         """The focus motor, or None for the many cameras without one."""
         return None
 
+    def isp_white_balance(self) -> tuple[int, int, int] | None:
+        """The camera's own white-balance stage, as its R, G, B codes.
+
+        None for a camera without one, which is every UVC camera and the
+        synthetic one unless asked. Where it exists it is the right place
+        to balance the preview: the ISP scales the sensor's 12-bit data
+        *before* it clips to eight, so a correction written here can
+        still reach a channel the display LUT only ever sees blown. The
+        scale of the codes is the vendor's and undocumented, which is why
+        nothing above here computes them from a formula -- the balancer
+        in `live/balance.py` drives them in a closed loop and watches
+        the picture.
+        """
+        return None
+
+    def set_isp_white_balance(self, codes: tuple[int, int, int]) -> bool:
+        """Write the three codes. False when the camera has no such stage."""
+        return False
+
     @abstractmethod
     def open(self) -> CameraInfo: ...
 

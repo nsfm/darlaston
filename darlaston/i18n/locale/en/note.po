@@ -149,3 +149,19 @@ msgstr "sweep stopped; the slices so far are kept"
 
 msgid "note.sweep_failed"
 msgstr "sweep stopped: {why}"
+
+#. ---- the pick, when the camera has its own balance stage ---------------
+
+msgid "note.wb.isp"
+msgstr "balancing inside the camera..."
+
+msgid "note.wb.isp_done"
+msgstr "balanced inside the camera"
+
+#. {why} is a short reason from the loop: out of steps, at the edge of
+#. the range, green is clipped.
+msgid "note.wb.isp_stopped"
+msgstr "camera balance stopped: {why}"
+
+msgid "note.wb.clipped"
+msgstr "that patch is blown in the preview; lower the exposure and pick again"

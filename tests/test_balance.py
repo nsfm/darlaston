@@ -464,3 +464,126 @@ def test_a_camera_leaving_mid_gesture_does_not_strand_the_operator(
         assert not win.view.armed_for_balance, "left waiting for a point"
     finally:
         win.shutdown()
+
+
+# ---- the camera's own balance stage -----------------------------------------
+
+class _FakeIsp:
+    """A camera ISP: codes in, a patch's channel means out.
+
+    Forty codes per stop, deliberately not the balancer's opening guess
+    of sixty-four, and a cast that blows two channels at the start -- the
+    magenta mount that started all this.
+    """
+
+    def __init__(self, cast=(0.9, 1.0, 3.6), base=180.0, slope=40.0):
+        self.cast = cast                  # B, G, R multipliers on the scene
+        self.base, self.slope = base, slope
+        self.codes = (0, 0, 0)
+        self.writes = []
+
+    def sample(self):
+        r_code, g_code, b_code = self.codes
+        out = []
+        for tint, code in zip(self.cast, (b_code, g_code, r_code)):
+            out.append(min(255.0, self.base * tint * 2.0 ** (code / self.slope)))
+        return tuple(out)                 # B, G, R
+
+    def clipped(self):
+        return tuple(1.0 if v >= 255.0 else 0.0 for v in self.sample())
+
+
+def test_the_isp_balancer_converges_on_a_camera_whose_scale_it_was_not_told():
+    cam = _FakeIsp()
+    loop = B.IspBalancer(cam.codes)
+    assert B.patch_is_clipped(cam.sample(), cam.clipped()), "starts blown"
+    for _ in range(loop.MAX_STEPS + 1):
+        proposed = loop.propose(cam.sample(), cam.clipped())
+        if proposed is None:
+            break
+        cam.codes = proposed
+        cam.writes.append(proposed)
+    b, g, r = cam.sample()
+    assert loop.done and loop.reason == "neutral", (loop.reason, cam.sample())
+    assert abs(r - g) / g < 0.03 and abs(b - g) / g < 0.03, cam.sample()
+    assert cam.codes[1] == 0, "green is the reference and never moves"
+    assert len(cam.writes) <= 6, cam.writes
+
+
+def test_the_balancer_stops_at_the_edge_rather_than_spinning():
+    cam = _FakeIsp(cast=(1.0, 1.0, 40.0))       # beyond what -127 can reach
+    loop = B.IspBalancer(cam.codes)
+    for _ in range(loop.MAX_STEPS + 2):
+        proposed = loop.propose(cam.sample(), cam.clipped())
+        if proposed is None:
+            break
+        cam.codes = proposed
+    assert loop.done and loop.reason in ("at the edge of the range", "out of steps")
+    assert cam.codes[0] == -127
+
+
+def test_a_blown_patch_is_refused_where_there_is_no_isp(qapp, tmp_path, monkeypatch):
+    """A pick off a clipped channel neutralises the clipping, not the
+    light: the mount goes grey and every dimmer pixel keeps its cast."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        _push_cast(win, b=255, g=120, r=255)
+        assert max(win.pipeline.balance_sample_clipped) > 0.9
+        win._take_white_balance()
+        assert win.pipeline.white_balance == B.UNITY
+        _push_cast(win, b=200, g=120, r=90)
+        win._take_white_balance()
+        assert win.pipeline.white_balance != B.UNITY, "an honest patch still picks"
+    finally:
+        win.shutdown()
+
+
+def test_the_pick_drives_the_camera_isp_when_it_has_one(qapp, tmp_path, monkeypatch):
+    """End to end on the synthetic camera: a magenta cast, a camera with a
+    balance stage, one press -- and the codes converge while the display
+    trim retires to unity."""
+    import time
+    from PySide6 import QtWidgets
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    cam = MockCamera(fps=30.0)
+    cam.cast = (0.8, 1.0, 1.7)                  # B, G, R: a warm magenta
+    cam.grow_isp_white_balance()
+    win = MainWindow(lambda: cam)
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not (
+                win.session.status.is_live and win.pipeline.balance_sample):
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.02)
+        assert win.session.status.is_live
+        before = win.pipeline.balance_sample
+        assert before[2] > before[1] * 1.3, before
+        win._take_white_balance()
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline and win._isp_loop is not None:
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.02)
+        assert win._isp_loop is None, "the loop did not finish"
+        assert win._isp_balanced and win.settings.isp_white_balance
+        assert cam.isp_white_balance() != (0, 0, 0)
+        assert win.pipeline.white_balance == B.UNITY, "the camera carries it, not the LUT"
+        # Let a few balanced frames through, then read the patch.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.02)
+        b, g, r = win.pipeline.balance_sample
+        assert abs(r - g) / g < 0.05 and abs(b - g) / g < 0.05, (b, g, r)
+        # Reset puts the camera back to its default and forgets.
+        win._reset_white_balance()
+        assert cam.isp_white_balance() == (0, 0, 0)
+        assert win.settings.isp_white_balance is None and not win._isp_balanced
+    finally:
+        win.shutdown()

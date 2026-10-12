@@ -276,3 +276,38 @@ def test_the_switches_are_segments_like_the_rest_of_the_rail(window):
     for button in (win.auto_exposure, win.auto_exposure_lock):
         assert button.property("role") == "seg"
         assert button.isCheckable()
+
+
+# ---- every channel is judged once the camera is balanced ---------------------
+
+def _magenta(win, red=0.85, blue=0.83):
+    """Green sitting at target while red and blue are blown: the magenta
+    mount, as the pipeline reports it."""
+    s = _signals(win, E.target_for("brightfield"))
+    s.channel_clipped = (red, 0.0, blue)
+    return s
+
+
+def test_a_blown_channel_backs_off_only_once_the_camera_is_balanced(
+        window, monkeypatch):
+    """Measured on a magenta mount: metered on green, 85% of red and 83%
+    of blue were blown in the preview and the loop was content. With the
+    camera's own balance in place every channel is honest, so a blown one
+    is a blown one; without it, blue is routinely blown by the ISP's fixed
+    boost on a neutral scene and backing off for it would darken every
+    ordinary slide."""
+    win = window()
+    _with_camera(win, monkeypatch)
+    win.settings.auto_exposure = True
+    win._ae_hurry = False
+    before = _at(win)
+    win._isp_balanced = False
+    win._auto_expose(_magenta(win))
+    assert _at(win) == before, "unbalanced: green at target, nothing moves"
+
+    win._isp_balanced = True
+    win._ae_levels_seq = None
+    win._auto_expose(_magenta(win))
+    after = _at(win)
+    assert after != before and (after[0] < before[0] or after[1] < before[1]), \
+        "balanced: the blown channels pull the exposure down"
