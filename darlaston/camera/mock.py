@@ -20,7 +20,8 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from .base import CameraBackend, CameraInfo, Resolution
+from .base import (CameraBackend, CameraInfo, FocusAxis, FocusRange,
+                   Resolution)
 from .buffers import BufferPool, Frame
 
 _RESOLUTIONS = (
@@ -136,6 +137,20 @@ class MockCamera(CameraBackend):
 
         # One RNG, reused. Constructing a generator per frame is pure waste.
         self._rng = np.random.default_rng()
+        #: A pretend focus motor over `focus_z`, so the sweep and its
+        #: panel can be exercised with no hardware. Off by default: most
+        #: cameras have none, and the mock should look like most cameras
+        #: unless a test or a demo asks otherwise.
+        self._focus: _MockFocus | None = None
+
+    @property
+    def focus_axis(self) -> FocusAxis | None:
+        return self._focus
+
+    def grow_focus_motor(self) -> "_MockFocus":
+        """Give the synthetic camera a motor. Returns it."""
+        self._focus = _MockFocus(self)
+        return self._focus
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -479,3 +494,39 @@ class MockCamera(CameraBackend):
         return Frame(data=buf, seq=self._seq, timestamp=time.time(),
                      exposure_us=self._exposure_us, gain_pct=self._gain_pct,
                      binned=False, _pool=pool)
+
+
+class _MockFocus(FocusAxis):
+    """A motor over the mock's `focus_z`: 1000 steps across +-10 um.
+
+    Instant and exact, which no real motor is; the sweep's settle logic
+    is exercised by the picture changing, not by the motor lagging.
+    `set_auto(True)` snaps to best focus, which is what a working
+    autofocus would do to a flat subject.
+    """
+
+    LO, HI = 0, 1000
+    UM_PER_STEP = 0.02
+
+    def __init__(self, camera: MockCamera) -> None:
+        self._camera = camera
+        self._position = (self.HI - self.LO) // 2
+        self.moves: list[int] = []
+        self.auto = False
+
+    def range(self) -> FocusRange:
+        return FocusRange(self.LO, self.HI, 1)
+
+    def get(self) -> int:
+        return self._position
+
+    def set(self, position: int) -> None:
+        position = max(self.LO, min(self.HI, int(position)))
+        self._position = position
+        self.moves.append(position)
+        self._camera.focus_z = (position - (self.HI - self.LO) // 2) * self.UM_PER_STEP
+
+    def set_auto(self, on: bool) -> None:
+        self.auto = bool(on)
+        if on:
+            self.set((self.HI - self.LO) // 2)

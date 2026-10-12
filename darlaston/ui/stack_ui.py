@@ -106,12 +106,23 @@ class StackAssembly(QtWidgets.QWidget):
         row.addWidget(self.wiggle_btn)
         row.addWidget(self.close_btn)
 
+        # The focus motor's row, for the few cameras that have one. Hidden
+        # otherwise, so a camera with no motor shows no control for it.
+        self.focus_row = FocusRow()
+        self.focus_row.hide()
+
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(5)
         col.addWidget(self.canvas, 1)
         col.addWidget(self.progress)
         col.addLayout(row)
+        col.addWidget(self.focus_row)
+
+    def set_focus_axis(self, axis) -> None:
+        """Show the motor's row when the camera has one, and not otherwise."""
+        self.focus_row.set_axis(axis)
+        self.focus_row.setVisible(axis is not None)
 
     def _on_view(self, on: bool) -> None:
         self._mode = "depth" if on else "image"
@@ -342,3 +353,147 @@ class _AssemblyCanvas(QtWidgets.QWidget):
             p.drawText(QtCore.QRect(x + 10, y + 6, 68, 18),
                        QtCore.Qt.AlignmentFlag.AlignVCenter,
                        n_("stack.canvas.detail.slices", o._count))
+
+
+
+class FocusRow(QtWidgets.QWidget):
+    """Driving a focus motor by hand, and handing it to the sweep.
+
+    One row: a slider that moves the motor as it is dragged (so the two
+    ends of the subject are found by eye, the way they would be on the
+    fine focus), two buttons that mark where the slider is as the near
+    and far end, a count, and the sweep itself. The camera's own
+    autofocus gets a button too, because finding the first plane is
+    exactly what it is good at.
+    """
+
+    moved = QtCore.Signal(int)                   #: the slider, by hand
+    autofocus_requested = QtCore.Signal()
+    sweep_requested = QtCore.Signal(int, int, int)   #: near, far, count
+    stop_requested = QtCore.Signal()
+
+    #: Slices a sweep takes when nobody has said. Enough to cover a
+    #: diatom at 40x with the step the motor has; the spinner is right
+    #: there for anyone who knows better.
+    DEFAULT_COUNT = 12
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._axis = None
+        self._syncing = False
+        self.near: int | None = None
+        self.far: int | None = None
+        self._running = False
+
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.slider.setToolTip(_("stack.focus.slider.tooltip"))
+        self.slider.valueChanged.connect(self._on_slider)
+
+        self.near_btn = QtWidgets.QPushButton(_("stack.focus.near.action"))
+        self.near_btn.setToolTip(_("stack.focus.near.tooltip"))
+        self.far_btn = QtWidgets.QPushButton(_("stack.focus.far.action"))
+        self.far_btn.setToolTip(_("stack.focus.far.tooltip"))
+        self.count = QtWidgets.QSpinBox()
+        self.count.setRange(2, 400)
+        self.count.setValue(self.DEFAULT_COUNT)
+        self.count.setToolTip(_("stack.focus.slices.tooltip"))
+        self.auto_btn = QtWidgets.QPushButton(_("stack.focus.auto.action"))
+        self.auto_btn.setToolTip(_("stack.focus.auto.tooltip"))
+        self.sweep_btn = QtWidgets.QPushButton(_("stack.focus.sweep.action"))
+        self.sweep_btn.setToolTip(_("stack.focus.sweep.tooltip"))
+        self.marks = QtWidgets.QLabel(_("stack.focus.unmarked"))
+        self.marks.setProperty("role", "key")
+        for b in (self.near_btn, self.far_btn, self.auto_btn, self.sweep_btn):
+            b.setProperty("role", "seg")
+
+        self.near_btn.clicked.connect(self._mark_near)
+        self.far_btn.clicked.connect(self._mark_far)
+        self.auto_btn.clicked.connect(self.autofocus_requested)
+        self.sweep_btn.clicked.connect(self._on_sweep)
+
+        top = QtWidgets.QHBoxLayout()
+        top.setSpacing(4)
+        top.addWidget(self.near_btn)
+        top.addWidget(self.slider, 1)
+        top.addWidget(self.far_btn)
+        top.addWidget(self.auto_btn)
+        bottom = QtWidgets.QHBoxLayout()
+        bottom.setSpacing(4)
+        bottom.addWidget(self.marks, 1)
+        bottom.addWidget(self.count)
+        bottom.addWidget(self.sweep_btn)
+        col = QtWidgets.QVBoxLayout(self)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(3)
+        col.addLayout(top)
+        col.addLayout(bottom)
+        self._refresh()
+
+    # ---- the motor ---------------------------------------------------------
+
+    def set_axis(self, axis) -> None:
+        self._axis = axis
+        self.near = self.far = None
+        if axis is None:
+            return
+        r = axis.range()
+        self._syncing = True
+        try:
+            self.slider.setRange(r.lo, r.hi)
+            self.slider.setSingleStep(max(1, r.step))
+            self.slider.setPageStep(max(1, r.span // 20))
+            self.slider.setValue(axis.get())
+        finally:
+            self._syncing = False
+        self._refresh()
+
+    def show_position(self, position: int) -> None:
+        """The motor moved on its own (a sweep, an autofocus): follow it
+        without sending it anywhere."""
+        self._syncing = True
+        try:
+            self.slider.setValue(int(position))
+        finally:
+            self._syncing = False
+
+    def _on_slider(self, value: int) -> None:
+        if not self._syncing:
+            self.moved.emit(int(value))
+
+    def _mark_near(self) -> None:
+        self.near = self.slider.value()
+        self._refresh()
+
+    def _mark_far(self) -> None:
+        self.far = self.slider.value()
+        self._refresh()
+
+    def _on_sweep(self) -> None:
+        if self._running:
+            self.stop_requested.emit()
+            return
+        if self.near is None or self.far is None:
+            return
+        self.sweep_requested.emit(self.near, self.far, self.count.value())
+
+    def set_running(self, on: bool, done: int = 0, total: int = 0) -> None:
+        self._running = on
+        self.sweep_btn.setText(_("stack.focus.stop.action") if on
+                               else _("stack.focus.sweep.action"))
+        for w in (self.slider, self.near_btn, self.far_btn, self.auto_btn,
+                  self.count):
+            w.setEnabled(not on)
+        if on:
+            self.marks.setText(_("stack.focus.progress", done=done, total=total))
+        else:
+            self._refresh()
+
+    def _refresh(self) -> None:
+        if self.near is None or self.far is None:
+            self.marks.setText(_("stack.focus.unmarked"))
+        else:
+            self.marks.setText(_("stack.focus.marked", near=self.near,
+                                 far=self.far))
+        self.sweep_btn.setEnabled(self._running
+                                  or (self.near is not None
+                                      and self.far is not None))

@@ -107,8 +107,69 @@ class CameraInfo:
         return bool(self.bayer_pattern)
 
 
+@dataclass(frozen=True)
+class FocusRange:
+    """Where a motorised focus can go, in the device's own units.
+
+    Not micrometres. UVC's focus control is a 16-bit position whose
+    scale the device never explains -- a ToupTek autofocus head runs 0
+    to 854 over about sixteen millimetres of sensor travel, a webcam
+    runs 0 to 250 over a lens barrel -- so the number is a position on
+    a scale, and the scale is the camera's. The sweep that drives it
+    only needs the two ends and a step.
+    """
+
+    lo: int
+    hi: int
+    step: int = 1
+
+    @property
+    def span(self) -> int:
+        return max(0, self.hi - self.lo)
+
+
+class FocusAxis(ABC):
+    """A focus motor the software can drive, where the camera has one.
+
+    Most do not, and a backend without one returns None from
+    `focus_axis`, so nothing above here ever shows a control for a motor
+    that is not there. Where one exists, a stack can be collected by
+    stepping this instead of waiting for a hand on the fine focus: the
+    sweep moves, waits for the picture to settle, fires, and moves again.
+
+    Positions are read back as what was last asked for, not re-read
+    from the device, for the same reason exposure is: asking means
+    taking the capture lock the reader holds for a whole frame.
+    """
+
+    @abstractmethod
+    def range(self) -> FocusRange: ...
+
+    @abstractmethod
+    def get(self) -> int:
+        """The position last asked for."""
+
+    @abstractmethod
+    def set(self, position: int) -> None:
+        """Ask for a position. Takes effect on the device's own schedule;
+        the caller watches the picture to know when it has arrived."""
+
+    @abstractmethod
+    def set_auto(self, on: bool) -> None:
+        """Hand focus to the camera's own autofocus, or take it back.
+
+        Taking it back is what matters: a sweep over a motor the camera
+        is also driving is two hands on one knob.
+        """
+
+
 class CameraBackend(ABC):
     """One camera. Owns no threads; the session owns those."""
+
+    @property
+    def focus_axis(self) -> FocusAxis | None:
+        """The focus motor, or None for the many cameras without one."""
+        return None
 
     @abstractmethod
     def open(self) -> CameraInfo: ...

@@ -29,6 +29,12 @@ This document tracks upcoming features, concerns, and ideas.
 - [ ] **Ximea SDK.**
 - [ ] **Support for older Toup cameras.** Does support fail on the ToupView side or the SDK side? Can we load older SDKs?
 - [ ] **libgphoto** backend for mirrorless cameras.
+- [ ] **Windows UVC: unverified on hardware.** `camera/dshow.py` was written on Linux and is exercised in CI against the OBS virtual camera (enumeration, formats, index mapping, streaming and capture all proven there, on OpenCV 4 and 5), which has no camera controls. Unity Capture was tried first: our enumeration described it and OpenCV's DirectShow open refused it on both majors with no reason, and OpenCV's debug output is compiled out of release wheels. Still to be seen on a real device: that the second filter instance's `IAMCameraControl::Set` reaches the camera while OpenCV streams from it, the exposure units DirectShow reports for a ToupTek hybrid, and that the X5CAM's focus motor answers the standard focus property (its vendor DLL uses nothing else, so it should). The first Windows user's `--list-cameras` output is the ground truth; it prints every range for that reason.
+- [ ] **Windows exposure steps are powers of two.** DirectShow's exposure is log2 seconds, so the slider on a Windows UVC camera lands on 1/8, 1/4, 1/2 s rather than in between. Media Foundation's extended camera controls carry exposure in 100 ns units; reaching them is a KS property set away and not yet earned.
+- [ ] **macOS UVC.** `cv2` opens a webcam through AVFoundation but nothing describes one, and AVFoundation exposes no focus control for an external camera. ToupTek's `toupnam` SDK (network, ships mac/linux/win with a Python binding and the full autofocus table) is the honest macOS route to a focus motor, over ethernet.
+- [ ] **ToupTek `uvcham` as a fallback.** Their hybrid-camera DLL, measured to be DirectShow plus ffmpeg with standard camera controls underneath, so it adds nothing our backend lacks; the archive and a fake-binding test plan exist in case a real device proves otherwise.
+- [ ] **The suite on Windows.** Only the camera tests run on the Windows runner: `v4l2.py` imports `fcntl` at module level and a handful of tests import it directly.
+- [ ] **PySide6 6.12.0 crashes the suite two ways; pinned at 6.11.1 until it does not.** Reproduced 2026-10-11 in fresh venvs with the runner's exact set. On 3.11 the fourth `MainWindow` built in one process aborts with Python's own refcount fatal ("deallocating None") from inside `QApplicationPrivate::notify_helper`, i.e. a binding returning `None` without owning it during event delivery; alone, the same test passes, so it is cumulative across windows. On 3.13 all 888 pass and the interpreter segfaults at exit with "shared QObject was deleted directly" from `PySide::destroyQCoreApplication`, which other projects are reporting this week against parentless widgets kept alive past the QApplication. Both vanish on 6.11.1 (3.11 full suite green). When Dependabot proposes 6.12.x, the first thing to try is closing and deleting every leftover top-level widget in the `window` fixture's teardown while the application still exists; the refcount one may simply be an upstream bug to wait out.
 
 ## Slide mapping
 
@@ -102,6 +108,7 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Focus Stacking
 
+- [ ] **Motorised sweep: settle by picture, calibrated by nobody yet.** `FocusSweep` fires when the sharpness field holds still for `QUIET_FRAMES` after `MIN_FRAMES`, or after 3 s regardless. Those numbers were chosen, not measured; the first camera with a motor should set them the way the rack-pause trigger's were. Also open: a sweep in a stacked mosaic hands the knob back and waits for the slide, which is right, but there is no "sweep every tile" yet.
 - [ ] **A retouch brush.** Both commercial stackers' answer to the
       physically-unfixable halo is a human with a brush, and in our
       architecture that is cheap: the aligned slices and the depth map

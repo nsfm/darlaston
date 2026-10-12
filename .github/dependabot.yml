@@ -1,13 +1,14 @@
+# Upgrades arrive as pull requests, one dependency at a time, with the
+# suite and the Windows camera job run against each. Nothing moves
+# underneath a release on its own; see the pins in pyproject.toml.
 version: 2
 updates:
-  # The runtime dependencies are deliberately three and are pinned only by
-  # a floor, so this mostly watches the dev and packaging extras. Weekly,
-  # because a capture program does not need to chase releases.
-  - package-ecosystem: "pip"
-    directory: "/"
+  - package-ecosystem: pip
+    directory: /
     schedule:
-      interval: "weekly"
-  - package-ecosystem: "github-actions"
-    directory: "/"
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: monthly

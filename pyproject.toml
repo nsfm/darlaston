@@ -27,30 +27,41 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 
+# Pinned, every one, after a fresh install broke on three days' worth of
+# upstream releases at once (2026-10-11: PySide6 6.12.0 aborted the suite
+# on 3.11 and segfaulted at exit on 3.13; numpy 2.5 dropped 3.11). A
+# version that moves underneath a release is a surprise, and surprises
+# are what Dependabot is for: it proposes each bump as its own pull
+# request, with the whole suite and the Windows camera job run against
+# it, and a bump that stays red stays out.
 dependencies = [
-    "numpy>=1.24",
+    # 2.4 is the last line that still builds for 3.11, the floor promised
+    # above; 2.5 dropped it.
+    "numpy==2.4.6",
     # *headless* is not an accident and must not be "upgraded" to plain
     # opencv-python. The full wheel bundles its own copy of Qt, which
     # loads alongside PySide6's and produces the classic "could not load
     # the Qt platform plugin xcb" crash at startup -- from two Qts in one
     # process, not from anything wrong with either. Nothing here uses
     # cv2's own GUI functions; PySide6 is the entire interface.
-    "opencv-python-headless>=4.8",
-    "PySide6>=6.5",
+    "opencv-python-headless==5.0.0.93",
+    # 6.12.0 is out and crashes this suite two ways (TODO.md). 6.11.1 is
+    # the version every test and the Windows camera job have passed on.
+    "PySide6==6.11.1",
     # The fourth dependency, admitted reluctantly and for one job: a CA
     # bundle that travels with the app. The packaged interpreter trusts
     # whatever the build machine's Python trusted, and on macOS that was
     # nothing at all, so the SDK download failed TLS verification on a
     # server whose chain measures complete. Pure Python, no binary, and
     # PyInstaller's own hook carries the certificates into the bundle.
-    "certifi",
+    "certifi==2026.7.22",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "pytest-xdist>=3.5"]
+dev = ["pytest==9.1.1", "pytest-xdist==3.8.0"]
 # Building the double-clickable artifacts. Not needed to run
 # darlaston, and deliberately not a runtime dependency.
-package = ["pytest>=7.4", "pyinstaller>=6.10"]
+package = ["pytest==9.1.1", "pyinstaller==6.21.0"]
 
 [project.urls]
 Homepage = "https://github.com/nsfm/darlaston"
@@ -117,4 +128,5 @@ testpaths = ["tests"]
 # have to know about this to get a true answer.
 markers = [
     "serial: asserts something about elapsed time; must not run in parallel",
+    "wincam: needs Windows and a registered virtual camera; see ci.yml",
 ]

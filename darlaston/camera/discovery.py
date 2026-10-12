@@ -37,7 +37,7 @@ class Camera:
     """One thing that could be pointed at a slide."""
 
     key: str                       #: stable across replug; see above
-    kind: str                      #: "toupcam" | "v4l2" | "ximea" | "mock"
+    kind: str                      #: "toupcam" | "v4l2" | "dshow" | "ximea" | "mock"
     name: str                      #: what to call it in a list
     width: int = 0
     height: int = 0
@@ -84,6 +84,32 @@ def _v4l2() -> list[Camera]:
             uncompressed=uncompressed,
             detail="/".join(usable),
             node=found["node"],
+            fingerprint=found.get("fingerprint", ""),
+        ))
+    return out
+
+
+def _dshow() -> list[Camera]:
+    """Ordinary USB cameras on Windows, the way `_v4l2` finds them on
+    Linux: same record, same honesty, a different way of asking."""
+    if not sys.platform.startswith("win"):
+        return []
+    try:
+        from .dshow import enumerate_cameras
+    except Exception:
+        return []
+    out = []
+    for found in enumerate_cameras():
+        w, h = found["sizes"][0] if found["sizes"] else (0, 0)
+        usable = found.get("usable") or []
+        out.append(Camera(
+            key=f"dshow:{found['key']}",
+            kind="dshow",
+            name=found["name"],
+            width=w, height=h,
+            controls=len(found.get("controls") or []),
+            uncompressed=any(f.strip() != "MJPG" for f in usable),
+            detail="/".join(usable),
             fingerprint=found.get("fingerprint", ""),
         ))
     return out
@@ -279,7 +305,7 @@ def look() -> list[Camera]:
     sensor stays in the list, at the bottom, named as itself -- so the
     order is the only thing deciding what opens by default.
     """
-    found = _toupcam() + _ximea() + _v4l2()
+    found = _toupcam() + _ximea() + _v4l2() + _dshow()
     found.sort(key=rank, reverse=True)
     return found
 
@@ -299,6 +325,10 @@ def backend_for(camera: Camera):
         return V4L2Backend(node=camera.node,
                            key=camera.key.removeprefix("v4l2:"),
                            fingerprint=camera.fingerprint)
+    if camera.kind == "dshow":
+        from .dshow import DshowBackend
+        return DshowBackend(key=camera.key.removeprefix("dshow:"),
+                            fingerprint=camera.fingerprint)
     if camera.kind == "toupcam":
         from .toupcam import ToupcamBackend
         return ToupcamBackend()
@@ -330,6 +360,11 @@ def presence_for(camera: Camera):
         import os.path
 
         return lambda: os.path.exists(camera.node)
+    if camera.kind == "dshow":
+        from . import dshow
+
+        key = camera.key.removeprefix("dshow:")
+        return lambda: dshow.present(key)
     if camera.kind == "toupcam":
         from . import usb
         return usb.present
