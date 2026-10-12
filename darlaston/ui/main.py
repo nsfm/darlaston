@@ -4084,10 +4084,15 @@ def main() -> int:
                          "are written as linear DNGs")
     ap.add_argument("--list-cameras", action="store_true",
                     help="show every camera darlaston can see, and exit")
+    # The child half of DirectShow enumeration; see camera/dshow.py.
+    ap.add_argument("--probe-dshow", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--verbose", action="store_true",
                     help="log every detail, not just what went wrong")
     args = ap.parse_args()
 
+    if args.probe_dshow:
+        from ..camera.dshow import probe_main
+        return probe_main()
     if args.list_cameras:
         return _list_cameras()
 

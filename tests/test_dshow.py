@@ -312,3 +312,71 @@ def test_enumeration_is_silent_off_windows():
         pytest.skip("this is the no-Windows half")
     assert dshow.enumerate_cameras() == []
     assert dshow.present("anything") is True, "unknown has to mean try"
+
+
+# ---- describing in a child, so a bad filter takes only the child ---------------
+
+def _on_windows(monkeypatch):
+    monkeypatch.setattr(dshow.sys, "platform", "win32")
+
+
+def test_a_child_that_answers_is_believed(monkeypatch):
+    import json
+    import subprocess
+
+    _on_windows(monkeypatch)
+    answer = [_found()]
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], 0, stdout="probing: X5CAM4K8MPA\n" + json.dumps(answer) + "\n", stderr=""))
+    got = dshow.enumerate_cameras()
+    assert got == json.loads(json.dumps(answer)), "what the child printed, tuples and all"
+
+
+def test_a_child_that_dies_leaves_the_names(monkeypatch):
+    """The first Windows report: the process exited before the window.
+    A filter that faults inside the child must leave the parent listing
+    the devices it could still name, undescribed, not dead."""
+    import subprocess
+
+    _on_windows(monkeypatch)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], -1073741819, stdout="", stderr="probing: X5CAM4K8MPA, Integrated Camera"))
+    names = [{"index": 0, "name": "X5CAM4K8MPA", "path": "", "display": "@device:pnp:x",
+              "vid": "0547", "pid": "ab10", "key": "k", "formats": [], "sizes": [],
+              "controls": [], "raw": []}]
+    monkeypatch.setattr(dshow, "_walk_here", lambda describe: names)
+    got = dshow.enumerate_cameras()
+    assert len(got) == 1 and got[0]["name"] == "X5CAM4K8MPA"
+    assert got[0]["usable"] == [] and got[0]["fingerprint"] == ""
+
+
+def test_a_child_that_hangs_is_not_waited_for(monkeypatch):
+    import subprocess
+
+    _on_windows(monkeypatch)
+
+    def hang(*a, **k):
+        raise subprocess.TimeoutExpired(a[0], k.get("timeout", 0))
+    monkeypatch.setattr(subprocess, "run", hang)
+    monkeypatch.setattr(dshow, "_walk_here", lambda describe: [])
+    assert dshow.enumerate_cameras() == []
+
+
+def test_the_probe_command_knows_whether_it_is_frozen(monkeypatch):
+    monkeypatch.setattr(dshow.sys, "frozen", True, raising=False)
+    assert dshow._probe_command() == [dshow.sys.executable, "--probe-dshow"]
+    monkeypatch.delattr(dshow.sys, "frozen", raising=False)
+    assert dshow._probe_command()[1:] == ["-m", "darlaston.ui.main", "--probe-dshow"]
+
+
+def test_a_hard_fault_has_somewhere_to_write(tmp_path, monkeypatch):
+    import faulthandler
+
+    from darlaston import log
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setattr(log, "_started", False)
+    log.setup()
+    assert faulthandler.is_enabled()
+    assert log.crash_path().exists()
+    assert "started" in log.crash_path().read_text()

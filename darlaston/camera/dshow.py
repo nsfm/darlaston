@@ -589,31 +589,111 @@ def _describe(moniker: _Com, index: int, deep: bool) -> dict:
     return found
 
 
-def enumerate_cameras() -> list[dict]:
-    """Every camera DirectShow can see, described. Empty off Windows."""
-    if not sys.platform.startswith("win"):
-        return []
+def _walk_here(describe: bool) -> list[dict]:
+    """`_walk`, in this process, with COM up for the duration."""
     with _Apartment() as ok:
         if not ok:
             return []
         try:
-            return _walk(describe=True)
+            return _walk(describe=describe)
         except Exception as why:
             _log.debug("DirectShow enumeration failed: %s", why)
             return []
+
+
+#: Where the child gets its time budget. A device filter that will not
+#: bind can hang rather than fail; the real cameras measured describe in
+#: well under a second each.
+PROBE_TIMEOUT = 20.0
+
+
+def _probe_command() -> list[str]:
+    """How to run this program again as a probe, frozen or not."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--probe-dshow"]
+    return [sys.executable, "-m", "darlaston.ui.main", "--probe-dshow"]
+
+
+def probe_main() -> int:
+    """The child's half: describe everything, print it, leave.
+
+    Names first, deliberately, on their own line before any filter is
+    bound: if a device's filter takes this process down, the parent's
+    log still says which device it was.
+    """
+    import json
+
+    with _Apartment() as ok:
+        if not ok:
+            print("[]")
+            return 0
+        names = [d["name"] for d in _walk(describe=False)]
+        print("probing: " + ", ".join(names), file=sys.stderr, flush=True)
+        found = _walk(describe=True)
+    print(json.dumps(found))
+    return 0
+
+
+def _describe_in_child() -> list[dict] | None:
+    """Every device described, by a child process. None when the child
+    could not say -- it died, hung, or printed something that is not an
+    answer -- so the caller can fall back to names alone."""
+    import json
+    import subprocess
+
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        done = subprocess.run(_probe_command(), capture_output=True,
+                              text=True, timeout=PROBE_TIMEOUT,
+                              creationflags=flags)
+    except (OSError, subprocess.TimeoutExpired) as why:
+        _log.warning("DirectShow probe did not finish: %s", why)
+        return None
+    if done.returncode != 0:
+        _log.warning("DirectShow probe exited %d; it got as far as: %s",
+                     done.returncode, (done.stderr or "").strip()[-300:])
+        return None
+    try:
+        line = (done.stdout or "").strip().splitlines()[-1]
+        found = json.loads(line)
+    except (ValueError, IndexError) as why:
+        _log.warning("DirectShow probe answered nonsense: %s", why)
+        return None
+    return found if isinstance(found, list) else None
+
+
+def enumerate_cameras() -> list[dict]:
+    """Every camera DirectShow can see, described. Empty off Windows.
+
+    The describing -- binding each device's filter to read its formats
+    and controls -- happens in a child process. A vendor's filter is
+    somebody else's code running in ours, and one that faults takes the
+    whole process with it before a window exists, which is exactly how
+    the first Windows report read. When the child cannot answer, the
+    devices are still listed by name from here, undescribed; opening one
+    then binds its filter in earnest, where a failure is at least an
+    error with a camera's name on it.
+    """
+    if not sys.platform.startswith("win"):
+        return []
+    found = _describe_in_child()
+    if found is not None:
+        return found
+    out = _walk_here(describe=False)
+    for d in out:
+        d.setdefault("usable", [])
+        d.setdefault("fingerprint", "")
+    return out
 
 
 def present(key: str) -> bool:
     """Is the camera with this key still on the bus? Names only; cheap."""
     if not sys.platform.startswith("win"):
         return True
-    with _Apartment() as ok:
-        if not ok:
-            return True
-        try:
-            return any(d["key"] == key for d in _walk(describe=False))
-        except Exception:
-            return True
+    try:
+        return any(d["key"] == key for d in _walk_here(describe=False))
+    except Exception:
+        return True
 
 
 def _bind(display: str) -> _Com:
