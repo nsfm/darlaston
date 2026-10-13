@@ -66,6 +66,10 @@ def test_the_close_button_closes_the_window(qapp, tmp_path, monkeypatch):
     from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
 
+    from PySide6 import QtWidgets
+    assert QtWidgets.QApplication.platformName() == "windows", \
+        "offscreen hands out window ids that are not windows; nothing below is real"
+
     win = MainWindow(lambda: MockCamera(fps=30.0))
     closed = []
     try:
@@ -81,8 +85,64 @@ def test_the_close_button_closes_the_window(qapp, tmp_path, monkeypatch):
         u = _user32()
         lparam = _screen_lparam(win, x, y)
 
-        hit = u.SendMessageW(hwnd, WM_NCHITTEST, 0, lparam)
-        assert hit == HTCLOSE, f"hit test over the X answered {hit}, geometry {frame}"
+        # Three rungs, so a failure says which one broke. The frame's own
+        # hit test, in Python; the window's nativeEvent override, handed a
+        # real MSG; and the message through Windows itself.
+        import ctypes
+        from ctypes import wintypes
+
+        direct = win._frame._hit_test(lparam)
+        assert direct == (True, HTCLOSE), f"frame._hit_test answered {direct}; geometry {frame}"
+
+        msg = wintypes.MSG()
+        msg.hwnd, msg.message, msg.wParam, msg.lParam = hwnd, WM_NCHITTEST, 0, lparam
+        via_override = win.nativeEvent(b"windows_generic_MSG", ctypes.addressof(msg))
+        assert tuple(via_override)[:2] == (True, HTCLOSE), \
+            f"nativeEvent answered {via_override!r} for a real MSG"
+
+        u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        rect = wintypes.RECT()
+        u.GetWindowRect(hwnd, ctypes.byref(rect))
+
+        # Now through Windows, with two witnesses: what Qt's application
+        # level filter sees arrive (and what it calls the event type),
+        # and whether our frame's handler is reached at all.
+        from PySide6 import QtCore
+
+        seen = []
+        handled = []
+
+        class Witness(QtCore.QAbstractNativeEventFilter):
+            def nativeEventFilter(self, kind, message):
+                try:
+                    m = ctypes.cast(int(message), ctypes.POINTER(wintypes.MSG)).contents
+                    if m.message == WM_NCHITTEST:
+                        seen.append((type(kind).__name__, bytes(kind), int(m.hwnd) == hwnd))
+                except Exception as why:
+                    seen.append(("error", repr(why), None))
+                return False, 0
+
+        witness = Witness()
+        QtCore.QCoreApplication.instance().installNativeEventFilter(witness)
+        real_handle = win._frame.handle
+
+        def spy(message, wparam, lparam_):
+            out = real_handle(message, wparam, lparam_)
+            if message == WM_NCHITTEST:
+                handled.append(out)
+            return out
+        win._frame.handle = spy
+        try:
+            hit = u.SendMessageW(hwnd, WM_NCHITTEST, 0, lparam)
+        finally:
+            win._frame.handle = real_handle
+            QtCore.QCoreApplication.instance().removeNativeEventFilter(witness)
+        assert hit == HTCLOSE, (
+            f"hit test over the X answered {hit}; the app filter saw {seen}; "
+            f"our handler was called and answered {handled}; window rect "
+            f"{rect.left},{rect.top}-{rect.right},{rect.bottom}; "
+            f"lParam x={lparam & 0xFFFF} y={lparam >> 16}; "
+            f"qt {QtCore.qVersion()}")
         mid = u.SendMessageW(hwnd, WM_NCHITTEST, 0,
                              _screen_lparam(win, frame.width // 2, y))
         assert mid in (HTCAPTION, 1), f"the bar's middle answered {mid}"

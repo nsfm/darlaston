@@ -558,7 +558,12 @@ class WindowsFrame:
             win = _structs()
             ctypes = win.ctypes
             self.hwnd = int(self.window.winId())
-            if not self.hwnd:
+            if not self.hwnd or not ctypes.windll.user32.IsWindow(
+                    ctypes.c_void_p(self.hwnd)):
+                # A window id that is not a window: the offscreen platform
+                # hands those out, and every call below would then fail
+                # silently and leave this claiming a frame it never took.
+                self.hwnd = 0
                 return False
 
             # Windows 11 rounds a standard frame for you. Strip the frame
@@ -920,8 +925,16 @@ class WindowsFrame:
                 return True, 0                   # ours; not DefWindowProc's
 
             if message in (WM_NCLBUTTONUP, WM_LBUTTONUP) and self._down:
-                self._capture(False)
+                # Read the press *before* letting go of the mouse.
+                # ReleaseCapture sends WM_CAPTURECHANGED into this very
+                # window procedure, synchronously, and the branch above
+                # clears the press on it -- so with the release first,
+                # `_down` was always empty by the time it was read, and
+                # no caption button ever fired. The first Windows tester
+                # reported the X doing nothing; the runner, on a real
+                # window, agreed.
                 fired, self._down = self._down, ""
+                self._capture(False)
                 self._hot = region if region in BUTTONS else ""
                 self._paint_state()
                 if fired == region:
