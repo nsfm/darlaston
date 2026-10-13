@@ -318,37 +318,95 @@ def test_enumeration_is_silent_off_windows():
 
 def _on_windows(monkeypatch):
     monkeypatch.setattr(dshow.sys, "platform", "win32")
+    monkeypatch.setattr(dshow, "_probe_cache", None)
+
+
+def _shallow(i, name, path=""):
+    import json
+    return json.dumps({"index": i, "name": name, "path": path, "display": f"@device:pnp:{i}",
+                       "vid": "", "pid": "", "key": f"k{i}", "formats": [], "sizes": [],
+                       "controls": [], "raw": [], "described": False})
+
+
+def _deep(i, name, path=""):
+    import json
+    d = _found(index=i, name=name, path=path)
+    d["described"] = True
+    return json.dumps(d)
+
+
+class _Child:
+    """A probe child that dies describing one device until told to skip it."""
+
+    def __init__(self, evil: int, names):
+        self.evil, self.names = evil, names
+        self.runs: list[list[str]] = []
+
+    def __call__(self, cmd, **kw):
+        import subprocess
+        self.runs.append(list(cmd))
+        skip = set()
+        if "--probe-skip" in cmd:
+            skip = {int(s) for s in cmd[cmd.index("--probe-skip") + 1].split(",")}
+        out = [_shallow(i, n) for i, n in enumerate(self.names)]
+        err = ["probing: " + ", ".join(self.names)]
+        for i, n in enumerate(self.names):
+            if i in skip:
+                out.append(_shallow(i, n))
+                continue
+            err.append(f"describing: {i} {n}")
+            if i == self.evil:
+                return subprocess.CompletedProcess(cmd, -1073741819, stdout="\n".join(out) + "\n",
+                                                   stderr="\n".join(err) + "\nFatal Python error: Segmentation fault\n")
+            out.append(_deep(i, n))
+        return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(out) + "\n", stderr="\n".join(err))
 
 
 def test_a_child_that_answers_is_believed(monkeypatch):
-    import json
     import subprocess
 
     _on_windows(monkeypatch)
-    answer = [_found()]
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
-        a[0], 0, stdout="probing: X5CAM4K8MPA\n" + json.dumps(answer) + "\n", stderr=""))
+    child = _Child(evil=-1, names=["X5CAM4K8MPA"])
+    monkeypatch.setattr(subprocess, "run", child)
     got = dshow.enumerate_cameras()
-    assert got == answer, "what the child printed, with the size pairs back as pairs"
+    assert len(got) == 1 and got[0]["described"] and got[0]["sizes"][0] == (3840, 2160)
     assert all(isinstance(size, tuple) for size in got[0]["sizes"])
 
 
-def test_a_child_that_dies_leaves_the_names(monkeypatch):
-    """The first Windows report: the process exited before the window.
-    A filter that faults inside the child must leave the parent listing
-    the devices it could still name, undescribed, not dead."""
+def test_a_device_that_kills_the_child_is_skipped_and_named(monkeypatch, caplog):
+    """The first Windows machine: nine DirectShow devices, one of whose
+    filters faults when bound. Everything before it stays described,
+    it is named in the log and listed by name only, and the child runs
+    again for the rest."""
+    import logging
+    import subprocess
+
+    _on_windows(monkeypatch)
+    names = ["XSplit Broadcaster", "Evil Virtual Camera", "X5FCAM4K8MPA", "Logi Capture"]
+    child = _Child(evil=1, names=names)
+    monkeypatch.setattr(subprocess, "run", child)
+    with caplog.at_level(logging.WARNING, logger="darlaston.camera.dshow"):
+        got = dshow.enumerate_cameras()
+    assert [d["name"] for d in got] == names
+    assert [d["described"] for d in got] == [True, False, True, True]
+    assert got[2]["sizes"][0] == (3840, 2160), "the microscope, after the culprit, is described"
+    assert len(child.runs) == 2 and child.runs[1][-2:] == ["--probe-skip", "1"]
+    assert "Evil Virtual Camera" in caplog.text and "took the probe down" in caplog.text
+
+
+def test_a_child_that_dies_before_naming_anything_leaves_the_names(monkeypatch):
     import subprocess
 
     _on_windows(monkeypatch)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
-        a[0], -1073741819, stdout="", stderr="probing: X5CAM4K8MPA, Integrated Camera"))
+        a[0], -1073741819, stdout="", stderr="nothing"))
     names = [{"index": 0, "name": "X5CAM4K8MPA", "path": "", "display": "@device:pnp:x",
               "vid": "0547", "pid": "ab10", "key": "k", "formats": [], "sizes": [],
               "controls": [], "raw": []}]
     monkeypatch.setattr(dshow, "_walk_here", lambda describe: names)
     got = dshow.enumerate_cameras()
     assert len(got) == 1 and got[0]["name"] == "X5CAM4K8MPA"
-    assert got[0]["usable"] == [] and got[0]["fingerprint"] == ""
+    assert got[0]["usable"] == [] and got[0]["fingerprint"] == "" and not got[0]["described"]
 
 
 def test_a_child_that_hangs_is_not_waited_for(monkeypatch):
@@ -363,9 +421,37 @@ def test_a_child_that_hangs_is_not_waited_for(monkeypatch):
     assert dshow.enumerate_cameras() == []
 
 
+def test_the_answer_is_kept_for_a_few_seconds(monkeypatch):
+    """Startup asks three times in two seconds; the child runs once."""
+    import subprocess
+
+    _on_windows(monkeypatch)
+    child = _Child(evil=-1, names=["X5CAM4K8MPA"])
+    monkeypatch.setattr(subprocess, "run", child)
+    first = dshow.enumerate_cameras()
+    second = dshow.enumerate_cameras()
+    assert first == second and len(child.runs) == 1
+
+
+def test_an_undescribed_microscope_outranks_an_undescribed_streaming_tool(monkeypatch):
+    from darlaston.camera import discovery
+
+    soft = {"index": 0, "name": "XSplit Broadcaster", "path": r"\\?\root#image#0000#{x}\global",
+            "display": "@device:pnp:root", "vid": "", "pid": "", "key": "a", "formats": [],
+            "sizes": [], "controls": [], "raw": [], "described": False, "usable": [], "fingerprint": ""}
+    real = dict(soft, index=1, name="X5FCAM4K8MPA", key="b",
+                path=r"\\?\usb#vid_0547&pid_ab10&mi_00#7&1&0&0000#{x}\global")
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [soft, real])
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    ranked = discovery.look()
+    assert ranked[0].name == "X5FCAM4K8MPA", [c.name for c in ranked]
+    assert ranked[0].detail == "undescribed"
+
+
 def test_the_probe_command_knows_whether_it_is_frozen(monkeypatch):
     monkeypatch.setattr(dshow.sys, "frozen", True, raising=False)
     assert dshow._probe_command() == [dshow.sys.executable, "--probe-dshow"]
+    assert dshow._probe_command({3, 1})[-2:] == ["--probe-skip", "1,3"]
     monkeypatch.delattr(dshow.sys, "frozen", raising=False)
     assert dshow._probe_command()[1:] == ["-m", "darlaston.ui.main", "--probe-dshow"]
 
