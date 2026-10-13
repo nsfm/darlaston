@@ -433,19 +433,60 @@ def test_the_answer_is_kept_for_a_few_seconds(monkeypatch):
     assert first == second and len(child.runs) == 1
 
 
-def test_an_undescribed_microscope_outranks_an_undescribed_streaming_tool(monkeypatch):
+def test_the_microscope_outranks_a_streaming_tool_whatever_the_numbers_say(monkeypatch):
+    """The first Windows machine, as its log read: XSplit Broadcaster
+    described at 1920x1080 uncompressed, the microscope beside it, and
+    XSplit won the first open. A software filter is never the camera on
+    the microscope; a microscopy vendor's device always is."""
     from darlaston.camera import discovery
 
-    soft = {"index": 0, "name": "XSplit Broadcaster", "path": r"\\?\root#image#0000#{x}\global",
-            "display": "@device:pnp:root", "vid": "", "pid": "", "key": "a", "formats": [],
-            "sizes": [], "controls": [], "raw": [], "described": False, "usable": [], "fingerprint": ""}
-    real = dict(soft, index=1, name="X5FCAM4K8MPA", key="b",
-                path=r"\\?\usb#vid_0547&pid_ab10&mi_00#7&1&0&0000#{x}\global")
-    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [soft, real])
+    xsplit = _found(index=0, name="XSplit Broadcaster", vid="", pid="",
+                    path=r"\\?\root#image#0000#{x}\global",
+                    formats=["NV12", "YUY2"], usable=["NV12", "YUY2"],
+                    sizes=[(1920, 1080), (1280, 720)], controls=[])
+    xsplit["key"] = "a"
+    webcam = _found(index=1, name="Insta360 Link", vid="2e1a", pid="4c01",
+                    path=r"\\?\usb#vid_2e1a&pid_4c01&mi_00#7&2&0&0000#{x}\global",
+                    sizes=[(3840, 2160)], controls=[])
+    webcam["key"] = "b"
+    scope = _found(index=2, name="X5FCAM4K8MPA", formats=["MJPG"], usable=["MJPG"],
+                   sizes=[(1920, 1080)])
+    scope["key"] = "c"
+    undescribed = dict(_found(index=3, name="Camera Plug-in", vid="", pid="", path="",
+                              formats=[], usable=[], sizes=[], controls=[]),
+                       described=False)
+    undescribed["key"] = "d"
+    for d in (xsplit, webcam, scope):
+        d["described"] = True
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [xsplit, webcam, scope, undescribed])
     monkeypatch.setattr(discovery.sys, "platform", "win32")
     ranked = discovery.look()
-    assert ranked[0].name == "X5FCAM4K8MPA", [c.name for c in ranked]
-    assert ranked[0].detail == "undescribed"
+    assert [c.name for c in ranked] == ["X5FCAM4K8MPA", "Insta360 Link",
+                                        "XSplit Broadcaster", "Camera Plug-in"]
+    assert ranked[0].microscope and ranked[0].physical
+    assert ranked[1].physical and not ranked[1].microscope
+    assert not ranked[2].physical, "a root-enumerated device is a software filter"
+    assert ranked[3].detail == "undescribed"
+
+
+def test_a_known_culprit_is_skipped_on_sight_and_a_new_one_is_reported(monkeypatch):
+    import subprocess
+
+    _on_windows(monkeypatch)
+    names = ["XSplit Broadcaster", "Camera Plug-in", "X5FCAM4K8MPA", "Evil"]
+    child = _Child(evil=3, names=names)
+    monkeypatch.setattr(subprocess, "run", child)
+    shallow = [{"index": i, "name": n} for i, n in enumerate(names)]
+    monkeypatch.setattr(dshow, "_walk_here", lambda describe: shallow)
+    monkeypatch.setattr(dshow, "skip_names", {"Camera Plug-in"})
+    told = []
+    monkeypatch.setattr(dshow, "on_culprit", told.append)
+    got = dshow.enumerate_cameras()
+    assert child.runs[0][-2:] == ["--probe-skip", "1"], "known on sight, no crash for it"
+    assert child.runs[1][-2:] == ["--probe-skip", "1,3"], "the new one joins it"
+    assert told == ["Evil"]
+    assert dshow.skip_names == {"Camera Plug-in", "Evil"}
+    assert [d["described"] for d in got] == [True, False, True, False]
 
 
 def test_the_probe_command_knows_whether_it_is_frozen(monkeypatch):
