@@ -583,6 +583,8 @@ class _FakeUser32:
     def __init__(self):
         self.captured = False
         self.calls = []
+        #: The window procedure, so letting go can do what Windows does.
+        self.window_proc = None
 
     def SetCapture(self, _hwnd):
         self.captured = True
@@ -592,6 +594,16 @@ class _FakeUser32:
     def ReleaseCapture(self):
         self.calls.append("ReleaseCapture")
         released, self.captured = self.captured, False
+        # Windows sends WM_CAPTURECHANGED to the window losing the
+        # capture *from inside* ReleaseCapture, synchronously, before it
+        # returns. A fake that let go silently is how the state machine
+        # passed every test here while no caption button fired on a real
+        # machine: the handler for that message cleared the press before
+        # the release path had read it.
+        if released and self.window_proc is not None:
+            from darlaston.ui.frame import WM_CAPTURECHANGED
+
+            self.window_proc(WM_CAPTURECHANGED, 0, 0)
         return int(released)
 
     def TrackMouseEvent(self, _request):
@@ -651,6 +663,7 @@ def _machine(monkeypatch):
     bar = _FakeBar()
     frame = F.WindowsFrame(_Window(), bar)
     frame.hwnd = 0x1234
+    user32.window_proc = frame.handle
     monkeypatch.setattr(frame, "_hwnd_t", lambda: 0x1234)
     monkeypatch.setattr(frame, "_track_mouse",
                         lambda: user32.TrackMouseEvent(None))
