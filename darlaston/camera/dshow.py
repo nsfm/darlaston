@@ -495,12 +495,17 @@ def fingerprint(found: dict) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:12]
 
 
-def _walk(describe: bool) -> list[dict]:
+def _walk(describe: bool, skip=frozenset(), before_deep=None,
+          emit=None) -> list[dict]:
     """Every video input device, in DirectShow's own order.
 
     `describe` binds each device's filter to read formats, sizes and
     controls. Without it only the names and paths are read, which is
-    cheap enough to poll.
+    cheap enough to poll. `skip` holds indexes to leave undescribed,
+    `before_deep(index, name)` is told just before a filter is bound,
+    and `emit(found)` is handed each device as it completes -- the
+    probe child uses all three so that a filter which takes the process
+    down leaves everything before it on record and its own name last.
     """
     out: list[dict] = []
     devenum = _create(CLSID_SystemDeviceEnum, IID_ICreateDevEnum)
@@ -523,7 +528,11 @@ def _walk(describe: bool) -> list[dict]:
                 break
             moniker = _Com(mon_ptr.value)
             try:
-                out.append(_describe(moniker, index, describe))
+                found = _describe(moniker, index,
+                                  describe and index not in skip, before_deep)
+                out.append(found)
+                if emit is not None:
+                    emit(found)
             except OSError as why:
                 _log.debug("device %d could not be described: %s", index, why)
             finally:
@@ -535,7 +544,7 @@ def _walk(describe: bool) -> list[dict]:
     return out
 
 
-def _describe(moniker: _Com, index: int, deep: bool) -> dict:
+def _describe(moniker: _Com, index: int, deep: bool, before_deep=None) -> dict:
     name = path = display = ""
     bag_ptr = c_void_p()
     moniker.call(_MONIKER_BIND_TO_STORAGE,
@@ -566,8 +575,11 @@ def _describe(moniker: _Com, index: int, deep: bool) -> dict:
     found = {"index": index, "name": name or f"camera {index + 1}",
              "path": path, "display": display, "vid": vid, "pid": pid,
              "key": _key_from(path, display, name),
-             "formats": [], "sizes": [], "controls": [], "raw": []}
+             "formats": [], "sizes": [], "controls": [], "raw": [],
+             "described": bool(deep)}
     if deep:
+        if before_deep is not None:
+            before_deep(index, found["name"])
         filt_ptr = c_void_p()
         try:
             moniker.call(_MONIKER_BIND_TO_OBJECT,
@@ -607,65 +619,147 @@ def _walk_here(describe: bool) -> list[dict]:
 PROBE_TIMEOUT = 20.0
 
 
-def _probe_command() -> list[str]:
+def _probe_command(skip=()) -> list[str]:
     """How to run this program again as a probe, frozen or not."""
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "--probe-dshow"]
-    return [sys.executable, "-m", "darlaston.ui.main", "--probe-dshow"]
+    base = ([sys.executable] if getattr(sys, "frozen", False)
+            else [sys.executable, "-m", "darlaston.ui.main"])
+    out = base + ["--probe-dshow"]
+    if skip:
+        out += ["--probe-skip", ",".join(str(i) for i in sorted(skip))]
+    return out
 
 
-def probe_main() -> int:
-    """The child's half: describe everything, print it, leave.
+def probe_main(skip_text: str = "") -> int:
+    """The child's half: describe everything, one device at a time.
 
-    Names first, deliberately, on their own line before any filter is
-    bound: if a device's filter takes this process down, the parent's
-    log still says which device it was.
+    Everything goes out as it is learned. First every device shallowly,
+    one JSON line each, so the names and keys are on record before any
+    filter is bound; then each device described, one line each, with a
+    "describing" note to stderr just before its filter is bound. A
+    filter that takes this process down therefore leaves the parent
+    with every device named, every earlier device described, and the
+    culprit's name as the last thing said. faulthandler adds the Python
+    stack to stderr for the log. Devices in `--probe-skip` are the ones
+    a previous run was killed by; they are left undescribed on purpose.
     """
+    import faulthandler
     import json
+
+    try:
+        faulthandler.enable(file=sys.stderr, all_threads=True)
+    except Exception:
+        pass
+    skip = frozenset(int(i) for i in skip_text.split(",") if i.strip())
+
+    def emit(found: dict) -> None:
+        print(json.dumps(found), flush=True)
+
+    def before_deep(index: int, name: str) -> None:
+        print(f"describing: {index} {name}", file=sys.stderr, flush=True)
 
     with _Apartment() as ok:
         if not ok:
-            print("[]")
             return 0
-        names = [d["name"] for d in _walk(describe=False)]
-        print("probing: " + ", ".join(names), file=sys.stderr, flush=True)
-        found = _walk(describe=True)
-    print(json.dumps(found))
+        shallow = _walk(describe=False, emit=emit)
+        print("probing: " + ", ".join(d["name"] for d in shallow),
+              file=sys.stderr, flush=True)
+        _walk(describe=True, skip=skip, before_deep=before_deep, emit=emit)
     return 0
 
 
-def _describe_in_child() -> list[dict] | None:
-    """Every device described, by a child process. None when the child
-    could not say -- it died, hung, or printed something that is not an
-    answer -- so the caller can fall back to names alone."""
-    import json
+#: A child that keeps dying on new devices is not worth more than this
+#: many runs; whatever it has not described by then is listed by name.
+PROBE_RUNS = 4
+
+#: The last run's answer, briefly. Startup asks three times in two
+#: seconds -- discovery, the first open's locate, the presence poll --
+#: and each child run is a second or two on a machine with many devices.
+PROBE_CACHE_SECONDS = 5.0
+_probe_cache: tuple[float, list[dict]] | None = None
+
+
+def _run_probe(skip) -> tuple[int, str, str] | None:
+    """One child run: (exit code, stdout, stderr), or None if it never
+    finished."""
     import subprocess
 
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        done = subprocess.run(_probe_command(), capture_output=True,
+        done = subprocess.run(_probe_command(skip), capture_output=True,
                               text=True, timeout=PROBE_TIMEOUT,
                               creationflags=flags)
     except (OSError, subprocess.TimeoutExpired) as why:
         _log.warning("DirectShow probe did not finish: %s", why)
         return None
-    if done.returncode != 0:
-        _log.warning("DirectShow probe exited %d; it got as far as: %s",
-                     done.returncode, (done.stderr or "").strip()[-300:])
+    return done.returncode, done.stdout or "", done.stderr or ""
+
+
+def _culprit(stderr: str) -> int | None:
+    """Which device the child was describing when it died, from the
+    last "describing:" note it managed to print."""
+    for line in reversed(stderr.strip().splitlines()):
+        if line.startswith("describing: "):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _describe_in_child() -> list[dict] | None:
+    """Every device described, by child processes, as far as they get.
+
+    The child prints one line per device as it learns it. If it dies,
+    the lines it printed stand, the device it was describing is named
+    in the log and skipped, and the child runs again for the rest -- a
+    few times at most. Devices never described come back by name, with
+    `described` False, so the rest of the program can rank them below
+    anything that answered properly. None only when no child ever
+    printed a device at all.
+    """
+    import json
+
+    merged: dict[int, dict] = {}
+    skip: set[int] = set()
+    for _attempt in range(PROBE_RUNS):
+        got = _run_probe(skip)
+        if got is None:
+            break
+        code, out, err = got
+        for line in out.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                device = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(device, dict) or "index" not in device:
+                continue
+            device["sizes"] = [tuple(size) for size in device.get("sizes") or []]
+            earlier = merged.get(device["index"])
+            # A described line outranks a shallow one for the same device.
+            if earlier is None or device.get("described") or not earlier.get("described"):
+                merged[device["index"]] = device
+        if code == 0:
+            break
+        culprit = _culprit(err)
+        if culprit is None or culprit in skip:
+            _log.warning("DirectShow probe exited %d before naming a device; "
+                         "stderr: %s", code, err.strip()[-600:])
+            break
+        name = merged.get(culprit, {}).get("name", f"index {culprit}")
+        _log.warning("describing %r (DirectShow index %d) took the probe down "
+                     "with exit %d; it is listed by name only. The child's "
+                     "last words: %s", name, culprit, code, err.strip()[-600:])
+        skip.add(culprit)
+    if not merged:
         return None
-    try:
-        line = (done.stdout or "").strip().splitlines()[-1]
-        found = json.loads(line)
-    except (ValueError, IndexError) as why:
-        _log.warning("DirectShow probe answered nonsense: %s", why)
-        return None
-    if not isinstance(found, list):
-        return None
-    # JSON has no tuples. Sizes are compared and hashed as (w, h) pairs
-    # everywhere above here, so they come back as the pairs they left as.
-    for device in found:
-        device["sizes"] = [tuple(size) for size in device.get("sizes") or []]
-    return found
+    for device in merged.values():
+        if not device.get("described"):
+            device.setdefault("usable", [])
+            device.setdefault("fingerprint", "")
+    return [merged[i] for i in sorted(merged)]
 
 
 def enumerate_cameras() -> list[dict]:
@@ -680,16 +774,23 @@ def enumerate_cameras() -> list[dict]:
     then binds its filter in earnest, where a failure is at least an
     error with a camera's name on it.
     """
+    global _probe_cache
     if not sys.platform.startswith("win"):
         return []
+    import time
+
+    now = time.monotonic()
+    if _probe_cache is not None and now - _probe_cache[0] < PROBE_CACHE_SECONDS:
+        return [dict(d) for d in _probe_cache[1]]
     found = _describe_in_child()
-    if found is not None:
-        return found
-    out = _walk_here(describe=False)
-    for d in out:
-        d.setdefault("usable", [])
-        d.setdefault("fingerprint", "")
-    return out
+    if found is None:
+        found = _walk_here(describe=False)
+        for d in found:
+            d.setdefault("usable", [])
+            d.setdefault("fingerprint", "")
+            d.setdefault("described", False)
+    _probe_cache = (now, found)
+    return [dict(d) for d in found]
 
 
 def present(key: str) -> bool:

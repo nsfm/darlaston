@@ -102,14 +102,24 @@ def _dshow() -> list[Camera]:
     for found in enumerate_cameras():
         w, h = found["sizes"][0] if found["sizes"] else (0, 0)
         usable = found.get("usable") or []
+        # A device the probe could not describe has no sizes and no
+        # formats, so it ranks at the bottom with every other one it
+        # could not describe -- and on the first Windows machine that
+        # was all of them, nine software filters and the microscope
+        # alike, so index 0 won and the microscope lost to a streaming
+        # tool. A real USB device beats a software filter among the
+        # undescribed: it is the only thing left to go on.
+        physical = (found.get("path") or "").lower().startswith("\\\\?\\usb")
         out.append(Camera(
             key=f"dshow:{found['key']}",
             kind="dshow",
             name=found["name"],
             width=w, height=h,
             controls=len(found.get("controls") or []),
-            uncompressed=any(f.strip() != "MJPG" for f in usable),
-            detail="/".join(usable),
+            uncompressed=any(f.strip() != "MJPG" for f in usable)
+            or (not found.get("described") and physical),
+            detail="/".join(usable) or ("" if found.get("described", True)
+                                        else "undescribed"),
             fingerprint=found.get("fingerprint", ""),
         ))
     return out
