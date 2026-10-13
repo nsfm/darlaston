@@ -677,6 +677,16 @@ PROBE_RUNS = 4
 PROBE_CACHE_SECONDS = 5.0
 _probe_cache: tuple[float, list[dict]] | None = None
 
+#: Devices, by name, whose filters have taken the probe down before. Set
+#: from the settings at startup and added to as they are found, so a
+#: known culprit is skipped on the first run rather than rediscovered
+#: with a crash and a re-run every start. Names rather than indexes,
+#: because indexes renumber with every plug and unplug.
+skip_names: set[str] = set()
+#: Told the name of each new culprit, so whoever owns the settings can
+#: write it down. The camera layer does not know where settings live.
+on_culprit = None
+
 
 def _run_probe(skip) -> tuple[int, str, str] | None:
     """One child run: (exit code, stdout, stderr), or None if it never
@@ -721,6 +731,12 @@ def _describe_in_child() -> list[dict] | None:
 
     merged: dict[int, dict] = {}
     skip: set[int] = set()
+    if skip_names:
+        # Names to indexes needs the list, and the shallow walk binds no
+        # filters, so it is safe to take here.
+        for device in _walk_here(describe=False):
+            if device["name"] in skip_names:
+                skip.add(device["index"])
     for _attempt in range(PROBE_RUNS):
         got = _run_probe(skip)
         if got is None:
@@ -753,6 +769,13 @@ def _describe_in_child() -> list[dict] | None:
                      "with exit %d; it is listed by name only. The child's "
                      "last words: %s", name, culprit, code, err.strip()[-600:])
         skip.add(culprit)
+        if name not in skip_names:
+            skip_names.add(name)
+            if on_culprit is not None:
+                try:
+                    on_culprit(name)
+                except Exception:
+                    _log.debug("culprit not recorded", exc_info=True)
     if not merged:
         return None
     for device in merged.values():

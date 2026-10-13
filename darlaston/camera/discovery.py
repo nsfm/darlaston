@@ -57,6 +57,14 @@ class Camera:
     #: recognise a camera whose cable has been moved, where the port key
     #: no longer matches and the device would otherwise be a stranger.
     fingerprint: str = ""
+    #: A device with a cable, as opposed to a software filter: the first
+    #: Windows machine listed XSplit, OBS, NVIDIA Broadcast, DCC, MirrorTo
+    #: and a "Camera Plug-in" beside its microscope, and the streaming
+    #: tool won the first open on its numbers. None of those can be the
+    #: camera on the microscope, whatever size they claim.
+    physical: bool = True
+    #: Published by a microscopy camera vendor, as far as its ids say.
+    microscope: bool = False
 
     @property
     def megapixels(self) -> float:
@@ -102,25 +110,27 @@ def _dshow() -> list[Camera]:
     for found in enumerate_cameras():
         w, h = found["sizes"][0] if found["sizes"] else (0, 0)
         usable = found.get("usable") or []
-        # A device the probe could not describe has no sizes and no
-        # formats, so it ranks at the bottom with every other one it
-        # could not describe -- and on the first Windows machine that
-        # was all of them, nine software filters and the microscope
-        # alike, so index 0 won and the microscope lost to a streaming
-        # tool. A real USB device beats a software filter among the
-        # undescribed: it is the only thing left to go on.
-        physical = (found.get("path") or "").lower().startswith("\\\\?\\usb")
+        # A kernel device has a path under \\?\usb (or pci, for a
+        # capture card); a software filter has either no path, a made-up
+        # one, or a "root" enumerated one. The path is the one thing a
+        # device cannot lie about, which is why it decides rather than
+        # the name.
+        path = (found.get("path") or "").lower()
+        physical = path.startswith("\\\\?\\") and not path.startswith("\\\\?\\root#")
+        from .usb import TOUPTEK_VENDORS
+
         out.append(Camera(
             key=f"dshow:{found['key']}",
             kind="dshow",
             name=found["name"],
             width=w, height=h,
             controls=len(found.get("controls") or []),
-            uncompressed=any(f.strip() != "MJPG" for f in usable)
-            or (not found.get("described") and physical),
+            uncompressed=any(f.strip() != "MJPG" for f in usable),
             detail="/".join(usable) or ("" if found.get("described", True)
                                         else "undescribed"),
             fingerprint=found.get("fingerprint", ""),
+            physical=physical,
+            microscope=(found.get("vid") or "") in TOUPTEK_VENDORS,
         ))
     return out
 
@@ -160,6 +170,7 @@ def _toupcam() -> list[Camera]:
             controls=99,               # a real SDK; not a V4L2 count
             uncompressed=True,
             detail="raw capable",
+            microscope=True,
         ))
     return out
 
@@ -299,12 +310,19 @@ def rank(camera: Camera) -> tuple:
     A single function so the order can be tested rather than described:
     a test that reimplements this sort passes whatever the real one does.
 
-    Sensor size leads. Ranking "offers uncompressed" above it put a
-    640x360 infrared face-unlock sensor ahead of a 1920x1080 eyepiece
-    camera that only speaks MJPG -- and MJPG-only is the common cheap
-    microscope camera, the exact device this exists to support.
+    Two things come before the numbers. A camera a microscopy vendor
+    made is the microscope, whatever else is attached. A device with a
+    cable beats a software filter: the first Windows machine had six
+    virtual cameras from streaming tools beside its microscope, and the
+    1080p uncompressed one from XSplit won the first open on size and
+    format alone. Then sensor size leads. Ranking "offers uncompressed"
+    above it put a 640x360 infrared face-unlock sensor ahead of a
+    1920x1080 eyepiece camera that only speaks MJPG -- and MJPG-only is
+    the common cheap microscope camera, the exact device this exists to
+    support.
     """
-    return (camera.width * camera.height, camera.uncompressed,
+    return (camera.microscope, camera.physical,
+            camera.width * camera.height, camera.uncompressed,
             camera.controls > 0)
 
 

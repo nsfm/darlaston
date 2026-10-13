@@ -4085,6 +4085,28 @@ _LOOK_TTL = 4.0
 _looked: tuple[float, list] | None = None
 
 
+def _remember_dshow_culprits() -> None:
+    """Known bad DirectShow filters, in from the settings and back out.
+
+    The probe learns a culprit by crashing on it; without this it would
+    learn the same one again every start. Written straight back to the
+    settings file as each is found, through a fresh load, because this
+    runs before any window owns a settings object.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    from ..camera import dshow
+
+    dshow.skip_names.update(Settings.load().dshow_skip)
+
+    def remember(name: str) -> None:
+        kept = Settings.load()
+        if name not in kept.dshow_skip:
+            kept.dshow_skip = list(kept.dshow_skip) + [name]
+            kept.save()
+    dshow.on_culprit = remember
+
+
 def _look_now() -> list:
     """`look()`, throttled. Same answer, asked at a sane rate."""
     global _looked
@@ -4119,6 +4141,7 @@ def main() -> int:
     if args.probe_dshow:
         from ..camera.dshow import probe_main
         return probe_main(args.probe_skip)
+    _remember_dshow_culprits()
     if args.list_cameras:
         return _list_cameras()
 

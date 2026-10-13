@@ -193,6 +193,9 @@ class Settings:
     #: *different* device that later appears at the same port. A port is a
     #: socket; ignoring a socket is not what anybody meant.
     ignored_cameras: dict[str, str] = field(default_factory=dict)
+    #: DirectShow devices, by name, whose filters have crashed the camera
+    #: probe. Skipped on sight from then on; see camera/dshow.py.
+    dshow_skip: list[str] = field(default_factory=list)
     #: The working white balance. Kept between sessions on purpose:
     #: somebody who looks at the same kind of specimen under the same lamp
     #: starts nearer where they want to be, and undoing it is one click.
