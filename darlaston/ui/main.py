@@ -4029,8 +4029,13 @@ def _list_cameras_to(print) -> int:       # noqa: A002 -- shadowed on purpose
         found = _dshow_enum()
         print(f"\nDirectShow / UVC: {len(found)} capture device"
               f"{'' if len(found) == 1 else 's'}")
+        from ..camera.discovery import look as _look
+        ranked = [c for c in _look() if c.kind == "dshow"]
+        print("  ranked for the first open: " + ", ".join(
+            f"{c.name} [{'scope' if c.microscope else '-'}"
+            f"{'/cable' if c.physical else '/soft'}]" for c in ranked))
         for d in found:
-            print(f"  [{d['index']}] {d['name']}")
+            print(f"  [{d['index']}] {d['name']}{'' if d.get('described', True) else '   (undescribed)'}")
             print(f"      path: {d['path'] or '(none)'}")
             print(f"      id:   {d['display']}")
             print(f"      key:  {d['key']}   fingerprint: "
@@ -4218,6 +4223,15 @@ def main() -> int:
             picked = offered[0] if offered else None
 
         if picked is not None:
+            # Why this one, in the log, because the first Windows machine
+            # opened a streaming tool's virtual camera three releases in
+            # a row and the log never said whether that was the ranking
+            # or a remembered choice.
+            _log.info("opening %r (%s); remembered choice %r; ranked: %s",
+                      picked.name, picked.key, _kept.camera_choice,
+                      ", ".join(f"{c.name} [{'scope' if c.microscope else '-'}"
+                                f"{'/cable' if c.physical else '/soft'} "
+                                f"{c.width}x{c.height}]" for c in seen))
             make: callable = lambda: backend_for(picked)
             presence = presence_for(picked)
         elif seen:
