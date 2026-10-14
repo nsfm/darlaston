@@ -508,3 +508,47 @@ def test_a_hard_fault_has_somewhere_to_write(tmp_path, monkeypatch):
     assert faulthandler.is_enabled()
     assert log.crash_path().exists()
     assert "started" in log.crash_path().read_text()
+
+
+def test_a_touptek_hybrid_keeps_its_motor_behind_backlight_compensation(fake, monkeypatch):
+    """The tester, on the X5FCAM4K8MPA: no Focus control at all; the
+    stepper answers to Backlight Compensation, 0..854. A backlight
+    compensation is 0..1 or 0..2, so the range alone says what it is."""
+    found = _found(controls=[
+        {"name": "Exposure", "which": "camera", "prop": 4, "min": -13, "max": 1,
+         "step": 1, "default": -6, "flags": 3},
+        {"name": "Backlight", "which": "amp", "prop": 8, "min": 0, "max": 854,
+         "step": 1, "default": 288, "flags": 2},
+    ])
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [found])
+    cam = dshow.DshowBackend(key=found["key"])
+    cam.open()
+    axis = cam.focus_axis
+    assert axis is not None and axis.range().hi == 854 and axis.get() == 288
+    assert axis.behind == "Backlight"
+    device = fake.instances[0]
+    device.writes.clear()
+    axis.set(500)
+    assert ("amp", 8, 500, False) in device.writes, device.writes
+    cam.close()
+
+
+def test_a_real_backlight_compensation_is_not_a_motor(fake, monkeypatch):
+    found = _found(vid="046d", pid="085e", controls=[
+        {"name": "Backlight", "which": "amp", "prop": 8, "min": 0, "max": 1,
+         "step": 1, "default": 0, "flags": 2},
+    ])
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [found])
+    cam = dshow.DshowBackend(key=found["key"])
+    cam.open()
+    assert cam.focus_axis is None
+    cam.close()
+    wide_but_not_touptek = _found(vid="046d", pid="085e", controls=[
+        {"name": "Backlight", "which": "amp", "prop": 8, "min": 0, "max": 854,
+         "step": 1, "default": 0, "flags": 2},
+    ])
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [wide_but_not_touptek])
+    cam = dshow.DshowBackend(key=wide_but_not_touptek["key"])
+    cam.open()
+    assert cam.focus_axis is None, "a wide range on somebody else's camera is a mystery, not a motor"
+    cam.close()
