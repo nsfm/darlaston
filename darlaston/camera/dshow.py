@@ -126,6 +126,7 @@ CameraControl_Flags_Auto = 0x1
 CameraControl_Flags_Manual = 0x2
 # IAMVideoProcAmp properties and flags.
 VideoProcAmp_WhiteBalance = 7
+VideoProcAmp_Backlight = 8
 VideoProcAmp_Gain = 9
 VideoProcAmp_Flags_Auto = 0x1
 VideoProcAmp_Flags_Manual = 0x2
@@ -415,12 +416,25 @@ def _read_caps(config: _Com, formats: list[str], sizes: set) -> None:
             _free_media_type(pmt)
 
 
+#: Every standard property, not just the four we drive. A vendor can
+#: wire anything behind a standard property -- ToupTek's HDMI/USB hybrids
+#: put the focus motor behind Backlight Compensation, the tester found,
+#: so a plain UVC host can drive it with no extension unit -- and the
+#: only way to see that is to ask for every range and read them.
 _CONTROL_NAMES = {
-    ("camera", CameraControl_Exposure): "Exposure",
-    ("camera", CameraControl_Focus): "Focus",
-    ("amp", VideoProcAmp_Gain): "Gain",
-    ("amp", VideoProcAmp_WhiteBalance): "WhiteBalance",
+    ("camera", 0): "Pan", ("camera", 1): "Tilt", ("camera", 2): "Roll",
+    ("camera", 3): "Zoom", ("camera", CameraControl_Exposure): "Exposure",
+    ("camera", 5): "Iris", ("camera", CameraControl_Focus): "Focus",
+    ("amp", 0): "Brightness", ("amp", 1): "Contrast", ("amp", 2): "Hue",
+    ("amp", 3): "Saturation", ("amp", 4): "Sharpness", ("amp", 5): "Gamma",
+    ("amp", 6): "ColorEnable", ("amp", VideoProcAmp_WhiteBalance): "WhiteBalance",
+    ("amp", VideoProcAmp_Backlight): "Backlight", ("amp", VideoProcAmp_Gain): "Gain",
 }
+
+#: A Backlight Compensation whose range is wider than this is not a
+#: backlight compensation -- a real one is 0..1 or 0..2 -- and on a
+#: ToupTek device it is the focus motor: 0..854 on the X5FCAM4K8MPA.
+FOCUS_BEHIND_BACKLIGHT_SPAN = 100
 
 
 def _control_ranges(filt: _Com) -> list[dict]:
@@ -952,12 +966,20 @@ def us_to_exposure(microseconds: int) -> int:
 
 
 class _DshowFocus(FocusAxis):
-    """The focus motor behind `IAMCameraControl` Focus."""
+    """The focus motor behind a DirectShow property.
+
+    Usually `IAMCameraControl` Focus. On ToupTek's HDMI/USB hybrids it is
+    `IAMVideoProcAmp` Backlight Compensation, wearing a range no
+    backlight compensation has; `found` says which, and the writes go
+    wherever it says.
+    """
 
     def __init__(self, backend: "DshowBackend", found: dict) -> None:
         self._backend = backend
         self._range = FocusRange(found["min"], found["max"], found["step"])
         self._position = found["default"]
+        self.which, self.prop = found["which"], found["prop"]
+        self.behind = found["name"]
 
     def range(self) -> FocusRange:
         return self._range
@@ -1051,8 +1073,7 @@ class DshowBackend(CvCaptureBackend):
         self._device = (_Controls(found["display"])
                         if found["display"].lower().startswith("@device:pnp:")
                         else None)
-        focus = self._controls.get("Focus")
-        self._focus = _DshowFocus(self, focus) if focus else None
+        self._focus = self._find_focus(found)
         self._settle()
 
         self._info = CameraInfo(
@@ -1069,6 +1090,34 @@ class DshowBackend(CvCaptureBackend):
         )
         self._select(0)
         return self._info
+
+    def _find_focus(self, found: dict) -> "_DshowFocus | None":
+        """The motor, wherever the vendor put it.
+
+        Focus, where the camera has one. Otherwise, on a ToupTek device,
+        a Backlight Compensation with a range far too wide to be one: the
+        tester found their X5FCAM4K8MPA's stepper answers there, and
+        nowhere a standard host would look.
+        """
+        if not found.get("display", "").lower().startswith("@device:pnp:"):
+            # A software filter keeps its state per instance, so a write
+            # through our own handle reaches nobody, and OpenCV's path
+            # has no autofocus at all. ToupTek's own wrapper is the case:
+            # the tester chose it and watched the slider drive nothing.
+            # No motor is offered rather than one that lies.
+            return None
+        focus = self._controls.get("Focus")
+        if focus:
+            return _DshowFocus(self, focus)
+        backlight = self._controls.get("Backlight")
+        if (backlight and found.get("vid") in TOUPTEK_VIDS
+                and backlight["max"] - backlight["min"] > FOCUS_BEHIND_BACKLIGHT_SPAN):
+            _log.info("%r has no Focus control; its Backlight Compensation "
+                      "runs %d..%d, which is a ToupTek focus motor, and is "
+                      "used as one", found["name"], backlight["min"],
+                      backlight["max"])
+            return _DshowFocus(self, backlight)
+        return None
 
     def close(self) -> None:
         super().close()
@@ -1153,11 +1202,11 @@ class DshowBackend(CvCaptureBackend):
                 current = self._device.get("amp", VideoProcAmp_WhiteBalance)
                 if current is not None:
                     self._device.set("amp", VideoProcAmp_WhiteBalance, current)
-            if "Focus" in self._controls and self._focus is not None:
-                current = self._device.get("camera", CameraControl_Focus)
+            if self._focus is not None:
+                current = self._device.get(self._focus.which, self._focus.prop)
                 if current is not None:
                     self._focus._position = current
-                    self._device.set("camera", CameraControl_Focus, current)
+                    self._device.set(self._focus.which, self._focus.prop, current)
         except Exception as why:
             _log.debug("settling controls: %s", why)
         self._warm_up()
@@ -1188,18 +1237,26 @@ class DshowBackend(CvCaptureBackend):
             else:
                 self._cap.set(cv2.CAP_PROP_GAIN, level)
         elif what == "focus":
+            if self._focus is None:
+                return
             if self._device is not None:
-                self._device.set("camera", CameraControl_Focus, int(value))
-            else:
+                self._device.set(self._focus.which, self._focus.prop, int(value))
+            elif self._focus.which == "camera":
                 self._cap.set(cv2.CAP_PROP_FOCUS, int(value))
-        elif what == "focus_auto":
-            if self._device is not None:
-                current = self._device.get("camera", CameraControl_Focus) or 0
-                self._device.set("camera", CameraControl_Focus, current,
-                                 auto=bool(value))
             else:
+                self._cap.set(cv2.CAP_PROP_BACKLIGHT, int(value))
+        elif what == "focus_auto":
+            if self._focus is None:
+                return
+            if self._device is not None:
+                current = self._device.get(self._focus.which, self._focus.prop) or 0
+                self._device.set(self._focus.which, self._focus.prop, current,
+                                 auto=bool(value))
+            elif self._focus.which == "camera":
                 self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if value else 0)
                 current = int(self._cap.get(cv2.CAP_PROP_FOCUS) or 0)
+            else:
+                current = self._focus.get()
             if not value and self._focus is not None:
                 # Taking the motor back: wherever the camera left it is
                 # where it is, and the slider should say so.

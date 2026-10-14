@@ -107,7 +107,17 @@ def _dshow() -> list[Camera]:
     except Exception:
         return []
     out = []
-    for found in enumerate_cameras():
+    devices = enumerate_cameras()
+    # ToupTek's SDK registers a DirectShow wrapper that lists the same
+    # camera a second time as "<name>(UvcHam)". When the plain device is
+    # here too, the wrapper is a duplicate of something already offered,
+    # and listing both is a choice nobody should have to make: the first
+    # tester made it, picked the wrapper, and three oddities followed.
+    plain = {d["name"] for d in devices if not d["name"].endswith("(UvcHam)")}
+    for found in devices:
+        if (found["name"].endswith("(UvcHam)")
+                and found["name"][:-len("(UvcHam)")].strip() in plain):
+            continue
         w, h = found["sizes"][0] if found["sizes"] else (0, 0)
         usable = found.get("usable") or []
         # A kernel device has a path under \\?\usb (or pci, for a
@@ -119,6 +129,15 @@ def _dshow() -> list[Camera]:
         physical = path.startswith("\\\\?\\") and not path.startswith("\\\\?\\root#")
         from .usb import TOUPTEK_VENDORS
 
+        detail = "/".join(usable) or ("" if found.get("described", True)
+                                      else "undescribed")
+        # ToupTek's SDK registers a DirectShow wrapper that lists the
+        # same camera a second time with this suffix. It decodes to RGB
+        # in software, advertises its own size list, answers exposure in
+        # units of its own, and drives no motor through any path we can
+        # reach. The plain entry is the camera; this one is a middleman.
+        if found["name"].endswith("(UvcHam)"):
+            detail = "ToupTek SDK wrapper; prefer " + found["name"][:-len("(UvcHam)")].strip()
         out.append(Camera(
             key=f"dshow:{found['key']}",
             kind="dshow",
@@ -126,8 +145,7 @@ def _dshow() -> list[Camera]:
             width=w, height=h,
             controls=len(found.get("controls") or []),
             uncompressed=any(f.strip() != "MJPG" for f in usable),
-            detail="/".join(usable) or ("" if found.get("described", True)
-                                        else "undescribed"),
+            detail=detail,
             fingerprint=found.get("fingerprint", ""),
             physical=physical,
             microscope=(found.get("vid") or "") in TOUPTEK_VENDORS,
