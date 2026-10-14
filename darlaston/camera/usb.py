@@ -17,7 +17,9 @@ from pathlib import Path
 #: rules: every library answers on exactly the VIDs its rules list.
 #: 04b4 is the un-programmed EZ-USB bootloader state, which is worth
 #: recognising because a camera stuck there looks absent otherwise.
-TOUPTEK_VENDORS = ("0547", "04b4", "16d0", "9745", "0549")
+#: a547 is the one the HDMI/USB hybrids answer under -- the X5CAM and
+#: XF5CAM families -- read off the whitelist in ToupTek's own uvcham.dll.
+TOUPTEK_VENDORS = ("0547", "a547", "04b4", "16d0", "9745", "0549")
 #: Kept for callers that want the common case.
 TOUPTEK_VENDOR = TOUPTEK_VENDORS[0]
 
