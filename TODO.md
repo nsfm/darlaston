@@ -25,6 +25,9 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Camera Support
 
+- [ ] **Exposure control, by what the camera reports (planned, not built).** One button, "Automatic", stays. The engine behind it follows the capability flags the probe now reports: exposure reports manual capability, our own loop as today (stacks and mosaics need matching frames); auto-only, hide our slider and loop and let "Automatic" switch the camera's own auto-exposure (UVC AE mode, DirectShow's Auto flag, V4L2 `exposure_auto`); and for ISP cameras that do both, "let the camera meter" as a line in the camera profile editor, off by default, not a new control on the main screen. Held until the X5FCAM4K8MPA's listing says which case it is: the tester reports gain working and exposure not, and no "Automatic" button at all, which does not add up through the plain device and may all be the SDK wrapper they chose.
+- [ ] **The X5FCAM's motor on the plain device.** The tester found it behind the proc-amp Backlight Compensation *on the SDK wrapper's property page*, which is the wrapper's own translation of its `AFPOSITION`. On the kernel device Backlight is apparently a real backlight compensation, so the motor is behind some other standard property (the DLL has no extension unit); the full-property listing shows which range looks like 0..854. Until then the Backlight-as-focus rule applies only to kernel devices and may be pointing at the wrong knob.
+- [ ] **4K over USB goes pink; 2688x1512 does not; lower gain stops it.** Reported on the X5FCAM. Not a format problem (that is constant garbage, not intermittent): bandwidth. Higher gain means noisier frames means larger MJPEG frames, and 3840x2160 at 30 fps sits at the link's ceiling, so dropped packets corrupt frames into pink and green blocks. The preview should sit at 2688x1512 (`preferred_preview` already prefers under 6 MP; check it is what opens) and 4K be for captures; a frame-rate cap at 4K on DirectShow (none is set today, unlike the ToupTek SDK path) and a USB 2.0 warning like the Linux one would both help. Also: "1080p is missing", on the wrapper, which advertises its own list; check the plain device's.
 - [ ] **Sony Camera Remote SDK.**
 - [ ] **Ximea SDK.**
 - [ ] **Support for older Toup cameras.** Does support fail on the ToupView side or the SDK side? Can we load older SDKs?
@@ -43,6 +46,9 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Presentation
 
+- [ ] **Sidebar on the left, optionally.** Asked for by the first Windows tester. The panel rail is one widget in one layout; a setting and a mirror of the layout is most of it, plus the drag strip knowing which side the menus sit on.
+- [ ] **Export the slide map as an image.** Asked for by the same tester; the other half of the plate idea in Slide mapping above, and it wants the same thought about scale, pins and thumbnails before it is a button.
+- [ ] **Higher-contrast colour themes.** Asked for too. The theme is one stylesheet with named tokens, so a second palette is cheap; the hard part is the bits drawn by hand (dither, swatches, the map) agreeing with it. Worth doing as an accessibility option rather than a skin.
 - [ ] **Capture moment.** When the shutter fires, hold the developed capture on the presentation for a couple of seconds with a border pulse. "We just took that" is half the fun of tabling; deferred to keep the first release of the feature calm.
 - [ ] **QR code beside the header.** Visitors ask "where do I find you". Needs either a dependency or a hand-rolled encoder, and neither is earned yet. The /still.jpg endpoint is a natural target once it exists.
 - [ ] **Auto-hold on a blank field.** The slide leaving the stage could hold the last good frame automatically, piggybacking on the blank detection the stack trigger uses. Needs care in darkfield, where blank is dark rather than bright, and must never fire during ordinary panning.

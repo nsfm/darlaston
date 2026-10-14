@@ -1099,6 +1099,13 @@ class DshowBackend(CvCaptureBackend):
         tester found their X5FCAM4K8MPA's stepper answers there, and
         nowhere a standard host would look.
         """
+        if not found.get("display", "").lower().startswith("@device:pnp:"):
+            # A software filter keeps its state per instance, so a write
+            # through our own handle reaches nobody, and OpenCV's path
+            # has no autofocus at all. ToupTek's own wrapper is the case:
+            # the tester chose it and watched the slider drive nothing.
+            # No motor is offered rather than one that lies.
+            return None
         focus = self._controls.get("Focus")
         if focus:
             return _DshowFocus(self, focus)
