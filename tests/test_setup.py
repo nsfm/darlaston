@@ -306,13 +306,16 @@ def test_the_synthetic_camera_is_never_filed(qapp, tmp_path):
     assert list(library.cameras) == ["TP2112071101"]
 
 
-def test_a_camera_can_be_forgotten(qapp, tmp_path):
+def test_a_camera_can_be_forgotten(qapp, tmp_path, monkeypatch):
     """Everything that appears gets filed, because the alternative is asking.
     That means a built-in webcam ends up in the list, so it has to be
     possible to take one out again."""
     from darlaston.session.model import Library
     from darlaston.ui.setup_ui import CameraDialog
 
+    # Nothing attached, said out loud: the window now lists attached
+    # devices the library has not met, and this machine has webcams.
+    monkeypatch.setattr("darlaston.camera.discovery.look", lambda: [])
     library = Library(tmp_path / "library.json")
     library.remember_camera("WEBCAM-1", "Integrated Camera")
     library.remember_camera("TP2112071101", "E3ISPM20000KPA")
@@ -378,7 +381,9 @@ def test_an_unplugged_camera_is_still_editable(qapp, tmp_path):
     assert saved.relay_factor == 0.5
 
 
-def test_the_camera_window_says_so_when_none_has_been_seen(qapp, tmp_path):
+def test_the_camera_window_says_so_when_none_has_been_seen(qapp, tmp_path,
+                                                            monkeypatch):
+    monkeypatch.setattr("darlaston.camera.discovery.look", lambda: [])
     from darlaston.session.model import Library
     from darlaston.ui.setup_ui import CameraDialog
 
@@ -610,3 +615,42 @@ def test_the_live_resolution_wins_over_a_measured_one():
     assert editor._resolution() == (5440, 3648)
     editor._live = (0, 0)
     assert editor._resolution() == (1280, 1024), "lost the measured fallback"
+
+
+def test_an_attached_camera_the_library_never_opened_is_still_offered(
+        qapp, tmp_path, monkeypatch):
+    """The first Windows tester's cameras window showed XSplit Broadcaster
+    and nothing else, with the microscope plugged in and described. The
+    list was built from the library, and the library holds cameras that
+    have been opened; the one that opened first was the wrong one, and
+    the right one had no row to choose."""
+    from darlaston.camera.discovery import Camera
+    from darlaston.session.model import Library
+    from darlaston.ui import setup_ui
+    from darlaston.ui.setup_ui import CameraDialog
+
+    library = Library(tmp_path / "library.json")
+    library.remember_camera("root-xsplit", "XSplit Broadcaster")
+    scope = Camera(key=r"dshow:\\?\usb#vid_a547&pid_0001&mi_00#7&1&0&0000",
+                   kind="dshow", name="X5FCAM4K8MPA", width=3840, height=2160,
+                   controls=3, uncompressed=False, detail="MJPG",
+                   fingerprint="abc", physical=True, microscope=True)
+    xsplit = Camera(key="dshow:root-xsplit", kind="dshow", name="XSplit Broadcaster",
+                    width=1920, height=1080, physical=False)
+    monkeypatch.setattr(setup_ui, "look", lambda: [scope, xsplit], raising=False)
+    import darlaston.camera.discovery as discovery
+    monkeypatch.setattr(discovery, "look", lambda: [scope, xsplit])
+
+    dialog = CameraDialog(library, "root-xsplit", None)
+    names = [dialog.list.item(i).text() for i in range(dialog.list.count())]
+    assert names == ["XSplit Broadcaster", "X5FCAM4K8MPA"], names
+
+    dialog.list.setCurrentRow(1)
+    dialog._switch(1)
+    assert dialog.use.isEnabled(), "an attached device can be used"
+    assert not dialog.remove.isEnabled(), "but not forgotten: it was never filed"
+    assert dialog.editor.build().name == "X5FCAM4K8MPA"
+    dialog._use()
+    assert dialog.picked == scope.key
+    assert "X5FCAM4K8MPA" not in {c.name for c in library.cameras.values()}, \
+        "filing happens on first open, not on listing"

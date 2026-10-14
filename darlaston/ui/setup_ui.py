@@ -966,24 +966,60 @@ class CameraDialog(_LibraryDialog):
                     self._mark(item, found, found.key in self._ignored)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, camera.serial)
             self.list.addItem(item)
-        if cameras:
-            row = next((i for i, c in enumerate(cameras)
-                        if c.serial == select), 0)
+        # Then everything attached that the library has never met. The
+        # library holds cameras that have been *opened*, so on a machine
+        # where the wrong device opens first the right one had no row
+        # here at all: the first Windows tester saw XSplit Broadcaster
+        # and nothing else, with the microscope plugged in and described.
+        # A device is listed on sight; it is filed the first time it opens.
+        filed = {c.serial for c in cameras}
+        unopened = [a for serial, a in sorted(attached.items(),
+                                             key=lambda kv: kv[1].name.lower())
+                    if serial not in filed]
+        for found in unopened:
+            serial = found.key.split(":", 1)[1]
+            item = QtWidgets.QListWidgetItem(found.name)
+            item.setIcon(_present_dot())
+            self._mark(item, found, found.key in self._ignored)
+            if found.key not in self._ignored:
+                item.setToolTip(_("setup.cameras.unopened.tooltip"))
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, serial)
+            self.list.addItem(item)
+        rows = [c.serial for c in cameras] + [
+            f.key.split(":", 1)[1] for f in unopened]
+        if rows:
+            row = next((i for i, serial in enumerate(rows)
+                        if serial == select), 0)
             self.list.setCurrentRow(row)
         self.list.blockSignals(False)
 
-        known = bool(cameras)
+        known = bool(rows)
         for w in (self.list, self.editor, self.bound, self.remove,
                   self.use, self.profile):
             w.setVisible(known)
         self.empty.setVisible(not known)
         if known:
-            chosen = cameras[max(self.list.currentRow(), 0)]
-            self._selected = chosen.serial
-            self._hand_over(chosen)
+            serial = rows[max(self.list.currentRow(), 0)]
+            self._selected = serial
+            self._hand_over(self._profile_for(serial))
         else:
             self._selected = None
         self._refresh()
+
+    def _profile_for(self, serial: str):
+        """The library's profile, or a stand-in for a device it has not
+        met: enough for the editor to show a name. Nothing is filed from
+        it -- `_commit` files only what the library already holds -- so
+        the real profile is made the way it always was, on first open."""
+        from ..session.model import CameraProfile
+
+        known = self._library.cameras.get(serial)
+        if known is not None:
+            return known
+        found = self._attached().get(serial)
+        name = found.name if found is not None else serial
+        return CameraProfile(serial=serial, name=name, model=name,
+                             fingerprint=getattr(found, "fingerprint", ""))
 
     def _hand_over(self, camera) -> None:
         """Load a camera into the editor, with its live size if it is the
@@ -1002,9 +1038,9 @@ class CameraDialog(_LibraryDialog):
             return
         self._commit()
         serial = self.list.item(row).data(QtCore.Qt.ItemDataRole.UserRole)
-        if serial in self._library.cameras:
+        if serial:
             self._selected = serial
-            self._hand_over(self._library.cameras[serial])
+            self._hand_over(self._profile_for(serial))
         self._refresh()
 
     def _set_ignored(self, on: bool) -> None:
@@ -1048,6 +1084,10 @@ class CameraDialog(_LibraryDialog):
         self.ignore.setChecked(bool(found) and found.key in self._ignored)
         self.ignore.blockSignals(False)
         self.use.setEnabled(here)
+        # Only a filed camera can be forgotten; an attached one the
+        # library has not met is not in the file to take out of it.
+        self.remove.setEnabled(bool(self._selected)
+                               and self._selected in self._library.cameras)
         # Measuring drives the camera, so only the one that is open.
         self.profile.setEnabled(here and self._selected == self._open_serial)
         if not self._selected:
