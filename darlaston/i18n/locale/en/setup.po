@@ -326,6 +326,11 @@ msgstr "Not yet used on a microscope."
 msgid "setup.cameras.attached.tooltip"
 msgstr "This camera is currently available."
 
+#. An attached device the library has never opened. It is listed on
+#. sight so it can be chosen; it is filed the first time it opens.
+msgid "setup.cameras.unopened.tooltip"
+msgstr "Attached, never opened here. Use it to open it and file it."
+
 msgid "setup.cameras.action.use"
 msgstr "Use this camera"
 
