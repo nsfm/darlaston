@@ -552,3 +552,20 @@ def test_a_real_backlight_compensation_is_not_a_motor(fake, monkeypatch):
     cam.open()
     assert cam.focus_axis is None, "a wide range on somebody else's camera is a mystery, not a motor"
     cam.close()
+
+
+def test_the_sdk_wrapper_hides_behind_the_plain_device_and_stands_alone_otherwise(monkeypatch):
+    from darlaston.camera import discovery
+
+    plain = _found(index=0, name="X5FCAM4K8MPA")
+    plain["key"] = "a"
+    wrapper = _found(index=1, name="X5FCAM4K8MPA(UvcHam)", path="",
+                     display=r"@device:sw:{860BB310-5D01-11D0-BD3B-00A0C911CE86}\{x}")
+    wrapper["key"] = "b"
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [plain, wrapper])
+    assert [c.name for c in discovery.look() if c.kind == "dshow"] == ["X5FCAM4K8MPA"]
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [wrapper])
+    alone = [c for c in discovery.look() if c.kind == "dshow"]
+    assert [c.name for c in alone] == ["X5FCAM4K8MPA(UvcHam)"]
+    assert alone[0].detail.startswith("ToupTek SDK wrapper")

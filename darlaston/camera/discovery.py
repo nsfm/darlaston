@@ -107,7 +107,17 @@ def _dshow() -> list[Camera]:
     except Exception:
         return []
     out = []
-    for found in enumerate_cameras():
+    devices = enumerate_cameras()
+    # ToupTek's SDK registers a DirectShow wrapper that lists the same
+    # camera a second time as "<name>(UvcHam)". When the plain device is
+    # here too, the wrapper is a duplicate of something already offered,
+    # and listing both is a choice nobody should have to make: the first
+    # tester made it, picked the wrapper, and three oddities followed.
+    plain = {d["name"] for d in devices if not d["name"].endswith("(UvcHam)")}
+    for found in devices:
+        if (found["name"].endswith("(UvcHam)")
+                and found["name"][:-len("(UvcHam)")].strip() in plain):
+            continue
         w, h = found["sizes"][0] if found["sizes"] else (0, 0)
         usable = found.get("usable") or []
         # A kernel device has a path under \\?\usb (or pci, for a
