@@ -46,6 +46,20 @@ class Palette:
     good: str
     bad: str          # clipping and faults, nothing else
     dark: bool = True # the frame and the icons follow this
+    #: Two axes. The organism is the hue family and the chip on the
+    #: page; the variant is dark or light. High contrast is not a third
+    #: variant but a switch over either, derived (see high_contrast). A
+    #: palette's key stays its name, so a settings file from before the
+    #: axes still names what it named.
+    organism: str = ""
+    variant: str = "dark"
+
+    def __post_init__(self) -> None:
+        if not self.organism:
+            object.__setattr__(self, "organism", self.name)
+
+
+VARIANTS = ("dark", "light")
 
 
 PALETTES: dict[str, Palette] = {
@@ -85,7 +99,8 @@ PALETTES: dict[str, Palette] = {
         "blepharisma-light", bg="#fbe9f0", panel="#f5d7e2", sunk="#efc5d5",
         line="#d8a2b7", ink="#2b1620", dim="#6f4e5d", accent="#c93a74",
         accent_lit="#d44b84", accent_deep="#a82f61", on_accent="#ffffff",
-        good="#2e7d4f", bad="#b3261e", dark=False),
+        good="#2e7d4f", bad="#b3261e", dark=False,
+        organism="blepharisma", variant="light"),
     # Noctiluca glows in the dark. Red on black for a blacked-out room:
     # fluorescence, darkfield, anything done with the eyes dark-adapted,
     # which only red light leaves alone. Red being every colour here, a
@@ -95,8 +110,80 @@ PALETTES: dict[str, Palette] = {
         line="#4a1515", ink="#ff7373", dim="#b84a4a", accent="#ff3d3d",
         accent_lit="#ff6464", accent_deep="#cc3030", on_accent="#0e0404",
         good="#ff9a5c", bad="#ffd9b0"),
+    # Its high-contrast one is authored, not derived: derived, the ink
+    # would go white, and white is what a dark-adapted eye is being
+    # spared. Pale red instead, as far toward white as it can go and
+    # still be red.
+    "noctiluca-high": Palette(
+        "noctiluca-high", bg="#0e0404", panel="#170707", sunk="#080202",
+        line="#a03c3c", ink="#ffdada", dim="#e68c8c", accent="#ff6464",
+        accent_lit="#ff8a8a", accent_deep="#ff3d3d", on_accent="#0e0404",
+        good="#ffb088", bad="#fff0d8", organism="noctiluca"),
 }
 DEFAULT_PALETTE = "pseudoscorpion"
+
+
+def _mix(a: str, b: str, t: float) -> str:
+    """`a` moved `t` of the way to `b`."""
+    ca, cb = QtGui.QColor(a), QtGui.QColor(b)
+    return QtGui.QColor(*(round(x + (y - x) * t) for x, y in
+                          zip(ca.getRgb()[:3], cb.getRgb()[:3]))).name()
+
+
+def high_contrast(p: Palette) -> Palette:
+    """The same palette with the contrast turned up.
+
+    Ink to white (black, on a light ground), the dim and the lines
+    pulled a good way toward it, the accent to its lit value. A switch
+    over any palette rather than a variant of each, because derived it
+    looks right on all of them and authored it would be the third
+    hand-written one where it gets sloppy. An authored one under the
+    key "<name>-high", in the table or in palettes.json, is used
+    instead when there is one; the contrast test holds both to the
+    same figures.
+    """
+    toward = "#ffffff" if p.dark else "#000000"
+    return Palette(
+        f"{p.name}-high", bg=p.bg, panel=p.panel, sunk=p.sunk,
+        line=_mix(p.line, toward, 0.35), ink=toward,
+        dim=_mix(p.dim, toward, 0.5),
+        accent=p.accent_lit if p.dark else p.accent_deep,
+        accent_lit=_mix(p.accent_lit, toward, 0.2) if p.dark else p.accent_deep,
+        accent_deep=p.accent, on_accent=p.on_accent,
+        good=_mix(p.good, toward, 0.2), bad=_mix(p.bad, toward, 0.2),
+        dark=p.dark, organism=p.organism, variant=p.variant)
+
+
+def organisms() -> list[str]:
+    """The hue families, in the table's order."""
+    seen: list[str] = []
+    for p in PALETTES.values():
+        if p.organism not in seen and not p.name.endswith("-high"):
+            seen.append(p.organism)
+    return seen
+
+
+def variants_of(organism: str) -> dict[str, str]:
+    """Variant to palette key, for what the organism has."""
+    return {p.variant: p.name for p in PALETTES.values()
+            if p.organism == organism and not p.name.endswith("-high")}
+
+
+def key_for(organism: str, variant: str) -> str:
+    """The palette key for an organism in a variant, falling back to
+    the organism's dark one, then to whatever it has."""
+    have = variants_of(organism)
+    return have.get(variant) or have.get("dark") or next(iter(have.values()), DEFAULT_PALETTE)
+
+
+def resolve(name: str, high: bool) -> Palette:
+    """The palette a name and the switch come to, unknown names being
+    the default."""
+    p = PALETTES.get(name, PALETTES[DEFAULT_PALETTE])
+    if not high:
+        return p
+    return PALETTES.get(f"{p.name}-high") or high_contrast(p)
+
 
 #: A palette has these, and `dark` besides; a file that leaves one out
 #: is describing something else.
@@ -131,8 +218,12 @@ def load_extra(path: Path) -> list[str]:
         if not all(isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v)
                    for v in colours.values()):
             continue
+        variant = entry.get("variant", "dark")
+        organism = entry.get("organism", name)
         PALETTES[name] = Palette(name, **{k: v.lower() for k, v in colours.items()},
-                                 dark=bool(entry.get("dark", True)))
+                                 dark=bool(entry.get("dark", True)),
+                                 organism=organism if isinstance(organism, str) else name,
+                                 variant=variant if variant in VARIANTS else "dark")
         taken.append(name)
     return taken
 
@@ -200,6 +291,8 @@ def pick_mark(field_rgb, current: str | None = None) -> str:
 BG = PANEL = SUNK = LINE = ON_BRASS = INK = DIM = ""
 BRASS = BRASS_LIT = BRASS_DEEP = GOOD = BAD = ""
 current: Palette = PALETTES[DEFAULT_PALETTE]
+#: The high-contrast switch, as last used.
+high = False
 #: Told after every `use()`. For colours held as objects rather than read
 #: by name -- the painted widgets keep QColors -- so they can follow.
 _listeners: list = []
@@ -244,8 +337,9 @@ def dress(widget, sheet) -> None:
     _dressed.append(apply)
 
 
-def use(name: str) -> Palette:
+def use(name: str, high_contrast: bool | None = None) -> Palette:
     """Make a palette current, by name; an unknown name is the default.
+    `high_contrast` turns the switch; left out, it stays as it was.
 
     Rebinds the module-level colours, which is what everything draws
     from. Already-built widgets repaint in the new colours as they
@@ -253,8 +347,10 @@ def use(name: str) -> Palette:
     the window does.
     """
     global BG, PANEL, SUNK, LINE, ON_BRASS, INK, DIM
-    global BRASS, BRASS_LIT, BRASS_DEEP, GOOD, BAD, current
-    palette = PALETTES.get(name, PALETTES[DEFAULT_PALETTE])
+    global BRASS, BRASS_LIT, BRASS_DEEP, GOOD, BAD, current, high
+    if high_contrast is not None:
+        high = bool(high_contrast)
+    palette = resolve(name, high)
     current = palette
     BG, PANEL, SUNK, LINE = palette.bg, palette.panel, palette.sunk, palette.line
     #: Lettering that sits *on* the accent rather than beside it. Brass is

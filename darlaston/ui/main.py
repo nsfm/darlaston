@@ -737,7 +737,7 @@ class MainWindow(QtWidgets.QMainWindow):
         repaint; and the window frame is asked to match again. A dialog
         open at the time keeps its old sheet until it is reopened.
         """
-        theme.use(self.settings.palette)
+        theme.use(self.settings.palette, self.settings.high_contrast)
         self.setStyleSheet(theme.stylesheet())
         self._rail_widget.setStyleSheet(self._rail_style())
         theme.match_frame(self)
@@ -4328,7 +4328,7 @@ def main() -> int:
     extra = theme.load_extra(config_dir() / "palettes.json")
     if extra:
         _log.info("palettes.json: %s", ", ".join(extra))
-    theme.use(first.palette)
+    theme.use(first.palette, first.high_contrast)
     theme.use_marks(first.marks)
     theme.install(app)
     theme.load_fonts()

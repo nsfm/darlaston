@@ -106,6 +106,49 @@ def test_every_palette_says_which_it_is_and_is_legible():
         assert theme.contrast(p.ink, p.bg) >= 15.0, f"{name} is the high-contrast one"
 
 
+def test_high_contrast_is_a_switch_over_any_palette_and_reaches_its_figures():
+    """Not a variant of each but a switch over either, derived, because
+    derived it looks right on all of them. Noctiluca's is authored, so
+    the ink stays red; the switch looks for "<name>-high" first."""
+    from darlaston.ui import theme
+
+    for name, p in theme.PALETTES.items():
+        if name.endswith("-high"):
+            continue
+        h = theme.resolve(name, True)
+        assert h.organism == p.organism and h.variant == p.variant
+        assert h.dark == p.dark, "the frame still follows the ground"
+        assert theme.contrast(h.ink, h.bg) >= 15.0, f"{name}: ink, high"
+        assert theme.contrast(h.dim, h.panel) >= 7.0, f"{name}: dim, high"
+        assert theme.contrast(h.line, h.bg) >= 3.0, f"{name}: lines, high"
+        assert theme.contrast(h.accent, h.bg) >= 4.5, f"{name}: accent, high"
+        assert theme.contrast(h.on_accent, h.accent) >= 4.5, f"{name}: lettering, high"
+    red = theme.resolve("noctiluca", True)
+    assert red.name == "noctiluca-high" and red.ink != "#ffffff"
+    assert theme.resolve("pseudoscorpion", False) is theme.PALETTES["pseudoscorpion"]
+    try:
+        theme.use("stentor", True)
+        assert theme.INK == "#ffffff" and theme.high
+        theme.use("blepharisma")
+        assert theme.high, "left out, the switch stays as it was"
+        assert theme.current.name == "blepharisma-high"
+    finally:
+        theme.use(theme.DEFAULT_PALETTE, False)
+
+
+def test_the_palettes_sit_on_two_axes():
+    from darlaston.ui import theme
+
+    assert theme.organisms() == ["pseudoscorpion", "blepharisma", "stentor",
+                                 "diatom", "noctiluca"]
+    assert theme.variants_of("blepharisma") == {"dark": "blepharisma",
+                                                "light": "blepharisma-light"}
+    assert theme.variants_of("noctiluca") == {"dark": "noctiluca"}
+    assert theme.key_for("blepharisma", "light") == "blepharisma-light"
+    assert theme.key_for("noctiluca", "light") == "noctiluca", "falls back to dark"
+    assert theme.key_for("nothing", "dark") == theme.DEFAULT_PALETTE
+
+
 def test_using_a_palette_rebinds_what_everything_draws_from():
     from darlaston.ui import theme
 
@@ -128,16 +171,35 @@ def test_the_appearance_page_changes_the_palette_live(qapp, tmp_path, monkeypatc
     try:
         dialog = AppearanceDialog(win.settings, win._place_rail, win,
                                   on_palette=win._apply_palette)
-        pink = next(b for b in dialog._palette.buttons()
-                    if b.property("value") == "blepharisma")
-        pink.setChecked(True)
+        chips = {b.property("value"): b for b in dialog._palette.buttons()}
+        pills = {b.property("value"): b for b in dialog._variants.buttons()}
+        assert list(chips) == theme.organisms()
+        chips["blepharisma"].setChecked(True)
         assert theme.current.name == "blepharisma"
         assert theme.PALETTES["blepharisma"].bg in win.styleSheet()
         assert theme.PALETTES["blepharisma"].panel in win._rail_widget.styleSheet()
         assert Settings.load().palette == "blepharisma"
+        assert pills["light"].isEnabled(), "blepharisma has a light one"
+        pills["light"].setChecked(True)
+        assert theme.current.name == "blepharisma-light"
+        assert Settings.load().palette == "blepharisma-light"
+        assert "·" in dialog._chosen.text()
+        # An organism without the variant falls back to its dark one and
+        # greys the pill, rather than refusing the click.
+        chips["noctiluca"].setChecked(True)
+        assert theme.current.name == "noctiluca"
+        assert pills["dark"].isChecked() and not pills["light"].isEnabled()
+        dialog.high.setChecked(True)
+        assert theme.current.name == "noctiluca-high"
+        assert Settings.load().high_contrast is True
+        assert theme.PALETTES["noctiluca-high"].ink in win.styleSheet()
+        chips["pseudoscorpion"].setChecked(True)
+        assert theme.current.name == "pseudoscorpion-high", "the switch stays on"
+        dialog.high.setChecked(False)
+        assert theme.current.name == "pseudoscorpion"
     finally:
         win.shutdown()
-        theme.use(theme.DEFAULT_PALETTE)
+        theme.use(theme.DEFAULT_PALETTE, False)
 
 
 def test_the_painted_widgets_and_the_application_palette_follow_the_theme(qapp):

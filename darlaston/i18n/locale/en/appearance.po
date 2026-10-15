@@ -42,11 +42,20 @@ msgstr "Stentor"
 msgid "appearance.palette.diatom"
 msgstr "Diatom"
 
-msgid "appearance.palette.blepharisma_light"
-msgstr "Blepharisma (light)"
-
 msgid "appearance.palette.noctiluca"
 msgstr "Noctiluca"
+
+#. The second axis: a pill each, greyed where the organism has no such
+#. palette. High contrast is a switch over either.
+
+msgid "appearance.variant.dark"
+msgstr "Dark"
+
+msgid "appearance.variant.light"
+msgstr "Light"
+
+msgid "appearance.high_contrast"
+msgstr "High contrast"
 
 #. ---- the marks over the picture ------------------------------------------
 #. The focus-assist box, peaking and the presenter's ring. "Auto" reads
