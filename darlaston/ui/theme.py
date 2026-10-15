@@ -71,6 +71,14 @@ PALETTES: dict[str, Palette] = {
         line="#2a2e29", ink="#e4e7e0", dim="#757a72", accent="#c89b4a",
         accent_lit="#d7ad60", accent_deep="#ab8339", on_accent="#101210",
         good="#6fa96f", bad="#d0605e"),
+    # The instrument's outside rather than its inside: brass on pale
+    # lacquer, the brass darkened until white lettering reads on it.
+    "pseudoscorpion-light": Palette(
+        "pseudoscorpion-light", bg="#ecebe4", panel="#e1e0d7", sunk="#d6d5cb",
+        line="#b8b7ab", ink="#1e211d", dim="#5e625a", accent="#8a6520",
+        accent_lit="#9d7530", accent_deep="#705018", on_accent="#ffffff",
+        good="#2f7d3f", bad="#b3261e", dark=False,
+        organism="pseudoscorpion", variant="light"),
     # Blepharisma are pink, and it is their own pigment. A wine-dark
     # ground so the pink is the accent and not the glare.
     "blepharisma": Palette(
@@ -92,6 +100,14 @@ PALETTES: dict[str, Palette] = {
         line="#3a3f45", ink="#ffffff", dim="#aeb6bf", accent="#d6dde6",
         accent_lit="#eef2f6", accent_deep="#aeb7c2", on_accent="#0a0b0c",
         good="#8ef0a0", bad="#ff7070"),
+    # The same diatom under brightfield: glass on white, slate for an
+    # accent. Still no colour spent.
+    "diatom-light": Palette(
+        "diatom-light", bg="#f4f5f6", panel="#e8eaec", sunk="#dde0e3",
+        line="#b7bcc2", ink="#0e1012", dim="#585e66", accent="#4a5560",
+        accent_lit="#5b6774", accent_deep="#39424b", on_accent="#ffffff",
+        good="#2e7d4f", bad="#b3261e", dark=False,
+        organism="diatom", variant="light"),
     # The same pink, on a bright ground, for a desk in daylight. The
     # accent is a shade deeper than the dark one's so that white lettering
     # clears 4.5:1 on it -- the first draft's did not, and the test said.
@@ -119,6 +135,73 @@ PALETTES: dict[str, Palette] = {
         line="#a03c3c", ink="#ffdada", dim="#e68c8c", accent="#ff6464",
         accent_lit="#ff8a8a", accent_deep="#ff3d3d", on_accent="#0e0404",
         good="#ffb088", bad="#fff0d8", organism="noctiluca"),
+    # Anna Atkins, 1843: cyanotypes of British algae, the first book
+    # with photographs in it. Prussian blue and paper white, two
+    # pigments and nothing else, so the accent is the paper. Turned
+    # over for the light one: the same two, the other way up.
+    "atkins": Palette(
+        "atkins", bg="#0b1f3a", panel="#112a4a", sunk="#071628",
+        line="#2a4a74", ink="#eef3f7", dim="#9bb3cc", accent="#f3eedc",
+        accent_lit="#ffffff", accent_deep="#d8d2bd", on_accent="#0b1f3a",
+        good="#a8e6c0", bad="#ff8c7a"),
+    "atkins-light": Palette(
+        "atkins-light", bg="#f3efe3", panel="#e9e4d4", sunk="#ddd7c4",
+        line="#b9b3a0", ink="#0b1f3a", dim="#4a5f7c", accent="#1d4b8a",
+        accent_lit="#2a5fa8", accent_deep="#143a6c", on_accent="#f3efe3",
+        good="#2e7d4f", bad="#b3261e", dark=False,
+        organism="atkins", variant="light"),
+    # Haematoxylin and eosin, the stain every histologist has looked at
+    # for a thousand hours: purple-blue nuclei, pink everything else.
+    # Light first, since a section is viewed on white: lavender paper,
+    # haematoxylin ink, the violet for an accent, eosin in the tints.
+    # The dark one puts the eosin on an aubergine ground.
+    "haematoxylin": Palette(
+        "haematoxylin", bg="#140b1a", panel="#1f1227", sunk="#0d0712",
+        line="#45305a", ink="#efe0f5", dim="#a88fb8", accent="#e87aa8",
+        accent_lit="#f293bb", accent_deep="#c9608c", on_accent="#140b1a",
+        good="#7fc98f", bad="#ff6b6b"),
+    "haematoxylin-light": Palette(
+        "haematoxylin-light", bg="#f6edf3", panel="#eddfe8", sunk="#e3d0dd",
+        line="#c5a9bd", ink="#2c1a3d", dim="#6a4f7a", accent="#6d3fa0",
+        accent_lit="#8255b8", accent_deep="#58328a", on_accent="#ffffff",
+        good="#2e7d4f", bad="#b3261e", dark=False,
+        organism="haematoxylin", variant="light"),
+    # Spirogyra, the pond-water classic with the chloroplast wound in a
+    # spiral. The green one. Green being spent, "good" is a pale
+    # yellow-green on the dark and an ochre on the light.
+    "spirogyra": Palette(
+        "spirogyra", bg="#0b170b", panel="#132113", sunk="#060d06",
+        line="#2d4a2d", ink="#e3f0e0", dim="#8fae8c", accent="#8fe36a",
+        accent_lit="#a9f28a", accent_deep="#6fbf4f", on_accent="#0b170b",
+        good="#f0e68c", bad="#ff6b6b"),
+    "spirogyra-light": Palette(
+        "spirogyra-light", bg="#eef5e8", panel="#e1ecd8", sunk="#d3e2c7",
+        line="#a9c29c", ink="#152312", dim="#4f6a48", accent="#3f7f2e",
+        accent_lit="#4d9639", accent_deep="#2f6322", on_accent="#ffffff",
+        good="#8a6d00", bad="#b3261e", dark=False,
+        organism="spirogyra", variant="light"),
+    # Radiolaria as Haeckel drew them: sepia on cream, and cream on
+    # sepia for the dark. Monochrome, warm, the colour of a plate in a
+    # book, which is where most people have seen one.
+    "radiolaria": Palette(
+        "radiolaria", bg="#15100b", panel="#1f1812", sunk="#0c0906",
+        line="#4a3a2a", ink="#ece2d2", dim="#a89480", accent="#efe0c8",
+        accent_lit="#ffffff", accent_deep="#cfbfa4", on_accent="#15100b",
+        good="#a8d8a0", bad="#ff8a70"),
+    "radiolaria-light": Palette(
+        "radiolaria-light", bg="#f5efe4", panel="#ece3d3", sunk="#e0d5c1",
+        line="#b9a78c", ink="#2b1f14", dim="#6b5a46", accent="#6b4a2a",
+        accent_lit="#7f5c38", accent_deep="#543a20", on_accent="#f5efe4",
+        good="#2e7d4f", bad="#b3261e", dark=False,
+        organism="radiolaria", variant="light"),
+    # Aequorea victoria, the jellyfish GFP came from. A fluorescence
+    # palette: black, DAPI blue for the ink, GFP green for the accent,
+    # a red-channel fault. Dark only, as fluorescence is.
+    "aequorea": Palette(
+        "aequorea", bg="#050a12", panel="#0b1320", sunk="#02050a",
+        line="#1f3a4f", ink="#bfe3ff", dim="#6f9bbd", accent="#4dffa0",
+        accent_lit="#7dffba", accent_deep="#2fd882", on_accent="#050a12",
+        good="#9bffc4", bad="#ff5c7a"),
 }
 DEFAULT_PALETTE = "pseudoscorpion"
 

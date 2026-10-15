@@ -130,18 +130,36 @@ class AppearanceDialog(FramedDialog):
                  "blepharisma": _("appearance.palette.blepharisma"),
                  "stentor": _("appearance.palette.stentor"),
                  "diatom": _("appearance.palette.diatom"),
-                 "noctiluca": _("appearance.palette.noctiluca")}
+                 "noctiluca": _("appearance.palette.noctiluca"),
+                 "atkins": _("appearance.palette.atkins"),
+                 "haematoxylin": _("appearance.palette.haematoxylin"),
+                 "spirogyra": _("appearance.palette.spirogyra"),
+                 "radiolaria": _("appearance.palette.radiolaria"),
+                 "aequorea": _("appearance.palette.aequorea")}
+        # The full name, where the chip's one word is short for one.
+        tips = {"pseudoscorpion": _("appearance.palette.pseudoscorpion.tooltip"),
+                "blepharisma": _("appearance.palette.blepharisma.tooltip"),
+                "stentor": _("appearance.palette.stentor.tooltip"),
+                "noctiluca": _("appearance.palette.noctiluca.tooltip"),
+                "atkins": _("appearance.palette.atkins.tooltip"),
+                "haematoxylin": _("appearance.palette.haematoxylin.tooltip"),
+                "radiolaria": _("appearance.palette.radiolaria.tooltip"),
+                "aequorea": _("appearance.palette.aequorea.tooltip")}
         self._palette = QtWidgets.QButtonGroup(self)
         self._chips: list[PaletteChip] = []
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(4)
-        for organism in theme.organisms():
+        # Five to a row. Ten chips in one row would be wider than the
+        # page; two rows of five are the width of the radios below.
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(2)
+        for i, organism in enumerate(theme.organisms()):
             chip = PaletteChip(organism, names.get(organism, organism))
+            chip.setToolTip(tips.get(organism, chip.label))
             self._palette.addButton(chip)
             self._chips.append(chip)
-            row.addWidget(chip)
-        row.addStretch(1)
-        col.addLayout(row)
+            grid.addWidget(chip, i // 5, i % 5)
+        grid.setColumnStretch(5, 1)
+        col.addLayout(grid)
         self._palette.buttonToggled.connect(self._organism_changed)
 
         self._variants = QtWidgets.QButtonGroup(self)
