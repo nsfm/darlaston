@@ -65,7 +65,7 @@ class TimelapseDialog(QtWidgets.QDialog):
         col.addStretch(1)
         col.addLayout(row)
 
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
         self._sync()
         self._update_estimate()
 

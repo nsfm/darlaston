@@ -89,10 +89,10 @@ class _InfoBubble(QtWidgets.QLabel):
         self.setMargin(9)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet(
+        theme.dress(self, lambda: (
             f"QLabel {{ background: {theme.PANEL};"
             f" color: {theme.INK}; border: 1px solid {theme.LINE};"
-            f" border-radius: 4px; }}")
+            f" border-radius: 4px; }}"))
 
     def mousePressEvent(self, _event) -> None:
         self._on_close()

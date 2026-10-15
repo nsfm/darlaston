@@ -34,7 +34,7 @@ class SdkDialog(QtWidgets.QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("sdk.title"))
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
         self._worker: threading.Thread | None = None
 
         head = QtWidgets.QLabel(_("sdk.heading"))

@@ -130,9 +130,9 @@ class UpdateDialog(FramedDialog):
         versions = QtWidgets.QLabel(
             _("update.versions", current=str(here) if here else __version__,
               latest=str(release.version)))
-        versions.setStyleSheet(
+        theme.dress(versions, lambda: (
             f"font-family: '{fam['mono']}'; font-size: 11px;"
-            f"color: {theme.DIM}; background: transparent;")
+            f"color: {theme.DIM}; background: transparent;"))
 
         body = QtWidgets.QLabel(_("update.body"))
         body.setWordWrap(True)

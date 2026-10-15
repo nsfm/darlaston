@@ -55,15 +55,18 @@ class Chip(QtWidgets.QLabel):
         super().__init__(text)
         self.setProperty("role", "sub")
         self._active = active
-        self._restyle()
+        theme.dress(self, self._sheet)
 
     def set_active(self, active: bool) -> None:
         self._active = active
         self._restyle()
 
     def _restyle(self) -> None:
+        self.setStyleSheet(self._sheet())
+
+    def _sheet(self) -> str:
         colour = theme.BRASS if self._active else theme.DIM
-        self.setStyleSheet(
+        return (
             f"border:1px solid {colour}; border-radius:3px; margin:1px;"
             f"padding:1px 7px; color:{colour}; font-size:11px;")
 
@@ -186,7 +189,7 @@ class ToolBar(QtWidgets.QFrame):
 
         divider = QtWidgets.QFrame()
         divider.setFrameShape(QtWidgets.QFrame.Shape.VLine)
-        divider.setStyleSheet(f"color: {theme.LINE};")
+        theme.dress(divider, lambda: f"color: {theme.LINE};")
         divider.setFixedHeight(18)
 
         self.menus: dict[str, QtWidgets.QMenu] = {}
@@ -371,8 +374,8 @@ class StatusBar(QtWidgets.QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setFixedHeight(28)
-        self.setStyleSheet(
-            f"background: {theme.PANEL}; border-top: 1px solid {theme.LINE};")
+        theme.dress(self, lambda: (
+            f"background: {theme.PANEL}; border-top: 1px solid {theme.LINE};"))
 
         self.dot = Dot()
         self.state = QtWidgets.QLabel(_("shell.state.idle"))
@@ -393,28 +396,22 @@ class StatusBar(QtWidgets.QFrame):
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.preview.setMinimumContentsLength(18)
         self.preview.setToolTip(_("shell.preview.tooltip"))
-        self.preview.setStyleSheet(
-            f"QComboBox {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
-            f" margin: 1px; padding: 1px 6px; color: {theme.DIM};"
-            f" background: transparent; }}"
-            f"QComboBox:hover {{ color: {theme.INK}; }}"
-            f"QComboBox::drop-down {{ border: 0; width: 16px; }}"
-            f"QComboBox::down-arrow {{ image: url("
-            f"{icons.path_for('chevron-down', theme.INK)}); width: 11px;"
-            f" height: 11px; }}")
+        theme.dress(self.preview, self._combo_sheet)
 
         # Frame rate, beside resolution: the two knobs that trade preview
         # quality against load, and the pair a person reaches for together.
         self.rate = QtWidgets.QComboBox()
         self.rate.setProperty("role", "sub")
         self.rate.setToolTip(_("shell.rate.tooltip"))
-        self.rate.setStyleSheet(self.preview.styleSheet())
+        theme.dress(self.rate, self._combo_sheet)
         for fps in FRAMERATES:
             self.rate.addItem(_("shell.rate.uncapped") if fps == 0
                               else _("shell.rate.fps", fps=fps), fps)
 
         self.numbers = QtWidgets.QLabel("")
         self.numbers.setProperty("role", "sub")
+        self._link_degraded = False
+        theme.dress(self.numbers, self._numbers_sheet)
 
         # Room left, always on show. A stacked mosaic writes tens of
         # gigabytes without ever mentioning it -- forty tiles at thirty
@@ -422,6 +419,8 @@ class StatusBar(QtWidgets.QFrame):
         # should not be a session dying halfway through a slide.
         self.disk = QtWidgets.QLabel("")
         self.disk.setProperty("role", "sub")
+        self._disk_gb: float | None = None
+        theme.dress(self.disk, self._disk_sheet)
 
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(10, 0, 12, 0)
@@ -447,6 +446,35 @@ class StatusBar(QtWidgets.QFrame):
         self._base = ""
         self._note = ""
         self._res_filled = False
+        theme.dress(self.state, self._state_sheet)
+
+    @staticmethod
+    def _combo_sheet() -> str:
+        return (
+            f"QComboBox {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
+            f" margin: 1px; padding: 1px 6px; color: {theme.DIM};"
+            f" background: transparent; }}"
+            f"QComboBox:hover {{ color: {theme.INK}; }}"
+            f"QComboBox::drop-down {{ border: 0; width: 16px; }}"
+            f"QComboBox::down-arrow {{ image: url("
+            f"{icons.path_for('chevron-down', theme.INK)}); width: 11px;"
+            f" height: 11px; }}")
+
+    def _state_sheet(self) -> str:
+        return f"color: {theme.BRASS};" if self._note else ""
+
+    def _numbers_sheet(self) -> str:
+        return f"color: {theme.BAD};" if self._link_degraded else ""
+
+    def _disk_sheet(self) -> str:
+        gb = self._disk_gb
+        if gb is None:
+            return ""
+        if gb < self.DISK_CRITICAL_GB:
+            return f"color: {theme.BAD};"
+        if gb < self.DISK_LOW_GB:
+            return f"color: {theme.BRASS};"
+        return ""
 
     #: Below this, the readout turns brass. A single stacked tile is
     #: comfortably a gigabyte once its slices are counted, so a warning that
@@ -459,6 +487,7 @@ class StatusBar(QtWidgets.QFrame):
     def set_disk(self, free_bytes: int | None, root: str = "") -> None:
         """Show the room left where captures are being written."""
         if free_bytes is None:
+            self._disk_gb = None
             self.disk.setText("")
             self.disk.setToolTip("")
             return
@@ -468,13 +497,9 @@ class StatusBar(QtWidgets.QFrame):
         # and none.
         text = (_("shell.disk.free", gb=f"{gb:.0f}") if gb >= 10
                 else _("shell.disk.free", gb=f"{gb:.1f}"))
-        colour = ""
-        if gb < self.DISK_CRITICAL_GB:
-            colour = f"color: {theme.BAD};"
-        elif gb < self.DISK_LOW_GB:
-            colour = f"color: {theme.BRASS};"
+        self._disk_gb = gb
         self.disk.setText(text)
-        self.disk.setStyleSheet(colour)
+        self.disk.setStyleSheet(self._disk_sheet())
         self.disk.setToolTip(_("shell.disk.tooltip", root=root) if root
                              else _("shell.disk.tooltip.unknown"))
 
@@ -500,8 +525,7 @@ class StatusBar(QtWidgets.QFrame):
     def set_note(self, note: str) -> None:
         self._note = note
         self.state.setText(note or self._base)
-        self.state.setStyleSheet(
-            f"color: {theme.BRASS};" if note else "")
+        self.state.setStyleSheet(self._state_sheet())
 
     def update_status(self, status, setup=None) -> None:
         self.dot.set_state(status.state)
@@ -543,8 +567,8 @@ class StatusBar(QtWidgets.QFrame):
         link = status.link
         if link is not None and link.speed_mbps:
             tail.append(link.label)
-            self.numbers.setStyleSheet(
-                f"color: {theme.BAD};" if link.is_degraded else "")
+            self._link_degraded = bool(link.is_degraded)
+            self.numbers.setStyleSheet(self._numbers_sheet())
         self._tail = tail
         self._render_numbers()
 
@@ -665,7 +689,7 @@ class WaitingPage(QtWidgets.QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setStyleSheet(f"background:{theme.SUNK};")
+        theme.dress(self, lambda: f"background:{theme.SUNK};")
 
         self.pulse = _Pulse()
         self.heading = QtWidgets.QLabel(_("shell.waiting.heading"))
@@ -906,6 +930,10 @@ class ObjectiveStepper(QtWidgets.QWidget):
 
         self.suggestion = None
         self._uncertain = False
+        theme.dress(self.label, self._label_sheet)
+
+    def _label_sheet(self) -> str:
+        return f"color: {theme.BRASS};" if self._uncertain else ""
 
     def set_turret(self, turret) -> None:
         self._turret = turret
@@ -956,7 +984,6 @@ class ObjectiveStepper(QtWidgets.QWidget):
         else:
             text = _("objective.none")
         self.label.setText(text)
-        self.label.setStyleSheet(
-            f"color: {theme.BRASS};" if self._uncertain else "")
+        self.label.setStyleSheet(self._label_sheet())
         self.label.setToolTip(
             _("objective.uncertain.tooltip") if self._uncertain else hint)
