@@ -1,0 +1,33 @@
+# How the program looks and where things sit. Setup > Appearance.
+
+msgid "appearance.title"
+msgstr "Appearance"
+
+#. ---- the rail of panels -------------------------------------------------
+
+msgid "appearance.sidebar.heading"
+msgstr "Sidebar"
+
+msgid "appearance.sidebar.left"
+msgstr "Left"
+
+msgid "appearance.sidebar.right"
+msgstr "Right"
+
+msgid "appearance.sidebar.note"
+msgstr "The rail of panels beside the picture. Applies at once."
+
+#. ---- the window frame ---------------------------------------------------
+
+msgid "appearance.frame.heading"
+msgstr "Window frame"
+
+#. Was a lone entry in the Setup menu, "Styled window frame".
+msgid "appearance.frame.label"
+msgstr "Styled window frame"
+
+msgid "appearance.frame.note"
+msgstr ""
+"Draw our own title bar instead of the desktop's. Where the desktop draws a "
+"good one this is a matter of taste; where it draws a poor one or none, it is "
+"the difference between looking finished and not."

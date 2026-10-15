@@ -158,6 +158,10 @@ class Settings:
     #: falls back to something that matches neither GNOME nor this
     #: program, so there we draw our own.
     window_frame: str = "auto"       # auto | ours | system
+    #: Which side of the picture the rail of panels sits on. Right is
+    #: where it has always been; left is for people whose hand lives
+    #: there, and the first Windows tester asked.
+    sidebar_side: str = "right"      # right | left
     #: Ask GitHub, once per launch, whether a newer release exists. On by
     #: default, because an adopter running a version with a fixed bug in
     #: it is the failure this exists to prevent -- and switchable, because

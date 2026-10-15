@@ -65,6 +65,7 @@ from .shell import (Chip, ObjectiveStepper, StatusBar, ToolBar,
 from .darkroom_ui import (RENDERS, ArrangeDialog, PlateDialog,
                           RenderDialog)
 from .stack_ui import StackAssembly
+from .appearance_ui import AppearanceDialog
 from .stitch_ui import StitchDialog
 from .photographer_ui import PhotographerDialog
 from .proposal import ProposalBar
@@ -286,15 +287,10 @@ class MainWindow(QtWidgets.QMainWindow):
         setup.addAction(_("menu.setup.photographer"), self._open_photographer)
         setup.addAction(_("menu.setup.files"), self._open_settings)
         setup.addAction(_("menu.setup.performance"), self._open_performance)
-        # Where the desktop already draws a good title bar this is a
-        # matter of taste, and where it draws a bad one or none at all it
-        # is the difference between looking finished and not. macOS is
-        # left out: there the frame is never ours to take, only to restyle.
-        if sys.platform != "darwin":
-            self.chrome_action = setup.addAction(_("menu.setup.chrome"))
-            self.chrome_action.setCheckable(True)
-            self.chrome_action.setChecked(self._frame is not None)
-            self.chrome_action.toggled.connect(self._set_window_frame)
+        # The look: which side the rail sits on, whose frame the window
+        # wears, and one day the palette. The frame switch used to be a
+        # lone tick in this menu; it lives with its kind now.
+        setup.addAction(_("menu.setup.appearance"), self._open_appearance)
         # Absent until there is something to say. An "up to date" line
         # that is always there is a line nobody reads and a menu one
         # entry longer for ever.
@@ -679,8 +675,9 @@ class MainWindow(QtWidgets.QMainWindow):
         body = QtWidgets.QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self.stack, 1)
-        body.addWidget(self._rail())
+        self._body = body
+        self._rail_widget = self._rail()
+        self._place_rail()
 
         self.strip = StatusBar()
         self.strip.preview.currentIndexChanged.connect(self._on_preview_res)
@@ -698,6 +695,30 @@ class MainWindow(QtWidgets.QMainWindow):
         central.setLayout(col)
         self.setCentralWidget(central)
         self.setStyleSheet(theme.stylesheet())
+
+    def _place_rail(self) -> None:
+        """Put the rail on the side the settings say, picture beside it.
+
+        Live, because a layout is judged by looking at it: the body
+        layout holds exactly the picture and the rail, so both come out
+        and go back in the order asked for.
+        """
+        body, rail = self._body, self._rail_widget
+        for widget in (self.stack, rail):
+            body.removeWidget(widget)
+        if self.settings.sidebar_side == "left":
+            body.addWidget(rail)
+            body.addWidget(self.stack, 1)
+        else:
+            body.addWidget(self.stack, 1)
+            body.addWidget(rail)
+
+    def _open_appearance(self) -> None:
+        AppearanceDialog(
+            self.settings, self._place_rail, self,
+            frame_available=sys.platform != "darwin",
+            frame_on=self._frame is not None,
+            set_frame=self._set_window_frame).exec()
 
     def _rail(self) -> QtWidgets.QWidget:
         rail = QtWidgets.QFrame()
@@ -3734,15 +3755,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         UpdateDialog(self._update_release, self).exec()
 
-    def _set_window_frame(self, ours: bool) -> None:
+    def _set_window_frame(self, ours: bool) -> bool:
         """Swap between our chrome and the platform's, without a restart.
 
         Saved as `ours` or `system` rather than back to `auto`: once
         somebody has touched the switch, the guess about their desktop
-        has been overruled and should stay overruled.
+        has been overruled and should stay overruled. Returns whether
+        the window now has what was asked for.
         """
         if ours == (self._frame is not None):
-            return
+            return True
         if ours:
             took = self.take_native_frame()
         else:
@@ -3753,13 +3775,12 @@ class MainWindow(QtWidgets.QMainWindow):
             # of what take_native_frame does on the way in.
             theme.match_frame(self)
         if not took and ours:
-            # Could not take it. Say so by putting the tick back rather
-            # than leaving a checked box over a window that Windows or
-            # the window manager is still drawing.
-            self.chrome_action.setChecked(False)
-            return
+            # Could not take it. The dialog puts its tick back; the
+            # window is still wearing what the desktop drew.
+            return False
         self.settings.window_frame = "ours" if ours else "system"
         self.settings.save()
+        return True
 
     def take_native_frame(self) -> bool:
         """Draw our own title bar, where that is ours to draw.
@@ -4292,9 +4313,6 @@ def main() -> int:
         # system's own frame is what every version until now shipped.
         if not win.take_native_frame():
             theme.match_frame(win)
-        # The menu was built before the window had a handle to reframe,
-        # so the tick catches up here.
-        win.chrome_action.setChecked(win._frame is not None)
     elif sys.platform != "darwin":
         theme.match_frame(win)
 
