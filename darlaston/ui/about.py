@@ -35,9 +35,9 @@ class AboutDialog(FramedDialog):
 
         fam = theme.load_fonts()
         wordmark = QtWidgets.QLabel(_("about.wordmark"))
-        wordmark.setStyleSheet(
+        theme.dress(wordmark, lambda: (
             f"font-family: '{fam['display']}'; font-size: 34px;"
-            f"color: {theme.BRASS}; background: transparent;")
+            f"color: {theme.BRASS}; background: transparent;"))
 
         tagline = QtWidgets.QLabel(TAGLINE.upper())
         tagline.setProperty("role", "label")
@@ -51,9 +51,9 @@ class AboutDialog(FramedDialog):
         licence.setProperty("role", "key")
 
         version = QtWidgets.QLabel(__version__)
-        version.setStyleSheet(
+        theme.dress(version, lambda: (
             f"font-family: '{fam['mono']}'; font-size: 10px;"
-            f"color: {theme.DIM}; background: transparent;")
+            f"color: {theme.DIM}; background: transparent;"))
 
         close = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Close)

@@ -86,7 +86,7 @@ class SamplerDialog(QtWidgets.QDialog):
     def __init__(self, rendered, parent=None):
         super().__init__(parent)
         self.setWindowTitle(_("sampler.title"))
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
         self._value: float | None = None
 
         head = QtWidgets.QLabel(_("sampler.intro"))

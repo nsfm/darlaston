@@ -44,7 +44,7 @@ class FramedDialog(QtWidgets.QDialog):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.frame)
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
 
     def finish(self) -> None:
         """Call once the content is built.

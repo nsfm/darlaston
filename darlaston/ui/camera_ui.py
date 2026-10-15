@@ -86,7 +86,7 @@ class CameraPicker(FramedDialog):
             note = QtWidgets.QLabel(line)
             note.setWordWrap(True)
             note.setProperty("role", "key")
-            note.setStyleSheet(f"color: {theme.BRASS}; background: transparent;")
+            theme.dress(note, lambda: f"color: {theme.BRASS}; background: transparent;")
             col.addWidget(note)
 
         buttons = QtWidgets.QDialogButtonBox(

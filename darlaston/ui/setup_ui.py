@@ -662,7 +662,7 @@ class MicroscopeDialog(_LibraryDialog):
         col.addWidget(self.buttons)
 
         self._reload(current)
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
 
     # ---- the collection --------------------------------------------------
 
@@ -883,7 +883,7 @@ class CameraDialog(_LibraryDialog):
         col.addWidget(self.buttons)
 
         self._reload(current)
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
 
     #: Emitted when somebody asks to measure the open camera. The window
     #: owns the session, so it runs the measurement; this only asks.

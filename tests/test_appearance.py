@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from PySide6 import QtGui
 
 
 def _window(tmp_path, monkeypatch):
@@ -161,3 +162,97 @@ def test_the_painted_widgets_and_the_application_palette_follow_the_theme(qapp):
     finally:
         theme.use(theme.DEFAULT_PALETTE)
         assert widgets.INK.name() == theme.PALETTES[theme.DEFAULT_PALETTE].ink
+
+
+def test_a_dressed_sheet_follows_the_palette(qapp):
+    """A sheet set once at construction was the one thing use() could
+    not reach. dress() keeps the recipe and applies it again."""
+    from PySide6 import QtWidgets
+    from darlaston.ui import theme
+
+    label = QtWidgets.QLabel("x")
+    theme.dress(label, lambda: f"color: {theme.BRASS};")
+    try:
+        theme.use("stentor")
+        assert theme.PALETTES["stentor"].accent in label.styleSheet()
+        theme.use("pseudoscorpion")
+        assert theme.PALETTES["pseudoscorpion"].accent in label.styleSheet()
+    finally:
+        theme.use(theme.DEFAULT_PALETTE)
+
+
+# ---- marks on the picture -----------------------------------------------------
+
+def test_noctiluca_is_red_on_black_and_its_fault_colour_is_not_red():
+    from darlaston.ui import theme
+
+    p = theme.PALETTES["noctiluca"]
+    assert p.dark
+    r, g, b = QtGui.QColor(p.ink).getRgb()[:3]
+    assert r > 2 * g and r > 2 * b, "the ink is red"
+    r, g, b = QtGui.QColor(p.bad).getRgb()[:3]
+    assert g > 180 and b > 150, "a fault is the one pale thing on the page"
+
+
+def test_auto_marks_keep_gold_on_a_grey_field_and_leave_a_magenta_one():
+    """A grey field is equally far from every ink, so the old gold
+    stays. A magenta mount pushes the marks to green, and the choice
+    sticks unless another ink wins by a margin."""
+    from darlaston.ui import theme
+
+    assert theme.pick_mark((128, 128, 128)) == "gold"
+    assert theme.pick_mark((240, 240, 240), "gold") == "gold"
+    assert theme.pick_mark((255, 100, 255), "gold") == "green"
+    # Hysteresis: from green, a field that favours cyan by a hair does
+    # not move the marks.
+    assert theme.pick_mark((255, 100, 255), "green") == "green"
+    # Against a green field nothing is further than magenta.
+    assert theme.pick_mark((90, 220, 110), "gold") == "magenta"
+
+
+def test_the_marks_follow_the_setting_and_the_picture(qapp):
+    import numpy as np
+    from darlaston.ui import theme
+    from darlaston.ui.widgets import MarkPicker
+
+    magenta = np.zeros((64, 96, 3), np.uint8)
+    magenta[...] = (255, 100, 255)           # BGR, like the view's buffer
+    try:
+        theme.use_marks("auto")
+        picker = MarkPicker()
+        assert picker.resolve(magenta).name() == theme.MARK_INKS["green"]
+        assert picker.changed, "the peaking tint has to be rewritten"
+        theme.use_marks("cyan")
+        assert picker.resolve(magenta).name() == theme.MARK_INKS["cyan"]
+        theme.use_marks("accent")
+        assert picker.resolve(None).name() == theme.BRASS
+        theme.use("stentor")
+        assert picker.resolve(None).name() == theme.PALETTES["stentor"].accent
+        theme.use_marks("nonsense")
+        assert theme.mark == "auto"
+    finally:
+        theme.use(theme.DEFAULT_PALETTE)
+        theme.use_marks("auto")
+
+
+def test_the_appearance_page_offers_the_marks_and_remembers(qapp, tmp_path, monkeypatch):
+    from darlaston.session.settings import Settings
+    from darlaston.ui.appearance_ui import AppearanceDialog
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    settings = Settings()
+    told = []
+    dialog = AppearanceDialog(settings, lambda: None, None,
+                              on_marks=lambda: told.append(settings.marks))
+    choices = {b.property("value") for b in dialog._marks.buttons()}
+    assert choices == set(theme_choices())
+    for b in dialog._marks.buttons():
+        if b.property("value") == "green":
+            b.setChecked(True)
+    assert told == ["green"]
+    assert Settings.load().marks == "green"
+
+
+def theme_choices():
+    from darlaston.ui import theme
+    return theme.MARK_CHOICES

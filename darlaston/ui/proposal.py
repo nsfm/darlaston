@@ -37,9 +37,9 @@ class ProposalBar(QtWidgets.QWidget):
         self._payload = None
 
         self.text = QtWidgets.QLabel("")
-        self.text.setStyleSheet(f"color: {theme.INK}; font-size: 12px;")
+        theme.dress(self.text, lambda: f"color: {theme.INK}; font-size: 12px;")
         self.detail = QtWidgets.QLabel("")
-        self.detail.setStyleSheet(f"color: {theme.DIM}; font-size: 10px;")
+        theme.dress(self.detail, lambda: f"color: {theme.DIM}; font-size: 10px;")
 
         # Buttons are built per proposal, because how many there are is the
         # message. When the detector knows which objective it is, one button
@@ -61,12 +61,12 @@ class ProposalBar(QtWidgets.QWidget):
         self.other.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.other.setPopupMode(
             QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.other.setStyleSheet(
+        theme.dress(self.other, lambda: (
             f"QToolButton {{ border: 1px solid {theme.DIM};"
             f" border-radius: 12px; margin: 1px; padding: 2px 12px;"
             f" color: {theme.DIM}; background: transparent; }}"
             f"QToolButton::menu-indicator {{ image: none; }}"
-            f"QToolButton:hover {{ color: {theme.INK}; }}")
+            f"QToolButton:hover {{ color: {theme.INK}; }}"))
         self._other_menu = QtWidgets.QMenu(self)
         self.other.setMenu(self._other_menu)
 
@@ -75,7 +75,7 @@ class ProposalBar(QtWidgets.QWidget):
         self.no = QtWidgets.QPushButton(_("proposal.no"))
         self.no.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.no.setFixedHeight(24)
-        self.no.setStyleSheet(self._style(theme.DIM))
+        theme.dress(self.no, lambda: self._style(theme.DIM))
         self.no.clicked.connect(self._answered_no)
 
         words = QtWidgets.QVBoxLayout()
@@ -133,7 +133,7 @@ class ProposalBar(QtWidgets.QWidget):
             b = QtWidgets.QPushButton(label)
             b.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             b.setFixedHeight(24)
-            b.setStyleSheet(self._style(theme.BRASS))
+            theme.dress(b, lambda: self._style(theme.BRASS))
             b.clicked.connect(lambda _checked=False, p=payload: self._choose(p))
             self._buttons.append(b)
             self._row.addWidget(b)

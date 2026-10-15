@@ -32,6 +32,8 @@ class _Row(QtWidgets.QWidget):
         super().__init__()
         self.mark = QtWidgets.QLabel("○")
         self.mark.setFixedWidth(12)
+        self._present = False
+        theme.dress(self.mark, self._mark_sheet)
         self.name = QtWidgets.QLabel(label)
         self.name.setProperty("role", "key")
         self.detail = QtWidgets.QLabel("")
@@ -68,10 +70,13 @@ class _Row(QtWidgets.QWidget):
     def set_state(self, present: bool, detail: str = "",
                   actionable: bool = True) -> None:
         self.mark.setText("●" if present else "○")
-        self.mark.setStyleSheet(
-            f"color: {theme.GOOD if present else theme.DIM};")
+        self._present = present
+        self.mark.setStyleSheet(self._mark_sheet())
         self.detail.setText(detail)
         self.button.setEnabled(actionable)
+
+    def _mark_sheet(self) -> str:
+        return f"color: {theme.GOOD if self._present else theme.DIM};"
 
 
 class CalibrationButton(QtWidgets.QPushButton):
@@ -92,7 +97,7 @@ class CalibrationButton(QtWidgets.QPushButton):
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self._missing: list[str] = []
         self._busy = False
-        self._restyle()
+        theme.dress(self, self._sheet)
 
     def set_status(self, status: dict, busy: bool = False) -> None:
         self._missing = [label for key, label in self.ORDER
@@ -114,9 +119,12 @@ class CalibrationButton(QtWidgets.QPushButton):
         self._restyle()
 
     def _restyle(self) -> None:
+        self.setStyleSheet(self._sheet())
+
+    def _sheet(self) -> str:
         colour = (theme.BRASS if self._busy
                   else theme.DIM if not self._missing else theme.BRASS)
-        self.setStyleSheet(
+        return (
             f"QPushButton {{ border: 1px solid {theme.LINE};"
             f" border-radius: 3px; margin: 1px; padding: 5px 8px;"
             f" text-align: left; color: {colour}; background: transparent; }}"
@@ -157,13 +165,16 @@ class CalibrationPanel(QtWidgets.QWidget):
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(3)
         self.progress.hide()
-        self.progress.setStyleSheet(
+        theme.dress(self.progress, lambda: (
             f"QProgressBar {{ border: 0; background: {theme.SUNK}; }}"
-            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}")
+            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}"))
 
         self.status = QtWidgets.QLabel("")
         self.status.setProperty("role", "key")
         self.status.setWordWrap(True)
+        self._status_busy = False
+        self._status_ok = True
+        theme.dress(self.status, self._status_sheet)
 
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
@@ -207,17 +218,21 @@ class CalibrationPanel(QtWidgets.QWidget):
         self.lut.set_state(status.get("preview_lut", False), actionable=live)
 
     def set_progress(self, progress) -> None:
+        self._status_busy = not progress.finished
+        self._status_ok = bool(progress.ok)
+        self.status.setText(progress.message)
+        self.status.setStyleSheet(self._status_sheet())
         if progress.finished:
             self.progress.hide()
-            self.status.setText(progress.message)
-            self.status.setStyleSheet(
-                f"color: {theme.DIM if progress.ok else theme.BAD};")
             return
         self.progress.show()
         self.progress.setRange(0, progress.total or 0)
         self.progress.setValue(progress.done)
-        self.status.setText(progress.message)
-        self.status.setStyleSheet(f"color: {theme.BRASS};")
+
+    def _status_sheet(self) -> str:
+        if self._status_busy:
+            return f"color: {theme.BRASS};"
+        return f"color: {theme.DIM if self._status_ok else theme.BAD};"
 
 
 class DriftDialog(FramedDialog):

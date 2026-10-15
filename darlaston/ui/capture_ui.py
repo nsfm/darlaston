@@ -101,7 +101,7 @@ class ShutterButton(QtWidgets.QPushButton):
         self._average = 1
         self.setMinimumHeight(46)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self._restyle()
+        theme.dress(self, self._sheet)
 
     def set_average(self, n: int) -> None:
         """Carry the burst count on the button itself, so a sixteen-frame
@@ -121,6 +121,9 @@ class ShutterButton(QtWidgets.QPushButton):
         self._restyle()
 
     def _restyle(self) -> None:
+        self.setStyleSheet(self._sheet())
+
+    def _sheet(self) -> str:
         busy = self._state != "idle"
         live = not busy and self.isEnabled()
         # Filled rather than outlined. This is the one thing in the window a
@@ -136,7 +139,7 @@ class ShutterButton(QtWidgets.QPushButton):
         text = theme.BG if live else theme.DIM
         # Right side square: the averaging arrow butts against it to make one
         # pill, so the seam between them must not be rounded.
-        self.setStyleSheet(
+        return (
             f"QPushButton {{ border: 1px solid {edge};"
             f" border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
             f" margin: 1px 0 1px 1px;"
@@ -196,6 +199,8 @@ class ShutterBar(QtWidgets.QWidget):
         self.result.setProperty("role", "key")
         self.result.setWordWrap(True)
         self.result.setVisible(False)
+        self._result_ok = True
+        theme.dress(self.result, self._result_sheet)
 
         row = QtWidgets.QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -210,7 +215,7 @@ class ShutterBar(QtWidgets.QWidget):
         col.addWidget(self.result)
 
         self._frames = 1
-        self._restyle_arrow()
+        theme.dress(self.arrow, self._arrow_sheet)
 
     @property
     def frames(self) -> int:
@@ -223,8 +228,11 @@ class ShutterBar(QtWidgets.QWidget):
         self.average_changed.emit(n)
 
     def _restyle_arrow(self) -> None:
+        self.arrow.setStyleSheet(self._arrow_sheet())
+
+    def _arrow_sheet(self) -> str:
         colour = theme.BRASS if self._frames > 1 else theme.DIM
-        self.arrow.setStyleSheet(
+        return (
             f"QToolButton {{ border: 1px solid {colour}; border-left: 0;"
             f" border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
             f" margin: 1px 1px 1px 0; color: {colour};"
@@ -245,8 +253,11 @@ class ShutterBar(QtWidgets.QWidget):
     def set_result(self, text: str, ok: bool = True) -> None:
         self.result.setVisible(bool(text))
         self.result.setText(text)
-        self.result.setStyleSheet(
-            f"color: {theme.DIM if ok else theme.BAD};")
+        self._result_ok = ok
+        self.result.setStyleSheet(self._result_sheet())
+
+    def _result_sheet(self) -> str:
+        return f"color: {theme.DIM if self._result_ok else theme.BAD};"
 
 
 class SubjectField(QtWidgets.QWidget):
@@ -264,21 +275,25 @@ class SubjectField(QtWidgets.QWidget):
         self.edit.setPlaceholderText(_("capture.subject.placeholder"))
         self.edit.setClearButtonEnabled(True)
         self.edit.textChanged.connect(self.changed)
-        self.edit.setStyleSheet(
-            f"QLineEdit {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
-            f" margin: 1px;"
-            f" padding: 5px 7px; background: {theme.SUNK}; }}"
-            f"QLineEdit:focus {{ border-color: {theme.BRASS}; }}")
+        theme.dress(self.edit, self._field_sheet)
 
         self.slide = QtWidgets.QLineEdit()
         self.slide.setPlaceholderText(_("capture.slide.placeholder"))
-        self.slide.setStyleSheet(self.edit.styleSheet())
+        theme.dress(self.slide, self._field_sheet)
 
         col = QtWidgets.QVBoxLayout(self)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(5)
         col.addWidget(self.edit)
         col.addWidget(self.slide)
+
+    @staticmethod
+    def _field_sheet() -> str:
+        return (
+            f"QLineEdit {{ border: 1px solid {theme.LINE}; border-radius: 3px;"
+            f" margin: 1px;"
+            f" padding: 5px 7px; background: {theme.SUNK}; }}"
+            f"QLineEdit:focus {{ border-color: {theme.BRASS}; }}")
 
     @property
     def subject(self) -> str:

@@ -86,8 +86,78 @@ PALETTES: dict[str, Palette] = {
         line="#d8a2b7", ink="#2b1620", dim="#6f4e5d", accent="#c93a74",
         accent_lit="#d44b84", accent_deep="#a82f61", on_accent="#ffffff",
         good="#2e7d4f", bad="#b3261e", dark=False),
+    # Noctiluca glows in the dark. Red on black for a blacked-out room:
+    # fluorescence, darkfield, anything done with the eyes dark-adapted,
+    # which only red light leaves alone. Red being every colour here, a
+    # fault cannot be red; it is the one pale thing on the page.
+    "noctiluca": Palette(
+        "noctiluca", bg="#0e0404", panel="#170707", sunk="#080202",
+        line="#4a1515", ink="#ff7373", dim="#b84a4a", accent="#ff3d3d",
+        accent_lit="#ff6464", accent_deep="#cc3030", on_accent="#0e0404",
+        good="#ff9a5c", bad="#ffd9b0"),
 }
 DEFAULT_PALETTE = "pseudoscorpion"
+
+# ---- marks on the picture -------------------------------------------------
+#
+# What is drawn over the picture itself -- the focus-assist box, peaking,
+# the presenter's ring -- is chosen against the slide, not the chrome. A
+# pink box on a pink mount is no box at all, and the palette does not
+# know what is on the stage. Four inks that are not the colour of any
+# common mountant, the palette's accent for whoever wants the old look,
+# and "auto", which reads the picture and picks the ink furthest from it.
+
+MARK_INKS: dict[str, str] = {
+    "gold": "#ffeb5a",      # the peaking colour since the first release
+    "green": "#5aff7a",
+    "cyan": "#5ae6ff",
+    "magenta": "#ff5ad6",
+}
+MARK_CHOICES = ("auto", "accent", *MARK_INKS)
+#: The setting, as chosen: a name from MARK_CHOICES.
+mark = "auto"
+#: How much better a different ink has to score before "auto" changes its
+#: mind. The field under a drifting stage sits near the middle, and an
+#: ink that flickers between two colours is worse than either.
+MARK_MARGIN = 0.15
+
+
+def use_marks(name: str) -> str:
+    global mark
+    mark = name if name in MARK_CHOICES else "auto"
+    return mark
+
+
+def mark_ink(name: str) -> str:
+    """The hex for a mark choice other than "auto"."""
+    return BRASS if name == "accent" else MARK_INKS.get(name, MARK_INKS["gold"])
+
+
+def _opponent(rgb) -> tuple[float, float]:
+    """Red-against-green and yellow-against-blue, each in -1..1. Two axes
+    are enough to say how far apart two hues are, and they are the two
+    the eye uses."""
+    r, g, b = (float(v) / 255.0 for v in rgb[:3])
+    return r - g, (r + g) / 2.0 - b
+
+
+def pick_mark(field_rgb, current: str | None = None) -> str:
+    """Which of MARK_INKS stands out most against a picture whose mean
+    colour is `field_rgb`, keeping `current` unless another ink beats it
+    by MARK_MARGIN. With no incumbent the first in the table stands,
+    which is the old gold: a grey field is about equally far from every
+    ink, and the margin is what keeps it gold there."""
+    fa, fb = _opponent(field_rgb)
+    scores = {}
+    for name, hexcode in MARK_INKS.items():
+        ia, ib = _opponent(QtGui.QColor(hexcode).getRgb())
+        scores[name] = math.hypot(ia - fa, ib - fb)
+    if current not in scores:
+        current = next(iter(MARK_INKS))
+    best = max(scores, key=lambda n: scores[n])
+    if scores[best] - scores[current] < MARK_MARGIN:
+        return current
+    return best
 
 BG = PANEL = SUNK = LINE = ON_BRASS = INK = DIM = ""
 BRASS = BRASS_LIT = BRASS_DEEP = GOOD = BAD = ""
@@ -99,6 +169,41 @@ _listeners: list = []
 
 def on_change(callback) -> None:
     _listeners.append(callback)
+
+
+#: Widgets wearing a sheet built from the palette, with the recipe that
+#: built it, so `use()` can have them dressed again.
+_dressed: list = []
+
+
+def dress(widget, sheet) -> None:
+    """Give a widget a stylesheet that follows the palette.
+
+    `sheet` is a callable returning the sheet; it is applied now and
+    again after every `use()`. A sheet set once at construction is the
+    one thing a palette change cannot reach on its own, and there were
+    forty of them. The widget is held weakly and a dead one is dropped
+    the next time round, so this costs nothing to leave registered.
+    """
+    import inspect
+    import weakref
+    ref = weakref.ref(widget)
+    # A bound method as the recipe would otherwise keep its widget alive
+    # through this list; held weakly too, so a dressed widget can die.
+    recipe = weakref.WeakMethod(sheet) if inspect.ismethod(sheet) else (lambda: sheet)
+
+    def apply() -> bool:
+        w, fn = ref(), recipe()
+        if w is None or fn is None:
+            return False
+        try:
+            w.setStyleSheet(fn())
+        except RuntimeError:        # the C++ side has gone
+            return False
+        return True
+
+    apply()
+    _dressed.append(apply)
 
 
 def use(name: str) -> Palette:
@@ -125,6 +230,7 @@ def use(name: str) -> Palette:
             callback()
         except Exception:
             pass
+    _dressed[:] = [apply for apply in list(_dressed) if apply()]
     # The application's own palette, for whatever the stylesheet does not
     # name: a spin box's frame, a scroll bar, a list's base. Without it
     # those draw in the desktop's colours, which on a dark desktop under a

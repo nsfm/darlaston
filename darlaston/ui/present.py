@@ -22,7 +22,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..i18n import _
 from . import icons, theme
-from .widgets import BAD, POINTER_S, UI_METER, ScaleBarOverlay, draw_pointer
+from .widgets import (BAD, POINTER_S, UI_METER, MarkPicker, ScaleBarOverlay,
+                      draw_pointer)
 
 #: Centimetres per unit the screen may be measured in. Projector
 #: screens are quoted in feet or metres and desktop displays in inches
@@ -109,6 +110,7 @@ class PresentView(QtWidgets.QWidget):
         self._image: QtGui.QImage | None = None
         self._buf: np.ndarray | None = None
         self._src: np.ndarray | None = None
+        self._marks = MarkPicker()
         self._src_width = 0
         self._image_at: QtCore.QRect | None = None
         self._frame_count = 0
@@ -329,7 +331,8 @@ class PresentView(QtWidgets.QWidget):
             self._pointer = None
             return
         if not draw_pointer(p, target, (tx, ty),
-                            time.monotonic() - placed):
+                            time.monotonic() - placed,
+                            self._marks.resolve(self._src)):
             self._pointer = None
 
     def _draw_overlays(self, p: QtGui.QPainter, target: QtCore.QRect) -> None:

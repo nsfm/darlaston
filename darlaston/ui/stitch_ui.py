@@ -52,14 +52,16 @@ class StitchDialog(QtWidgets.QDialog):
         self.note = QtWidgets.QLabel(_("stitch.note.measuring"))
         self.note.setProperty("role", "key")
         self.note.setWordWrap(True)
+        self._note_ok = True
+        theme.dress(self.note, self._note_sheet)
 
         self.progress = QtWidgets.QProgressBar()
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(3)
         self.progress.hide()
-        self.progress.setStyleSheet(
+        theme.dress(self.progress, lambda: (
             f"QProgressBar {{ border: 0; background: {theme.SUNK}; }}"
-            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}")
+            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}"))
 
         self.go = QtWidgets.QPushButton(_("stitch.action.stitch"))
         self.go.clicked.connect(self._start)
@@ -82,7 +84,7 @@ class StitchDialog(QtWidgets.QDialog):
         col.addWidget(self.progress)
         col.addStretch(1)
         col.addLayout(row)
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
 
         # `*_args` rather than `*_`: `_` is the catalogue lookup.
         self.buttons.idToggled.connect(lambda *_args: self._update())
@@ -148,7 +150,11 @@ class StitchDialog(QtWidgets.QDialog):
         self.progress.hide()
         self.go.setEnabled(True)
         self.note.setText(text)
-        self.note.setStyleSheet(f"color: {theme.DIM if ok else theme.BAD};")
+        self._note_ok = ok
+        self.note.setStyleSheet(self._note_sheet())
+
+    def _note_sheet(self) -> str:
+        return f"color: {theme.DIM if self._note_ok else theme.BAD};"
 
 
 def _label(text: str) -> QtWidgets.QLabel:

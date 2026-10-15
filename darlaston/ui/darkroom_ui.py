@@ -47,7 +47,7 @@ class RenderDialog(QtWidgets.QDialog):
     def __init__(self, directory: Path, run, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("darkroom.render.title"))
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
         self._run = run
         self._directory = Path(directory)
 
@@ -98,7 +98,7 @@ class PlateDialog(QtWidgets.QDialog):
     def __init__(self, start: Path, run, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("darkroom.plate.title"))
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
         self._run = run
         self._start = Path(start)
 
@@ -208,7 +208,7 @@ class ArrangeDialog(QtWidgets.QDialog):
     def __init__(self, directory: Path, run, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("darkroom.arrange.title"))
-        self.setStyleSheet(theme.stylesheet())
+        theme.dress(self, theme.stylesheet)
         self._run = run
         self._directory = Path(directory)
 

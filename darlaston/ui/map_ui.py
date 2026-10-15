@@ -469,6 +469,7 @@ class SlideMapPanel(QtWidgets.QWidget):
         self._pos: tuple[float, float] | None = None
         self._frame: tuple[int, int] = (0, 0)
         self._tracking = False
+        theme.dress(self.status, lambda: f"color: {self._status_line()[1]};")
 
     def preferred_size(self, host: QtWidgets.QWidget) -> tuple[int, int]:
         """About a third of the view wide, bounded, plus room for the two
@@ -649,19 +650,20 @@ class SlideMapPanel(QtWidgets.QWidget):
                 colour)
 
     def _update_status(self) -> None:
+        text, colour = self._status_line()
+        self.status.setText(text)
+        self.status.setStyleSheet(f"color: {colour};")
+
+    def _status_line(self) -> tuple[str, str]:
+        """What the status line says right now, and in which colour."""
         mosaic = self._mosaic_status()
         if mosaic is not None:
-            text, colour = mosaic
-            self.status.setText(text)
-            self.status.setStyleSheet(f"color: {colour};")
-            return
+            return mosaic
         # Tracking advisories outrank the idle readouts: "lost, watching
         # for familiar ground" is the one thing this line exists to say,
         # and the map is where the eyes already are when it applies.
         if self._advisory:
-            self.status.setText(self._advisory)
-            self.status.setStyleSheet(f"color: {theme.BRASS};")
-            return
+            return self._advisory, theme.BRASS
         guide = self.model.guidance(self._pos, self._frame[0])
         if guide is not None:
             fields, compass = guide
@@ -682,8 +684,7 @@ class SlideMapPanel(QtWidgets.QWidget):
             # earning the space once the canvas made coverage visible at
             # a glance, and the advisories above wanted the room.
             text, colour = _("map.state.tracking"), theme.DIM
-        self.status.setText(text)
-        self.status.setStyleSheet(f"color: {colour};")
+        return text, colour
 
     # ---- actions ---------------------------------------------------------
 

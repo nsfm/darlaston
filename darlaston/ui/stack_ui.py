@@ -89,9 +89,9 @@ class StackAssembly(QtWidgets.QWidget):
         policy.setRetainSizeWhenHidden(True)
         self.progress.setSizePolicy(policy)
         self.progress.hide()
-        self.progress.setStyleSheet(
+        theme.dress(self.progress, lambda: (
             f"QProgressBar {{ border: 0; background: {theme.SUNK}; }}"
-            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}")
+            f"QProgressBar::chunk {{ background: {theme.BRASS}; }}"))
 
         self.status = QtWidgets.QLabel("")
         self.status.setProperty("role", "key")
@@ -137,7 +137,7 @@ class StackAssembly(QtWidgets.QWidget):
         has not met yet.
         """
         menu = QtWidgets.QMenu(self.options)
-        menu.setStyleSheet(self.window().styleSheet())
+        theme.dress(menu, theme.stylesheet)
 
         def group(heading, field, choices):
             # A disabled item as the header -- our stylesheet renders
