@@ -170,7 +170,9 @@ class ProposalBar(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         p.setPen(QtGui.QPen(QtGui.QColor(theme.BRASS)))
-        p.setBrush(QtGui.QColor(16, 18, 16, 242))
+        scrim = QtGui.QColor(theme.BG)
+        scrim.setAlpha(242)
+        p.setBrush(scrim)
         p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5,
                                                               -0.5, -0.5),
                           6.0, 6.0)

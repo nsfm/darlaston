@@ -137,3 +137,27 @@ def test_the_appearance_page_changes_the_palette_live(qapp, tmp_path, monkeypatc
     finally:
         win.shutdown()
         theme.use(theme.DEFAULT_PALETTE)
+
+
+def test_the_painted_widgets_and_the_application_palette_follow_the_theme(qapp):
+    """The first light palette showed every graph and slider still black:
+    widgets.py had a private palette, and spin boxes drew in the desktop's
+    colours. Both follow the theme now, in place."""
+    from PySide6 import QtGui, QtWidgets
+    from darlaston.ui import theme, widgets
+
+    try:
+        theme.use("blepharisma-light")
+        light = theme.PALETTES["blepharisma-light"]
+        assert widgets.INK.name() == light.ink
+        assert widgets.PANEL.name() == light.sunk, "a graph sits on the sunk ground"
+        assert widgets.BG_TEXT.name() == light.on_accent
+        assert widgets.GROUND.name() == light.bg
+        pal = QtWidgets.QApplication.instance().palette()
+        assert pal.color(QtGui.QPalette.ColorRole.Base).name() == light.sunk
+        assert pal.color(QtGui.QPalette.ColorRole.Highlight).name() == light.accent
+        assert "QSpinBox, QDoubleSpinBox {" in theme.stylesheet()
+        assert light.sunk in theme.stylesheet()
+    finally:
+        theme.use(theme.DEFAULT_PALETTE)
+        assert widgets.INK.name() == theme.PALETTES[theme.DEFAULT_PALETTE].ink

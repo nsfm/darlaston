@@ -10,17 +10,47 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..i18n import _, n_
 from ..live.profile import Meter
 
-INK = QtGui.QColor("#e8e6e3")
-DIM = QtGui.QColor("#6b6864")
-PANEL = QtGui.QColor("#0b0d0b")
-GOOD = QtGui.QColor("#5fb37a")
-WARN = QtGui.QColor("#d9a441")
-BAD = QtGui.QColor("#d0605e")
-BRASS = QtGui.QColor("#c89b4a")
-LINE = QtGui.QColor("#2a2e29")
-#: Type drawn over the amber fill. Near-black rather than white:
-#: light type on this amber is about 1.9:1, which is unreadable.
-BG_TEXT = QtGui.QColor("#101210")
+from . import theme
+
+# The painted widgets' colours, as QColor objects because that is what a
+# painter takes. They used to be a private palette of their own, which is
+# how the first light palette showed every graph and slider still black.
+# Now they are *the theme's* colours: the objects are kept, and updated in
+# place whenever the palette changes, so every painter that holds one
+# draws in the new colours on its next repaint.
+INK = QtGui.QColor()
+DIM = QtGui.QColor()
+PANEL = QtGui.QColor()      # the sunk ground a graph sits on
+GOOD = QtGui.QColor()
+WARN = QtGui.QColor()       # the accent, lit: a warning, not a fault
+BAD = QtGui.QColor()
+BRASS = QtGui.QColor()
+LINE = QtGui.QColor()
+#: Type drawn over the accent fill. The palette says what clears it:
+#: near-black on brass, white on the light pink.
+BG_TEXT = QtGui.QColor()
+#: The ground, for the scrims and shadows that used to be a hand-typed
+#: near-black.
+GROUND = QtGui.QColor()
+
+
+def _follow_theme() -> None:
+    for colour, name in ((INK, "INK"), (DIM, "DIM"), (PANEL, "SUNK"),
+                         (GOOD, "GOOD"), (WARN, "BRASS_LIT"), (BAD, "BAD"),
+                         (BRASS, "BRASS"), (LINE, "LINE"),
+                         (BG_TEXT, "ON_BRASS"), (GROUND, "BG")):
+        colour.setNamedColor(getattr(theme, name))
+
+
+_follow_theme()
+theme.on_change(_follow_theme)
+
+
+def _ground(alpha: int) -> QtGui.QColor:
+    """The ground with an alpha, for a scrim over a picture."""
+    out = QtGui.QColor(GROUND)
+    out.setAlpha(alpha)
+    return out
 
 #: Paint costs land in the same table as the pipeline's feature costs, so
 #: "the preview" and "the slide map" can be compared against "peaking"
@@ -53,7 +83,7 @@ def draw_pointer(p: QtGui.QPainter, target: QtCore.QRect,
     p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
     p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
     stroke = max(2.0, span * 0.006)
-    for colour, width, alpha in ((QtGui.QColor(16, 18, 16), stroke * 2.2,
+    for colour, width, alpha in ((QtGui.QColor(GROUND), stroke * 2.2,
                                   0.4 * fade),
                                  (BRASS, stroke, fade)):
         ink = QtGui.QColor(colour)
@@ -371,7 +401,7 @@ class LiveView(QtWidgets.QWidget):
         plate = QtCore.QRectF(box.left() + 1, box.top() + 1, w, h)
         p.save()
         p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(16, 18, 16, 190))
+        p.setBrush(_ground(190))
         p.drawRect(plate)
         p.setPen(BRASS)
         p.setFont(font)
@@ -645,7 +675,7 @@ class LiveView(QtWidgets.QWidget):
 
     def paintEvent(self, _event) -> None:
         with QtGui.QPainter(self) as p:
-            p.fillRect(self.rect(), QtGui.QColor("#111110"))
+            p.fillRect(self.rect(), PANEL)
             if self._image is None:
                 p.setPen(DIM)
                 p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
@@ -1146,10 +1176,10 @@ class _Toggle(QtWidgets.QPushButton):
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(19)
         self.setStyleSheet(
-            "QPushButton { border: 1px solid #2a2e29; border-radius: 9px;"
+            f"QPushButton {{ border: 1px solid {theme.LINE}; border-radius: 9px;"
             " margin: 1px; padding: 1px 9px; font-size: 10px;"
-            " color: #757a72; background: transparent; }"
-            "QPushButton:hover { color: #e4e7e0; }"
+            f" color: {theme.DIM}; background: transparent; }}"
+            f"QPushButton:hover {{ color: {theme.INK}; }}"
             # Its own stylesheet overrides the theme entirely, so the
             # disabled state has to be spelled out here too or a chip for
             # a camera that is not connected reads as live.

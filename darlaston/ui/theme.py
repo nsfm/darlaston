@@ -92,6 +92,13 @@ DEFAULT_PALETTE = "pseudoscorpion"
 BG = PANEL = SUNK = LINE = ON_BRASS = INK = DIM = ""
 BRASS = BRASS_LIT = BRASS_DEEP = GOOD = BAD = ""
 current: Palette = PALETTES[DEFAULT_PALETTE]
+#: Told after every `use()`. For colours held as objects rather than read
+#: by name -- the painted widgets keep QColors -- so they can follow.
+_listeners: list = []
+
+
+def on_change(callback) -> None:
+    _listeners.append(callback)
 
 
 def use(name: str) -> Palette:
@@ -113,7 +120,37 @@ def use(name: str) -> Palette:
     ON_BRASS, INK, DIM = palette.on_accent, palette.ink, palette.dim
     BRASS, BRASS_LIT, BRASS_DEEP = palette.accent, palette.accent_lit, palette.accent_deep
     GOOD, BAD = palette.good, palette.bad
+    for callback in list(_listeners):
+        try:
+            callback()
+        except Exception:
+            pass
+    # The application's own palette, for whatever the stylesheet does not
+    # name: a spin box's frame, a scroll bar, a list's base. Without it
+    # those draw in the desktop's colours, which on a dark desktop under a
+    # light palette is black boxes on pink.
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        app.setPalette(qpalette())
     return palette
+
+
+def qpalette() -> QtGui.QPalette:
+    """The current palette as Qt's own, for the roles the stylesheet
+    does not reach."""
+    P, R = QtGui.QPalette, QtGui.QPalette.ColorRole
+    pal = P()
+    pairs = {R.Window: BG, R.WindowText: INK, R.Base: SUNK, R.AlternateBase: PANEL,
+             R.Text: INK, R.Button: PANEL, R.ButtonText: INK, R.ToolTipBase: PANEL,
+             R.ToolTipText: INK, R.Highlight: BRASS, R.HighlightedText: ON_BRASS,
+             R.PlaceholderText: DIM, R.Light: LINE, R.Midlight: LINE, R.Dark: SUNK,
+             R.Mid: LINE, R.Shadow: SUNK, R.Link: BRASS}
+    for role, colour in pairs.items():
+        pal.setColor(role, QtGui.QColor(colour))
+    pal.setColor(P.ColorGroup.Disabled, R.Text, QtGui.QColor(LINE))
+    pal.setColor(P.ColorGroup.Disabled, R.WindowText, QtGui.QColor(LINE))
+    pal.setColor(P.ColorGroup.Disabled, R.ButtonText, QtGui.QColor(LINE))
+    return pal
 
 
 use(DEFAULT_PALETTE)
@@ -213,6 +250,7 @@ class _OurIconsOnly(QtWidgets.QProxyStyle):
 def install(app) -> None:
     """Apply what has to be set on the application rather than a widget."""
     app.setStyle(_OurIconsOnly(app.style()))
+    app.setPalette(qpalette())
 
 
 #: Sizes a window manager, taskbar, dock or alt-tab switcher is likely to
@@ -568,6 +606,7 @@ def stylesheet() -> str:
     from . import icons
     chevron = icons.path_for("chevron-down", INK)
     chevron_off = icons.path_for("chevron-down", LINE)
+    chevron_up = icons.path_for("chevron-up", INK)
     return f"""
     QWidget {{
         background: {BG}; color: {INK};
@@ -673,6 +712,26 @@ def stylesheet() -> str:
     QLineEdit:focus {{ border-color: {BRASS}; }}
     QLineEdit:disabled {{ color: {LINE}; border-color: {LINE}; }}
     QLineEdit[readOnly="true"] {{ color: {DIM}; background: transparent; }}
+    /* The same box, for numbers. Left to Qt these drew in the desktop's
+       colours, which under a light palette on a dark desktop was black. */
+    QSpinBox, QDoubleSpinBox {{
+        font-family: "{fam['mono']}";
+        border: 1px solid {LINE}; border-radius: 3px; margin: 1px;
+        padding: 3px 5px; background: {SUNK}; color: {INK};
+        selection-background-color: {LINE}; selection-color: {INK};
+    }}
+    QSpinBox:focus, QDoubleSpinBox:focus {{ border-color: {BRASS}; }}
+    QSpinBox:disabled, QDoubleSpinBox:disabled {{ color: {LINE}; border-color: {LINE}; }}
+    QSpinBox::up-button, QSpinBox::down-button,
+    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+        width: 14px; border: 0; background: transparent;
+    }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+        image: url({chevron_up}); width: 9px; height: 9px;
+    }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+        image: url({chevron}); width: 9px; height: 9px;
+    }}
 
     QComboBox {{
         font-family: "{fam['mono']}";

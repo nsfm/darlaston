@@ -303,7 +303,7 @@ class _SpeedGauge(QtWidgets.QWidget):
             path.addRoundedRect(rect, 3.0, 3.0)
             p.setClipPath(path)
 
-            p.fillRect(self.rect(), QtGui.QColor("#141614"))
+            p.fillRect(self.rect(), QtGui.QColor(theme.SUNK))
             frac = min(self._ratio / self.FULL, 1.0)
             dithered_fill(p, rect, frac, QtGui.QColor(self.tone),
                           dissolve=self.DISSOLVE)
@@ -313,7 +313,9 @@ class _SpeedGauge(QtWidgets.QWidget):
 
             # The limit, where the map begins refusing frames: the one
             # threshold worth a mark. Faint, so the colour still leads.
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 70), 1))
+            faint = QtGui.QColor(theme.INK)
+            faint.setAlpha(70)
+            p.setPen(QtGui.QPen(faint, 1))
             x = rect.left() + rect.width() / self.FULL
             p.drawLine(QtCore.QPointF(x, rect.top()),
                        QtCore.QPointF(x, rect.bottom()))
