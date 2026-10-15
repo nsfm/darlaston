@@ -256,3 +256,36 @@ def test_the_appearance_page_offers_the_marks_and_remembers(qapp, tmp_path, monk
 def theme_choices():
     from darlaston.ui import theme
     return theme.MARK_CHOICES
+
+
+def test_a_palettes_file_adds_palettes_and_skips_what_is_not_one(tmp_path):
+    """No page for it and none planned. A flat object of the twelve
+    colours and `dark`; a bad entry is skipped and a name of ours is
+    replaced, so a palette can be tuned without waiting for a release."""
+    import json
+    from darlaston.ui import theme
+
+    ours = dict(theme.PALETTES)
+    path = tmp_path / "palettes.json"
+    good = {k: "#123456" for k in theme._PALETTE_KEYS}
+    path.write_text(json.dumps({
+        "volvox": {**good, "accent": "#ABCDEF", "dark": False},
+        "broken": {**good, "ink": "green"},
+        "short": {"bg": "#000000"},
+        "nonsense": 3,
+        "diatom": {**good},
+    }))
+    try:
+        assert theme.load_extra(path) == ["volvox", "diatom"]
+        assert theme.PALETTES["volvox"].accent == "#abcdef"
+        assert theme.PALETTES["volvox"].dark is False
+        assert theme.PALETTES["diatom"].bg == "#123456", "ours, replaced"
+        assert "broken" not in theme.PALETTES
+        assert theme.use("volvox").name == "volvox"
+        (tmp_path / "bad.json").write_text("{")
+        assert theme.load_extra(tmp_path / "bad.json") == []
+        assert theme.load_extra(tmp_path / "missing.json") == []
+    finally:
+        theme.PALETTES.clear()
+        theme.PALETTES.update(ours)
+        theme.use(theme.DEFAULT_PALETTE)
