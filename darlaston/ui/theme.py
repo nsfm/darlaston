@@ -101,6 +101,37 @@ def on_change(callback) -> None:
     _listeners.append(callback)
 
 
+#: Widgets wearing a sheet built from the palette, with the recipe that
+#: built it, so `use()` can have them dressed again.
+_dressed: list = []
+
+
+def dress(widget, sheet) -> None:
+    """Give a widget a stylesheet that follows the palette.
+
+    `sheet` is a callable returning the sheet; it is applied now and
+    again after every `use()`. A sheet set once at construction is the
+    one thing a palette change cannot reach on its own, and there were
+    forty of them. The widget is held weakly and a dead one is dropped
+    the next time round, so this costs nothing to leave registered.
+    """
+    import weakref
+    ref = weakref.ref(widget)
+
+    def apply() -> bool:
+        w = ref()
+        if w is None:
+            return False
+        try:
+            w.setStyleSheet(sheet())
+        except RuntimeError:        # the C++ side has gone
+            return False
+        return True
+
+    apply()
+    _dressed.append(apply)
+
+
 def use(name: str) -> Palette:
     """Make a palette current, by name; an unknown name is the default.
 
@@ -125,6 +156,7 @@ def use(name: str) -> Palette:
             callback()
         except Exception:
             pass
+    _dressed[:] = [apply for apply in list(_dressed) if apply()]
     # The application's own palette, for whatever the stylesheet does not
     # name: a spin box's frame, a scroll bar, a list's base. Without it
     # those draw in the desktop's colours, which on a dark desktop under a
