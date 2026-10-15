@@ -79,15 +79,22 @@ def test_the_setup_menu_offers_appearance_and_not_a_lone_frame_tick(qapp, tmp_pa
 
 # ---- the palettes --------------------------------------------------------------
 
-def test_every_palette_is_dark_and_legible():
-    """Named for things seen down the tube, and every one dark: this is
-    used in a dark room beside a bright eyepiece. Legible by the WCAG
-    numbers rather than by eye, so "high contrast" is a figure."""
+def test_every_palette_says_which_it_is_and_is_legible():
+    """Named for things seen down the tube. Dark by default, for a dark
+    room beside a bright eyepiece; the light ones say so, and the frame
+    follows. Legible by the WCAG numbers rather than by eye, so "high
+    contrast" is a figure."""
+    from darlaston.ui import theme
+
+    assert theme.PALETTES[theme.DEFAULT_PALETTE].dark
     from darlaston.ui import theme
 
     for name, p in theme.PALETTES.items():
         assert p.name == name
-        assert theme._luminance(p.bg) < 0.05, f"{name}: ground is not dark"
+        if p.dark:
+            assert theme._luminance(p.bg) < 0.05, f"{name}: ground is not dark"
+        else:
+            assert theme._luminance(p.bg) > 0.6, f"{name}: ground is not light"
         assert theme.contrast(p.ink, p.bg) >= 7.0, f"{name}: ink on ground"
         assert theme.contrast(p.dim, p.panel) >= 3.0, f"{name}: dim on panel"
         assert theme.contrast(p.accent, p.bg) >= 3.0, f"{name}: accent on ground"

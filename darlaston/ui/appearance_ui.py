@@ -15,7 +15,7 @@ import sys
 from PySide6 import QtWidgets
 
 from ..i18n import _
-from .perf_ui import _heading, _note
+from .perf_ui import _heading
 from .shell import FramedDialog
 
 
@@ -43,7 +43,8 @@ class AppearanceDialog(FramedDialog):
         labels = {"pseudoscorpion": _("appearance.palette.pseudoscorpion"),
                   "blepharisma": _("appearance.palette.blepharisma"),
                   "stentor": _("appearance.palette.stentor"),
-                  "diatom": _("appearance.palette.diatom")}
+                  "diatom": _("appearance.palette.diatom"),
+                  "blepharisma-light": _("appearance.palette.blepharisma_light")}
         from . import theme
         for name in theme.PALETTES:
             button = QtWidgets.QRadioButton(labels.get(name, name))
@@ -51,7 +52,6 @@ class AppearanceDialog(FramedDialog):
             button.setProperty("value", name)
             self._palette.addButton(button)
             col.addWidget(button)
-        col.addWidget(_note(_("appearance.palette.note")))
         self._palette.buttonToggled.connect(self._palette_changed)
         col.addSpacing(4)
 
@@ -69,7 +69,6 @@ class AppearanceDialog(FramedDialog):
             row.addWidget(button)
         row.addStretch(1)
         col.addLayout(row)
-        col.addWidget(_note(_("appearance.sidebar.note")))
         self._side.buttonToggled.connect(self._side_changed)
 
         # Where the desktop already draws a good title bar this is a
@@ -86,7 +85,6 @@ class AppearanceDialog(FramedDialog):
             col.addSpacing(4)
             col.addWidget(_heading(_("appearance.frame.heading")))
             col.addWidget(self.frame)
-            col.addWidget(_note(_("appearance.frame.note")))
             self.frame.toggled.connect(self._frame_changed)
 
         col.addStretch(1)
@@ -113,6 +111,10 @@ class AppearanceDialog(FramedDialog):
         self._settings.save()
         if self._on_palette is not None:
             self._on_palette()
+        # This page too: its sheet was built at construction, and the
+        # person is looking straight at it.
+        from . import theme
+        self.setStyleSheet(theme.stylesheet())
 
     def _frame_changed(self, on: bool) -> None:
         if self._set_frame is None:

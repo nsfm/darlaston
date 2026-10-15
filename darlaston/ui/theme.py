@@ -7,9 +7,9 @@ Three decisions, each with a reason:
     the image it exists to serve.
   * **Red means exactly one thing:** clipping and faults. A palette that spends
     red on decoration cannot warn with it.
-  * **Dark only.** Used in a dark room beside a bright eyepiece. A light theme
-    here would be a decision made for the screenshot, not the session. There
-    are several palettes now, and every one of them keeps this.
+  * **Dark by default.** Used in a dark room beside a bright eyepiece, and
+    the default palette never forgets it. Light palettes exist for a bench in
+    daylight; each palette says which it is, and the window frame follows.
 """
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ class Palette:
     on_accent: str    # lettering that sits on the accent
     good: str
     bad: str          # clipping and faults, nothing else
+    dark: bool = True # the frame and the icons follow this
 
 
 PALETTES: dict[str, Palette] = {
@@ -77,6 +78,14 @@ PALETTES: dict[str, Palette] = {
         line="#3a3f45", ink="#ffffff", dim="#aeb6bf", accent="#d6dde6",
         accent_lit="#eef2f6", accent_deep="#aeb7c2", on_accent="#0a0b0c",
         good="#8ef0a0", bad="#ff7070"),
+    # The same pink, on a bright ground, for a desk in daylight. The
+    # accent is a shade deeper than the dark one's so that white lettering
+    # clears 4.5:1 on it -- the first draft's did not, and the test said.
+    "blepharisma-light": Palette(
+        "blepharisma-light", bg="#fbe9f0", panel="#f5d7e2", sunk="#efc5d5",
+        line="#d8a2b7", ink="#2b1620", dim="#6f4e5d", accent="#c93a74",
+        accent_lit="#d44b84", accent_deep="#a82f61", on_accent="#ffffff",
+        good="#2e7d4f", bad="#b3261e", dark=False),
 }
 DEFAULT_PALETTE = "pseudoscorpion"
 
@@ -542,7 +551,7 @@ def match_frame(window) -> bool:
         import ctypes
 
         handle = ctypes.c_void_p(int(window.winId()))
-        enabled = ctypes.c_int(1)
+        enabled = ctypes.c_int(1 if current.dark else 0)
         for attribute in _DWM_DARK:
             ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 handle, ctypes.c_uint(attribute), ctypes.byref(enabled),
