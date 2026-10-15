@@ -164,6 +164,9 @@ class Settings:
     sidebar_side: str = "right"      # right | left
     #: Which palette the interface wears; see theme.py.
     palette: str = "pseudoscorpion"
+    #: The contrast turned up on whichever palette: white ink, stronger
+    #: lines, the accent lit. A switch, not a palette of its own.
+    high_contrast: bool = False
     #: The ink for what is drawn over the picture: "auto" reads the
     #: picture, the rest name a colour. theme.MARK_CHOICES.
     marks: str = "auto"
