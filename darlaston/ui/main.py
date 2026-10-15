@@ -4324,6 +4324,10 @@ def main() -> int:
 
     app = QtWidgets.QApplication(sys.argv)
     first = Settings.load()
+    from ..session.model import config_dir
+    extra = theme.load_extra(config_dir() / "palettes.json")
+    if extra:
+        _log.info("palettes.json: %s", ", ".join(extra))
     theme.use(first.palette)
     theme.use_marks(first.marks)
     theme.install(app)

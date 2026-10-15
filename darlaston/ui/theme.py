@@ -98,6 +98,44 @@ PALETTES: dict[str, Palette] = {
 }
 DEFAULT_PALETTE = "pseudoscorpion"
 
+#: A palette has these, and `dark` besides; a file that leaves one out
+#: is describing something else.
+_PALETTE_KEYS = ("bg", "panel", "sunk", "line", "ink", "dim", "accent",
+                 "accent_lit", "accent_deep", "on_accent", "good", "bad")
+
+
+def load_extra(path: Path) -> list[str]:
+    """Palettes from a file of the person's own, added to PALETTES.
+
+    `palettes.json` beside settings.json: an object of name to palette,
+    each a flat object of the twelve colours as "#rrggbb", and `dark`
+    (true unless said). No page for it and none planned: the person who
+    wants grey-on-grey with a neon accent can have it without the rest
+    of us seeing it. A bad entry is skipped, not fatal; a name that is
+    one of ours replaces ours, which is how a palette gets tuned without
+    waiting for a release. Returns the names taken.
+    """
+    import json
+    import re
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    if not isinstance(raw, dict):
+        return []
+    taken = []
+    for name, entry in raw.items():
+        if not isinstance(entry, dict) or not isinstance(name, str):
+            continue
+        colours = {k: entry.get(k) for k in _PALETTE_KEYS}
+        if not all(isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v)
+                   for v in colours.values()):
+            continue
+        PALETTES[name] = Palette(name, **{k: v.lower() for k, v in colours.items()},
+                                 dark=bool(entry.get("dark", True)))
+        taken.append(name)
+    return taken
+
 # ---- marks on the picture -------------------------------------------------
 #
 # What is drawn over the picture itself -- the focus-assist box, peaking,
