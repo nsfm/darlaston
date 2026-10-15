@@ -1183,12 +1183,12 @@ class _Toggle(QtWidgets.QPushButton):
             # Its own stylesheet overrides the theme entirely, so the
             # disabled state has to be spelled out here too or a chip for
             # a camera that is not connected reads as live.
-            "QPushButton:disabled { color: #2a2e29;"
-            " border-color: #2a2e29; background: transparent; }"
-            "QPushButton:checked:disabled { color: #101210;"
-            " background: #2a2e29; border-color: #2a2e29; }"
-            "QPushButton:checked { color: #e4e7e0; background: #c89b4a;"
-            " border-color: #c89b4a; }")
+            f"QPushButton:disabled {{ color: {theme.LINE};"
+            f" border-color: {theme.LINE}; background: transparent; }}"
+            f"QPushButton:checked:disabled {{ color: {theme.BG};"
+            f" background: {theme.LINE}; border-color: {theme.LINE}; }}"
+            f"QPushButton:checked {{ color: {theme.ON_BRASS};"
+            f" background: {theme.BRASS}; border-color: {theme.BRASS}; }}")
 
 
 class CoverageMeter(QtWidgets.QWidget):
@@ -1391,10 +1391,12 @@ class ValueBar(QtWidgets.QWidget):
             path.addRoundedRect(rect, radius, radius)
             p.setClipPath(path)
 
-            p.fillRect(self.rect(), PANEL if on else QtGui.QColor("#141614"))
+            # Disabled, the bar lifts off the sunk ground onto the panel
+            # and its fill goes the colour of a rule: present, not live.
+            p.fillRect(self.rect(), PANEL if on else QtGui.QColor(theme.PANEL))
 
             edge = self._fill_x()
-            amber = BRASS if on else QtGui.QColor("#3a3a35")
+            amber = BRASS if on else QtGui.QColor(LINE)
             # The dissolve narrows away over the last quarter of the travel.
             # A bar at maximum has nothing left to fade into, and a pattern
             # running off the end of the track reads as an unfinished edge
@@ -1662,7 +1664,7 @@ class SaveGauge(QtWidgets.QWidget):
             # gaps between cells keep whatever the palette painted and read
             # as a row of bright tick marks competing with the one thing
             # here meant to draw the eye.
-            p.fillRect(self.rect(), QtGui.QColor("#0e100e"))
+            p.fillRect(self.rect(), PANEL)
             n = min(self._depth, self.LEGIBLE)
             full = self.width()
             span = (full - self.GAP * (n - 1)) / n if n else full
@@ -1672,7 +1674,7 @@ class SaveGauge(QtWidgets.QWidget):
                 # the one being written and the only one that fills. The
                 # rest are waiting, and waiting is not progress.
                 p.fillRect(QtCore.QRectF(x, 0, span, self.height()),
-                           QtGui.QColor("#1b1d1a"))
+                           QtGui.QColor(theme.PANEL))
                 if i == 0 and self._fraction > 0:
                     edge = span * self._fraction
                     solid = max(0.0, edge - self.DITHER)
@@ -1683,8 +1685,10 @@ class SaveGauge(QtWidgets.QWidget):
                     # Queued but untouched: the outline of a cell, so the
                     # count is legible without four amber blocks claiming
                     # four things are happening at once.
+                    faint = QtGui.QColor(theme.BRASS_DEEP)
+                    faint.setAlpha(110)
                     p.fillRect(QtCore.QRectF(x, self.height() - 1, span, 1),
-                               QtGui.QColor("#4a3f28"))
+                               faint)
             if self._pressed or self._depth > self.LEGIBLE:
                 # A solid rule closing the row, for two situations that
                 # amount to the same warning: more outstanding than cells

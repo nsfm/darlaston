@@ -203,7 +203,7 @@ class _Canvas(QtWidgets.QWidget):
                                         QtCore.Qt.BrushStyle.BDiagPattern))
                 p.drawRect(rect)
             if tile.state == "failed":
-                colour = QtGui.QColor(200, 60, 50)
+                colour = QtGui.QColor(theme.BAD)
             else:
                 colour = QtGui.QColor(theme.BRASS)
                 if not last and tile.state != "stacking":

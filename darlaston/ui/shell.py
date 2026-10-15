@@ -145,7 +145,8 @@ class CaptionButton(QtWidgets.QWidget):
                 if self.kind == "close":
                     wash = QtGui.QColor(0xC4, 0x2B, 0x1C, 255 if self.down else 220)
                 else:
-                    wash = QtGui.QColor(255, 255, 255, 38 if self.down else 24)
+                    wash = QtGui.QColor(theme.INK)
+                    wash.setAlpha(38 if self.down else 24)
                 p.fillRect(self.rect(), wash)
             ink = (QtGui.QColor(theme.INK) if self.kind != "close" or not
                    (self.hot or self.down) else QtGui.QColor("#ffffff"))
