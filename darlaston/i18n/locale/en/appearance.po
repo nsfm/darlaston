@@ -45,6 +45,47 @@ msgstr "Diatom"
 msgid "appearance.palette.noctiluca"
 msgstr "Noctiluca"
 
+msgid "appearance.palette.atkins"
+msgstr "Atkins"
+
+msgid "appearance.palette.haematoxylin"
+msgstr "Haematoxylin"
+
+msgid "appearance.palette.spirogyra"
+msgstr "Spirogyra"
+
+msgid "appearance.palette.radiolaria"
+msgstr "Radiolaria"
+
+msgid "appearance.palette.aequorea"
+msgstr "Aequorea"
+
+#. The chips' tooltips: the full name, where one word is short for one.
+
+msgid "appearance.palette.pseudoscorpion.tooltip"
+msgstr "A pseudoscorpion in amber, the night the byte order was wrong"
+
+msgid "appearance.palette.blepharisma.tooltip"
+msgstr "Blepharisma japonicum, pink by its own pigment"
+
+msgid "appearance.palette.stentor.tooltip"
+msgstr "Stentor coeruleus"
+
+msgid "appearance.palette.noctiluca.tooltip"
+msgstr "Noctiluca scintillans, for a blacked-out room"
+
+msgid "appearance.palette.atkins.tooltip"
+msgstr "Anna Atkins, cyanotypes of British algae, 1843"
+
+msgid "appearance.palette.haematoxylin.tooltip"
+msgstr "Haematoxylin and eosin"
+
+msgid "appearance.palette.radiolaria.tooltip"
+msgstr "Radiolaria, as Haeckel drew them"
+
+msgid "appearance.palette.aequorea.tooltip"
+msgstr "Aequorea victoria, the jellyfish GFP came from"
+
 #. The second axis: a pill each, greyed where the organism has no such
 #. palette. High contrast is a switch over either.
 

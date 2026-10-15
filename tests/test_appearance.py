@@ -140,9 +140,18 @@ def test_the_palettes_sit_on_two_axes():
     from darlaston.ui import theme
 
     assert theme.organisms() == ["pseudoscorpion", "blepharisma", "stentor",
-                                 "diatom", "noctiluca"]
+                                 "diatom", "noctiluca", "atkins", "haematoxylin",
+                                 "spirogyra", "radiolaria", "aequorea"]
     assert theme.variants_of("blepharisma") == {"dark": "blepharisma",
                                                 "light": "blepharisma-light"}
+    assert theme.variants_of("atkins") == {"dark": "atkins", "light": "atkins-light"}
+    assert theme.variants_of("aequorea") == {"dark": "aequorea"}
+    # Every light one sits under a chip that also has a dark one, and
+    # says which it is, and every key is still its own name.
+    for name, p in theme.PALETTES.items():
+        assert p.name == name
+        if p.variant == "light":
+            assert not p.dark and "dark" in theme.variants_of(p.organism)
     assert theme.variants_of("noctiluca") == {"dark": "noctiluca"}
     assert theme.key_for("blepharisma", "light") == "blepharisma-light"
     assert theme.key_for("noctiluca", "light") == "noctiluca", "falls back to dark"
