@@ -61,8 +61,52 @@ UI_METER = Meter()
 POINTER_S = 2.0
 
 
+class MarkPicker:
+    """Which ink the marks over a picture wear, now.
+
+    One per view that draws on a picture. Asked on every frame with the
+    reduced frame buffer, BGR; reads it only every EVERY frames and only
+    when the setting is "auto", and otherwise answers from the setting.
+    `changed` is set when the colour moves, for whoever caches a tinted
+    buffer and has to retint it.
+    """
+
+    EVERY = 15
+
+    def __init__(self) -> None:
+        self._name: str | None = None
+        self._hex = ""
+        self._age = self.EVERY
+        self.colour = QtGui.QColor(theme.mark_ink("gold"))
+        self.changed = False
+
+    def resolve(self, bgr: np.ndarray | None) -> QtGui.QColor:
+        if theme.mark != "auto":
+            name = theme.mark
+        else:
+            self._age += 1
+            name = self._name if self._name in theme.MARK_INKS else None
+            if (self._age >= self.EVERY and bgr is not None and bgr.size
+                    and bgr.ndim == 3):
+                self._age = 0
+                # Every eighth pixel each way, through cv2.mean on a
+                # contiguous copy: 52 us on the preview buffer, against
+                # 300 for numpy's reshape-and-mean, and it runs once in
+                # fifteen frames. Not a number the pipeline will notice.
+                mean = cv2.mean(np.ascontiguousarray(bgr[::8, ::8]))
+                name = theme.pick_mark(mean[2::-1], name)
+            name = name or "gold"
+        hexcode = theme.mark_ink(name)
+        if hexcode != self._hex:
+            self._name, self._hex = name, hexcode
+            self.colour = QtGui.QColor(hexcode)
+            self.changed = True
+        return self.colour
+
+
 def draw_pointer(p: QtGui.QPainter, target: QtCore.QRect,
-                 at: tuple[float, float], age: float) -> bool:
+                 at: tuple[float, float], age: float,
+                 ink: QtGui.QColor | None = None) -> bool:
     """The presenter's ring: blooms outward from where they pointed and
     fades as it goes. Returns False once it has nothing left to draw.
 
@@ -85,10 +129,10 @@ def draw_pointer(p: QtGui.QPainter, target: QtCore.QRect,
     stroke = max(2.0, span * 0.006)
     for colour, width, alpha in ((QtGui.QColor(GROUND), stroke * 2.2,
                                   0.4 * fade),
-                                 (BRASS, stroke, fade)):
-        ink = QtGui.QColor(colour)
-        ink.setAlphaF(alpha)
-        p.setPen(QtGui.QPen(ink, width))
+                                 (ink or BRASS, stroke, fade)):
+        stroke_ink = QtGui.QColor(colour)
+        stroke_ink.setAlphaF(alpha)
+        p.setPen(QtGui.QPen(stroke_ink, width))
         p.drawEllipse(QtCore.QPointF(cx, cy), radius, radius)
     p.restore()
     return True
@@ -257,6 +301,8 @@ class LiveView(QtWidgets.QWidget):
         #: The scale bar, drawn once into its own overlay rather than
         #: into every paint. See `ScaleBarOverlay` for the cost history.
         self._bar_overlay = ScaleBarOverlay(self)
+        #: The ink for the focus box, the drag, the ring and peaking.
+        self._marks = MarkPicker()
         self._balance_rect: tuple[float, float, float, float] | None = None
         self._balancing = False
         #: The balance box is shown while it is being placed and for a
@@ -324,6 +370,7 @@ class LiveView(QtWidgets.QWidget):
                                    QtGui.QImage.Format.Format_BGR888)
         self._image_at = target
         self._bar_overlay.place(target, w, self._corner_is_light)
+        self._marks.resolve(self._buf)
         if peaking is not None:
             self._peaking = self._peaking_overlay(peaking, (tw, th))
         self.update()
@@ -403,7 +450,7 @@ class LiveView(QtWidgets.QWidget):
         p.setPen(QtCore.Qt.PenStyle.NoPen)
         p.setBrush(_ground(190))
         p.drawRect(plate)
-        p.setPen(BRASS)
+        p.setPen(self._marks.colour)
         p.setFont(font)
         p.drawText(plate, QtCore.Qt.AlignmentFlag.AlignCenter, text)
         p.restore()
@@ -578,13 +625,17 @@ class LiveView(QtWidgets.QWidget):
         buf = getattr(self, "_peak_buf", None)
         if buf is None or buf.shape[:2] != (h, w):
             buf = np.empty((h, w, 4), np.uint8)
-            buf[..., 0] = 90         # B
-            buf[..., 1] = 235        # G
-            buf[..., 2] = 255        # R
             self._peak_buf = buf
             self._peak_image = QtGui.QImage(
                 buf.data, w, h, buf.strides[0],
                 QtGui.QImage.Format.Format_ARGB32)
+            self._marks.changed = True
+        if self._marks.changed:
+            tint = self._marks.colour
+            buf[..., 0] = tint.blue()
+            buf[..., 1] = tint.green()
+            buf[..., 2] = tint.red()
+            self._marks.changed = False
         # Writing one interleaved plane: mixChannels does it as a single
         # strided store, np.multiply did it as a strided read-modify-write.
         cv2.mixChannels([mask], [buf], [0, 3])
@@ -713,7 +764,8 @@ class LiveView(QtWidgets.QWidget):
             pointer = getattr(self, "_pointer", None)
             if pointer is not None:
                 at, t0 = pointer
-                if not draw_pointer(p, target, at, time.monotonic() - t0):
+                if not draw_pointer(p, target, at, time.monotonic() - t0,
+                                    self._marks.colour):
                     self._pointer = None
 
             # The measured region, drawn so it is never a mystery what the focus
@@ -725,7 +777,7 @@ class LiveView(QtWidgets.QWidget):
                                     w * target.width(), h * target.height())
                 if self._remaining is not None:
                     p.drawImage(box, self._remaining)
-                pen = QtGui.QPen(BRASS, 1)
+                pen = QtGui.QPen(self._marks.colour, 1)
                 pen.setStyle(QtCore.Qt.PenStyle.DashLine)
                 p.setPen(pen)
                 p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
@@ -749,7 +801,7 @@ class LiveView(QtWidgets.QWidget):
                     self._label_box(p, box, "white balance")
 
             if self._drag_from is not None and self._drag_to is not None:
-                p.setPen(QtGui.QPen(BRASS, 1))
+                p.setPen(QtGui.QPen(self._marks.colour, 1))
                 p.drawRect(QtCore.QRectF(self._drag_from, self._drag_to).normalized())
 
             notice = getattr(self, "_notice", None)
@@ -1175,7 +1227,7 @@ class _Toggle(QtWidgets.QPushButton):
         self.setToolTip(hint)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(19)
-        self.setStyleSheet(
+        theme.dress(self, lambda: (
             f"QPushButton {{ border: 1px solid {theme.LINE}; border-radius: 9px;"
             " margin: 1px; padding: 1px 9px; font-size: 10px;"
             f" color: {theme.DIM}; background: transparent; }}"
@@ -1188,7 +1240,7 @@ class _Toggle(QtWidgets.QPushButton):
             f"QPushButton:checked:disabled {{ color: {theme.BG};"
             f" background: {theme.LINE}; border-color: {theme.LINE}; }}"
             f"QPushButton:checked {{ color: {theme.ON_BRASS};"
-            f" background: {theme.BRASS}; border-color: {theme.BRASS}; }}")
+            f" background: {theme.BRASS}; border-color: {theme.BRASS}; }}"))
 
 
 class CoverageMeter(QtWidgets.QWidget):

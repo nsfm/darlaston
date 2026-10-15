@@ -46,9 +46,8 @@ This document tracks upcoming features, concerns, and ideas.
 
 ## Presentation
 
-- [ ] **Sidebar on the left, optionally.** Asked for by the first Windows tester. The panel rail is one widget in one layout; a setting and a mirror of the layout is most of it, plus the drag strip knowing which side the menus sit on.
-- [ ] **Export the slide map as an image.** Asked for by the same tester; the other half of the plate idea in Slide mapping above, and it wants the same thought about scale, pins and thumbnails before it is a button.
-- [ ] **Higher-contrast colour themes.** Asked for too. The theme is one stylesheet with named tokens, so a second palette is cheap; the hard part is the bits drawn by hand (dither, swatches, the map) agreeing with it. Worth doing as an accessibility option rather than a skin.
+- [ ] **Export the slide map as an image.** Asked for by the first Windows tester; the other half of the plate idea in Slide mapping above, and it wants the same thought about scale, pins and thumbnails before it is a button.
+- [ ] **UI scale.** Small, normal, large: the 10px monospace is tiny on a 4K laptop, and the tester's "higher contrast" ask was probably half a "bigger" ask. Held, because the rail is already full at its one size: most heights are pinned in pixels, and a larger type has to reflow the rail rather than overflow it. Wants the rail's rows to size from the font before it is a setting.
 - [ ] **Capture moment.** When the shutter fires, hold the developed capture on the presentation for a couple of seconds with a border pulse. "We just took that" is half the fun of tabling; deferred to keep the first release of the feature calm.
 - [ ] **QR code beside the header.** Visitors ask "where do I find you". Needs either a dependency or a hand-rolled encoder, and neither is earned yet. The /still.jpg endpoint is a natural target once it exists.
 - [ ] **Auto-hold on a blank field.** The slide leaving the stage could hold the last good frame automatically, piggybacking on the blank detection the stack trigger uses. Needs care in darkfield, where blank is dark rather than bright, and must never fire during ordinary panning.

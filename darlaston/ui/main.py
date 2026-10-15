@@ -720,7 +720,13 @@ class MainWindow(QtWidgets.QMainWindow):
             frame_available=sys.platform != "darwin",
             frame_on=self._frame is not None,
             set_frame=self._set_window_frame,
-            on_palette=self._apply_palette).exec()
+            on_palette=self._apply_palette,
+            on_marks=self._apply_marks).exec()
+
+    def _apply_marks(self) -> None:
+        """The ink for the marks over the picture, from the settings.
+        The views pick it up on their next frame."""
+        theme.use_marks(self.settings.marks)
 
     def _apply_palette(self) -> None:
         """Wear the palette the settings name, now.
@@ -2182,7 +2188,7 @@ class MainWindow(QtWidgets.QMainWindow):
         kill = box.addButton(_("stack.discard.confirm"),
                              QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(keep)
-        box.setStyleSheet(theme.stylesheet())
+        theme.dress(box, theme.stylesheet)
         box.exec()
         if box.clickedButton() is not kill:
             return
@@ -2579,7 +2585,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.setInformativeText(
             "Restart the file manager (or log out and in), then clear the "
             "old empty entries:\n\n    rm -rf ~/.cache/thumbnails")
-        box.setStyleSheet(theme.stylesheet())
+        theme.dress(box, theme.stylesheet)
         box.exec()
 
     def _run_stack_merge(self, directory) -> None:
@@ -2701,7 +2707,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 now = box.addButton("Stitch…",
                                     QtWidgets.QMessageBox.ButtonRole.AcceptRole)
                 box.setDefaultButton(now)
-                box.setStyleSheet(theme.stylesheet())
+                theme.dress(box, theme.stylesheet)
                 box.exec()
                 if box.clickedButton() is now:
                     self._stitch_mosaic(done.dir)
@@ -2755,7 +2761,7 @@ class MainWindow(QtWidgets.QMainWindow):
         retry = box.addButton("Discard and reshoot",
                               QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         box.setDefaultButton(keep)
-        box.setStyleSheet(theme.stylesheet())
+        theme.dress(box, theme.stylesheet)
         box.exec()
         if box.clickedButton() is retry:
             result.path.unlink(missing_ok=True)
@@ -3322,7 +3328,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _edit_present_screen(self) -> None:
         dialog = ScreenDialog(self.settings, self)
-        dialog.setStyleSheet(theme.stylesheet())
+        theme.dress(dialog, theme.stylesheet)
         dialog.exec()
 
     def _set_present(self, attr: str, on: bool) -> None:
@@ -3333,7 +3339,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _edit_present_header(self) -> None:
         dialog = HeaderDialog(self.settings, self)
-        dialog.setStyleSheet(theme.stylesheet())
+        theme.dress(dialog, theme.stylesheet)
         if dialog.exec():
             # The dialog decides whether there is a header to show; the
             # menu's check mark follows it rather than remembering.
@@ -3486,7 +3492,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else 0)
         dialog = ScaleBarDialog(self.settings, self, sample=sample,
                                 um_per_px=um, sample_scale=shrink)
-        dialog.setStyleSheet(theme.stylesheet())
+        theme.dress(dialog, theme.stylesheet)
         dialog.exec()
 
     def _open_photographer(self) -> None:
@@ -4317,7 +4323,9 @@ def main() -> int:
     apply_thread_budget()
 
     app = QtWidgets.QApplication(sys.argv)
-    theme.use(Settings.load().palette)
+    first = Settings.load()
+    theme.use(first.palette)
+    theme.use_marks(first.marks)
     theme.install(app)
     theme.load_fonts()
     theme.identify(app)                  # after the fonts: the mark is a letter

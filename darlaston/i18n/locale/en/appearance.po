@@ -44,3 +44,31 @@ msgstr "Diatom"
 
 msgid "appearance.palette.blepharisma_light"
 msgstr "Blepharisma (light)"
+
+msgid "appearance.palette.noctiluca"
+msgstr "Noctiluca"
+
+#. ---- the marks over the picture ------------------------------------------
+#. The focus-assist box, peaking and the presenter's ring. "Auto" reads
+#. the picture and picks the ink furthest from it.
+
+msgid "appearance.marks.heading"
+msgstr "Marks on the picture"
+
+msgid "appearance.marks.auto"
+msgstr "Chosen against the picture"
+
+msgid "appearance.marks.accent"
+msgstr "The palette's accent"
+
+msgid "appearance.marks.gold"
+msgstr "Gold"
+
+msgid "appearance.marks.green"
+msgstr "Green"
+
+msgid "appearance.marks.cyan"
+msgstr "Cyan"
+
+msgid "appearance.marks.magenta"
+msgstr "Magenta"

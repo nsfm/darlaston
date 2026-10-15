@@ -162,8 +162,11 @@ class Settings:
     #: where it has always been; left is for people whose hand lives
     #: there, and the first Windows tester asked.
     sidebar_side: str = "right"      # right | left
-    #: Which palette the interface wears. Every one is dark; see theme.py.
+    #: Which palette the interface wears; see theme.py.
     palette: str = "pseudoscorpion"
+    #: The ink for what is drawn over the picture: "auto" reads the
+    #: picture, the rest name a colour. theme.MARK_CHOICES.
+    marks: str = "auto"
     #: Ask GitHub, once per launch, whether a newer release exists. On by
     #: default, because an adopter running a version with a fixed bug in
     #: it is the failure this exists to prevent -- and switchable, because
