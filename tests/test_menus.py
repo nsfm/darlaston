@@ -38,10 +38,11 @@ def test_four_menus_on_one_axis(win):
 def test_setup_holds_what_outlives_the_session(win):
     # The frame toggle is absent on macOS, where the frame is never ours
     # to take -- only to restyle.
-    chrome = [] if sys.platform == "darwin" else ["Styled window frame"]
+    # The frame switch lives in Appearance now, with the rail's side and,
+    # one day, the palette: a lone tick in a menu advertised nothing.
     assert entries(win, "Setup") == [
         "Microscopes…", "Cameras…", "Photographer…", "Files…",
-        "Performance…", *chrome,
+        "Performance…", "Appearance…",
         "Install camera SDK…", "Install DNG thumbnailer…"]
 
 

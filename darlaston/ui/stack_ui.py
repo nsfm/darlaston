@@ -348,8 +348,9 @@ class _AssemblyCanvas(QtWidgets.QWidget):
             f = p.font()
             f.setPointSizeF(8.5)
             p.setFont(f)
-            p.fillRect(QtCore.QRect(x + 6, y + 6, 72, 18),
-                       QtGui.QColor(0, 0, 0, 150))
+            scrim = QtGui.QColor(theme.BG)
+            scrim.setAlpha(190)
+            p.fillRect(QtCore.QRect(x + 6, y + 6, 72, 18), scrim)
             p.drawText(QtCore.QRect(x + 10, y + 6, 68, 18),
                        QtCore.Qt.AlignmentFlag.AlignVCenter,
                        n_("stack.canvas.detail.slices", o._count))

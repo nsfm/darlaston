@@ -90,7 +90,7 @@ class _InfoBubble(QtWidgets.QLabel):
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
-            f"QLabel {{ background: {QtGui.QColor(20, 22, 20).name()};"
+            f"QLabel {{ background: {theme.PANEL};"
             f" color: {theme.INK}; border: 1px solid {theme.LINE};"
             f" border-radius: 4px; }}")
 
@@ -312,7 +312,9 @@ class FloatingPanel(QtWidgets.QWidget):
         with QtGui.QPainter(self) as p:
             p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
             p.setPen(QtGui.QPen(QtGui.QColor(theme.LINE)))
-            p.setBrush(QtGui.QColor(16, 18, 16, 235))
+            scrim = QtGui.QColor(theme.BG)
+            scrim.setAlpha(235)
+            p.setBrush(scrim)
             p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5,
                                                                   -0.5, -0.5),
                               5.0, 5.0)

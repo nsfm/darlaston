@@ -10,17 +10,47 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..i18n import _, n_
 from ..live.profile import Meter
 
-INK = QtGui.QColor("#e8e6e3")
-DIM = QtGui.QColor("#6b6864")
-PANEL = QtGui.QColor("#0b0d0b")
-GOOD = QtGui.QColor("#5fb37a")
-WARN = QtGui.QColor("#d9a441")
-BAD = QtGui.QColor("#d0605e")
-BRASS = QtGui.QColor("#c89b4a")
-LINE = QtGui.QColor("#2a2e29")
-#: Type drawn over the amber fill. Near-black rather than white:
-#: light type on this amber is about 1.9:1, which is unreadable.
-BG_TEXT = QtGui.QColor("#101210")
+from . import theme
+
+# The painted widgets' colours, as QColor objects because that is what a
+# painter takes. They used to be a private palette of their own, which is
+# how the first light palette showed every graph and slider still black.
+# Now they are *the theme's* colours: the objects are kept, and updated in
+# place whenever the palette changes, so every painter that holds one
+# draws in the new colours on its next repaint.
+INK = QtGui.QColor()
+DIM = QtGui.QColor()
+PANEL = QtGui.QColor()      # the sunk ground a graph sits on
+GOOD = QtGui.QColor()
+WARN = QtGui.QColor()       # the accent, lit: a warning, not a fault
+BAD = QtGui.QColor()
+BRASS = QtGui.QColor()
+LINE = QtGui.QColor()
+#: Type drawn over the accent fill. The palette says what clears it:
+#: near-black on brass, white on the light pink.
+BG_TEXT = QtGui.QColor()
+#: The ground, for the scrims and shadows that used to be a hand-typed
+#: near-black.
+GROUND = QtGui.QColor()
+
+
+def _follow_theme() -> None:
+    for colour, name in ((INK, "INK"), (DIM, "DIM"), (PANEL, "SUNK"),
+                         (GOOD, "GOOD"), (WARN, "BRASS_LIT"), (BAD, "BAD"),
+                         (BRASS, "BRASS"), (LINE, "LINE"),
+                         (BG_TEXT, "ON_BRASS"), (GROUND, "BG")):
+        colour.setNamedColor(getattr(theme, name))
+
+
+_follow_theme()
+theme.on_change(_follow_theme)
+
+
+def _ground(alpha: int) -> QtGui.QColor:
+    """The ground with an alpha, for a scrim over a picture."""
+    out = QtGui.QColor(GROUND)
+    out.setAlpha(alpha)
+    return out
 
 #: Paint costs land in the same table as the pipeline's feature costs, so
 #: "the preview" and "the slide map" can be compared against "peaking"
@@ -53,7 +83,7 @@ def draw_pointer(p: QtGui.QPainter, target: QtCore.QRect,
     p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
     p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
     stroke = max(2.0, span * 0.006)
-    for colour, width, alpha in ((QtGui.QColor(16, 18, 16), stroke * 2.2,
+    for colour, width, alpha in ((QtGui.QColor(GROUND), stroke * 2.2,
                                   0.4 * fade),
                                  (BRASS, stroke, fade)):
         ink = QtGui.QColor(colour)
@@ -371,7 +401,7 @@ class LiveView(QtWidgets.QWidget):
         plate = QtCore.QRectF(box.left() + 1, box.top() + 1, w, h)
         p.save()
         p.setPen(QtCore.Qt.PenStyle.NoPen)
-        p.setBrush(QtGui.QColor(16, 18, 16, 190))
+        p.setBrush(_ground(190))
         p.drawRect(plate)
         p.setPen(BRASS)
         p.setFont(font)
@@ -645,7 +675,7 @@ class LiveView(QtWidgets.QWidget):
 
     def paintEvent(self, _event) -> None:
         with QtGui.QPainter(self) as p:
-            p.fillRect(self.rect(), QtGui.QColor("#111110"))
+            p.fillRect(self.rect(), PANEL)
             if self._image is None:
                 p.setPen(DIM)
                 p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
@@ -1146,19 +1176,19 @@ class _Toggle(QtWidgets.QPushButton):
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(19)
         self.setStyleSheet(
-            "QPushButton { border: 1px solid #2a2e29; border-radius: 9px;"
+            f"QPushButton {{ border: 1px solid {theme.LINE}; border-radius: 9px;"
             " margin: 1px; padding: 1px 9px; font-size: 10px;"
-            " color: #757a72; background: transparent; }"
-            "QPushButton:hover { color: #e4e7e0; }"
+            f" color: {theme.DIM}; background: transparent; }}"
+            f"QPushButton:hover {{ color: {theme.INK}; }}"
             # Its own stylesheet overrides the theme entirely, so the
             # disabled state has to be spelled out here too or a chip for
             # a camera that is not connected reads as live.
-            "QPushButton:disabled { color: #2a2e29;"
-            " border-color: #2a2e29; background: transparent; }"
-            "QPushButton:checked:disabled { color: #101210;"
-            " background: #2a2e29; border-color: #2a2e29; }"
-            "QPushButton:checked { color: #e4e7e0; background: #c89b4a;"
-            " border-color: #c89b4a; }")
+            f"QPushButton:disabled {{ color: {theme.LINE};"
+            f" border-color: {theme.LINE}; background: transparent; }}"
+            f"QPushButton:checked:disabled {{ color: {theme.BG};"
+            f" background: {theme.LINE}; border-color: {theme.LINE}; }}"
+            f"QPushButton:checked {{ color: {theme.ON_BRASS};"
+            f" background: {theme.BRASS}; border-color: {theme.BRASS}; }}")
 
 
 class CoverageMeter(QtWidgets.QWidget):
@@ -1361,10 +1391,12 @@ class ValueBar(QtWidgets.QWidget):
             path.addRoundedRect(rect, radius, radius)
             p.setClipPath(path)
 
-            p.fillRect(self.rect(), PANEL if on else QtGui.QColor("#141614"))
+            # Disabled, the bar lifts off the sunk ground onto the panel
+            # and its fill goes the colour of a rule: present, not live.
+            p.fillRect(self.rect(), PANEL if on else QtGui.QColor(theme.PANEL))
 
             edge = self._fill_x()
-            amber = BRASS if on else QtGui.QColor("#3a3a35")
+            amber = BRASS if on else QtGui.QColor(LINE)
             # The dissolve narrows away over the last quarter of the travel.
             # A bar at maximum has nothing left to fade into, and a pattern
             # running off the end of the track reads as an unfinished edge
@@ -1632,7 +1664,7 @@ class SaveGauge(QtWidgets.QWidget):
             # gaps between cells keep whatever the palette painted and read
             # as a row of bright tick marks competing with the one thing
             # here meant to draw the eye.
-            p.fillRect(self.rect(), QtGui.QColor("#0e100e"))
+            p.fillRect(self.rect(), PANEL)
             n = min(self._depth, self.LEGIBLE)
             full = self.width()
             span = (full - self.GAP * (n - 1)) / n if n else full
@@ -1642,7 +1674,7 @@ class SaveGauge(QtWidgets.QWidget):
                 # the one being written and the only one that fills. The
                 # rest are waiting, and waiting is not progress.
                 p.fillRect(QtCore.QRectF(x, 0, span, self.height()),
-                           QtGui.QColor("#1b1d1a"))
+                           QtGui.QColor(theme.PANEL))
                 if i == 0 and self._fraction > 0:
                     edge = span * self._fraction
                     solid = max(0.0, edge - self.DITHER)
@@ -1653,8 +1685,10 @@ class SaveGauge(QtWidgets.QWidget):
                     # Queued but untouched: the outline of a cell, so the
                     # count is legible without four amber blocks claiming
                     # four things are happening at once.
+                    faint = QtGui.QColor(theme.BRASS_DEEP)
+                    faint.setAlpha(110)
                     p.fillRect(QtCore.QRectF(x, self.height() - 1, span, 1),
-                               QtGui.QColor("#4a3f28"))
+                               faint)
             if self._pressed or self._depth > self.LEGIBLE:
                 # A solid rule closing the row, for two situations that
                 # amount to the same warning: more outstanding than cells

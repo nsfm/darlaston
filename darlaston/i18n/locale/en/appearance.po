@@ -1,0 +1,46 @@
+# How the program looks and where things sit. Setup > Appearance.
+
+msgid "appearance.title"
+msgstr "Appearance"
+
+#. ---- the rail of panels -------------------------------------------------
+
+msgid "appearance.sidebar.heading"
+msgstr "Sidebar"
+
+msgid "appearance.sidebar.left"
+msgstr "Left"
+
+msgid "appearance.sidebar.right"
+msgstr "Right"
+
+#. ---- the window frame ---------------------------------------------------
+
+msgid "appearance.frame.heading"
+msgstr "Window frame"
+
+#. Was a lone entry in the Setup menu, "Styled window frame".
+msgid "appearance.frame.label"
+msgstr "Styled window frame"
+
+#. ---- the palette --------------------------------------------------------
+#. Each is named for something seen down the tube. The names are proper
+#. nouns and stay as they are in every language.
+
+msgid "appearance.palette.heading"
+msgstr "Palette"
+
+msgid "appearance.palette.pseudoscorpion"
+msgstr "Pseudoscorpion"
+
+msgid "appearance.palette.blepharisma"
+msgstr "Blepharisma"
+
+msgid "appearance.palette.stentor"
+msgstr "Stentor"
+
+msgid "appearance.palette.diatom"
+msgstr "Diatom"
+
+msgid "appearance.palette.blepharisma_light"
+msgstr "Blepharisma (light)"
