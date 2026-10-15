@@ -31,3 +31,28 @@ msgstr ""
 "Draw our own title bar instead of the desktop's. Where the desktop draws a "
 "good one this is a matter of taste; where it draws a poor one or none, it is "
 "the difference between looking finished and not."
+
+#. ---- the palette --------------------------------------------------------
+#. Each is named for something seen down the tube. The names are proper
+#. nouns and stay as they are in every language.
+
+msgid "appearance.palette.heading"
+msgstr "Palette"
+
+msgid "appearance.palette.pseudoscorpion"
+msgstr "Pseudoscorpion"
+
+msgid "appearance.palette.blepharisma"
+msgstr "Blepharisma"
+
+msgid "appearance.palette.stentor"
+msgstr "Stentor"
+
+msgid "appearance.palette.diatom"
+msgstr "Diatom"
+
+msgid "appearance.palette.note"
+msgstr ""
+"Grey-green and brass; pink on wine; blue-green, high contrast; glass on "
+"black, high contrast. Every one is dark: this is used in a dark room beside "
+"a bright eyepiece. Open windows pick it up when reopened."

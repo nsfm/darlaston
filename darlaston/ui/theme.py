@@ -8,7 +8,8 @@ Three decisions, each with a reason:
   * **Red means exactly one thing:** clipping and faults. A palette that spends
     red on decoration cannot warn with it.
   * **Dark only.** Used in a dark room beside a bright eyepiece. A light theme
-    here would be a decision made for the screenshot, not the session.
+    here would be a decision made for the screenshot, not the session. There
+    are several palettes now, and every one of them keeps this.
 """
 from __future__ import annotations
 
@@ -18,22 +19,112 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 # ---- palette --------------------------------------------------------------
-BG = "#101210"        # ground, green-grey biased: the inside of an instrument
-PANEL = "#191c19"
-SUNK = "#0b0d0b"
-LINE = "#2a2e29"
-#: Lettering that sits *on* the accent rather than beside it. Brass is a
-#: light colour, so INK over it is two light tones and reads as a smudge
-#: at eleven pixels. The slider already draws its label this way where the
-#: fill passes under it, and a filled segment is the same idea.
-ON_BRASS = "#101210"
-INK = "#e4e7e0"
-DIM = "#757a72"
-BRASS = "#c89b4a"     # accent, and active state
-BRASS_LIT = "#d7ad60"  # the same, under the pointer
-BRASS_DEEP = "#ab8339"  # and pressed
-GOOD = "#6fa96f"      # in focus, healthy link
-BAD = "#d0605e"       # clipping and faults, nothing else
+#
+# Several, every one dark, every one named for something seen down the
+# tube. The module-level names below are the *current* palette's colours:
+# the stylesheet and a hundred-odd hand-drawn places read them by name at
+# the moment they draw, so `use()` swaps them in place and the next paint
+# is in the new colours. The dataclass is the record; the names are the
+# working copy.
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Palette:
+    name: str
+    bg: str           # ground
+    panel: str
+    sunk: str
+    line: str
+    ink: str
+    dim: str
+    accent: str       # the brass, or whatever stands in for it
+    accent_lit: str   # under the pointer
+    accent_deep: str  # pressed
+    on_accent: str    # lettering that sits on the accent
+    good: str
+    bad: str          # clipping and faults, nothing else
+
+
+PALETTES: dict[str, Palette] = {
+    # The default: the grey-green of an instrument's inside, with brass.
+    # Named for the amber pseudoscorpion that previewed blue and captured
+    # amber the night the byte order was wrong.
+    "pseudoscorpion": Palette(
+        "pseudoscorpion", bg="#101210", panel="#191c19", sunk="#0b0d0b",
+        line="#2a2e29", ink="#e4e7e0", dim="#757a72", accent="#c89b4a",
+        accent_lit="#d7ad60", accent_deep="#ab8339", on_accent="#101210",
+        good="#6fa96f", bad="#d0605e"),
+    # Blepharisma are pink, and it is their own pigment. A wine-dark
+    # ground so the pink is the accent and not the glare.
+    "blepharisma": Palette(
+        "blepharisma", bg="#1a1115", panel="#251a20", sunk="#120b0f",
+        line="#45303a", ink="#f3e4ea", dim="#a98a98", accent="#f48fb6",
+        accent_lit="#ffa8c8", accent_deep="#d06f96", on_accent="#1a1115",
+        good="#7fc98f", bad="#ff6b6b"),
+    # Stentor coeruleus is that blue-green. The high-contrast one: white
+    # ink, strong lines, an accent that cannot be missed.
+    "stentor": Palette(
+        "stentor", bg="#06110f", panel="#0c1c19", sunk="#030807",
+        line="#245a50", ink="#ffffff", dim="#a9d2ca", accent="#4fd1c5",
+        accent_lit="#7fe3d9", accent_deep="#38a99f", on_accent="#06110f",
+        good="#8ef0a0", bad="#ff7070"),
+    # A diatom under darkfield: glass on black. Neutral, bright, silver
+    # for an accent. Also high contrast, with no colour spent at all.
+    "diatom": Palette(
+        "diatom", bg="#0a0b0c", panel="#151719", sunk="#040506",
+        line="#3a3f45", ink="#ffffff", dim="#aeb6bf", accent="#d6dde6",
+        accent_lit="#eef2f6", accent_deep="#aeb7c2", on_accent="#0a0b0c",
+        good="#8ef0a0", bad="#ff7070"),
+}
+DEFAULT_PALETTE = "pseudoscorpion"
+
+BG = PANEL = SUNK = LINE = ON_BRASS = INK = DIM = ""
+BRASS = BRASS_LIT = BRASS_DEEP = GOOD = BAD = ""
+current: Palette = PALETTES[DEFAULT_PALETTE]
+
+
+def use(name: str) -> Palette:
+    """Make a palette current, by name; an unknown name is the default.
+
+    Rebinds the module-level colours, which is what everything draws
+    from. Already-built widgets repaint in the new colours as they
+    repaint; a stylesheet built earlier has to be asked for again, which
+    the window does.
+    """
+    global BG, PANEL, SUNK, LINE, ON_BRASS, INK, DIM
+    global BRASS, BRASS_LIT, BRASS_DEEP, GOOD, BAD, current
+    palette = PALETTES.get(name, PALETTES[DEFAULT_PALETTE])
+    current = palette
+    BG, PANEL, SUNK, LINE = palette.bg, palette.panel, palette.sunk, palette.line
+    #: Lettering that sits *on* the accent rather than beside it. Brass is
+    #: a light colour, so INK over it is two light tones and reads as a
+    #: smudge at eleven pixels.
+    ON_BRASS, INK, DIM = palette.on_accent, palette.ink, palette.dim
+    BRASS, BRASS_LIT, BRASS_DEEP = palette.accent, palette.accent_lit, palette.accent_deep
+    GOOD, BAD = palette.good, palette.bad
+    return palette
+
+
+use(DEFAULT_PALETTE)
+
+
+def _luminance(hex_colour: str) -> float:
+    """Relative luminance, as WCAG defines it, from "#rrggbb"."""
+    r, g, b = (int(hex_colour[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+
+    def lin(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def contrast(a: str, b: str) -> float:
+    """WCAG contrast ratio between two colours, 1 to 21."""
+    la, lb = _luminance(a), _luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
 
 FONT_DIR = Path(__file__).parent / "fonts"
 

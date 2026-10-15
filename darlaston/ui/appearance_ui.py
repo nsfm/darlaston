@@ -24,15 +24,36 @@ class AppearanceDialog(FramedDialog):
 
     def __init__(self, settings, on_sidebar, parent=None, *,
                  frame_available: bool = False, frame_on: bool = False,
-                 set_frame=None) -> None:
+                 set_frame=None, on_palette=None) -> None:
         super().__init__(parent, width=460)
         self.setWindowTitle(_("appearance.title"))
         self._settings = settings
         self._on_sidebar = on_sidebar
         self._set_frame = set_frame
+        self._on_palette = on_palette
 
         col = self.content
         col.setSpacing(10)
+
+        # The palettes, every one dark and every one named for something
+        # seen down the tube. Spelled out, so the catalogue check can see
+        # the keys; the order is the order in the theme.
+        col.addWidget(_heading(_("appearance.palette.heading")))
+        self._palette = QtWidgets.QButtonGroup(self)
+        labels = {"pseudoscorpion": _("appearance.palette.pseudoscorpion"),
+                  "blepharisma": _("appearance.palette.blepharisma"),
+                  "stentor": _("appearance.palette.stentor"),
+                  "diatom": _("appearance.palette.diatom")}
+        from . import theme
+        for name in theme.PALETTES:
+            button = QtWidgets.QRadioButton(labels.get(name, name))
+            button.setChecked(settings.palette == name)
+            button.setProperty("value", name)
+            self._palette.addButton(button)
+            col.addWidget(button)
+        col.addWidget(_note(_("appearance.palette.note")))
+        self._palette.buttonToggled.connect(self._palette_changed)
+        col.addSpacing(4)
 
         col.addWidget(_heading(_("appearance.sidebar.heading")))
         self._side = QtWidgets.QButtonGroup(self)
@@ -84,6 +105,14 @@ class AppearanceDialog(FramedDialog):
         # page: the way this gets used is to switch, look, and switch back.
         self._settings.save()
         self._on_sidebar()
+
+    def _palette_changed(self, button, checked: bool) -> None:
+        if not checked:
+            return
+        self._settings.palette = button.property("value")
+        self._settings.save()
+        if self._on_palette is not None:
+            self._on_palette()
 
     def _frame_changed(self, on: bool) -> None:
         if self._set_frame is None:

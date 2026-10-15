@@ -712,13 +712,37 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             body.addWidget(self.stack, 1)
             body.addWidget(rail)
+        rail.setStyleSheet(self._rail_style())
 
     def _open_appearance(self) -> None:
         AppearanceDialog(
             self.settings, self._place_rail, self,
             frame_available=sys.platform != "darwin",
             frame_on=self._frame is not None,
-            set_frame=self._set_window_frame).exec()
+            set_frame=self._set_window_frame,
+            on_palette=self._apply_palette).exec()
+
+    def _apply_palette(self) -> None:
+        """Wear the palette the settings name, now.
+
+        The stylesheet is rebuilt and reapplied; the rail's own sheet
+        too, since it was baked at construction; the hand-drawn parts
+        read the theme's colours as they paint and follow on their next
+        repaint; and the window frame is asked to match again. A dialog
+        open at the time keeps its old sheet until it is reopened.
+        """
+        theme.use(self.settings.palette)
+        self.setStyleSheet(theme.stylesheet())
+        self._rail_widget.setStyleSheet(self._rail_style())
+        theme.match_frame(self)
+        self.update()
+
+    def _rail_style(self) -> str:
+        # The hairline sits on the edge that meets the picture, whichever
+        # side the rail is on.
+        edge = "right" if self.settings.sidebar_side == "left" else "left"
+        return (f"QFrame#rail {{ background:{theme.PANEL};"
+                f" border-{edge}:1px solid {theme.LINE}; }}")
 
     def _rail(self) -> QtWidgets.QWidget:
         rail = QtWidgets.QFrame()
@@ -728,9 +752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # which is why a checked button inside the rail could never be
         # filled: the rail was repainting it panel-coloured underneath.
         rail.setObjectName("rail")
-        rail.setStyleSheet(
-            f"QFrame#rail {{ background:{theme.PANEL};"
-            f" border-left:1px solid {theme.LINE}; }}")
+        rail.setStyleSheet(self._rail_style())
 
         col = QtWidgets.QVBoxLayout(rail)
         col.setContentsMargins(14, 14, 14, 14)
@@ -4295,6 +4317,7 @@ def main() -> int:
     apply_thread_budget()
 
     app = QtWidgets.QApplication(sys.argv)
+    theme.use(Settings.load().palette)
     theme.install(app)
     theme.load_fonts()
     theme.identify(app)                  # after the fonts: the mark is a letter
