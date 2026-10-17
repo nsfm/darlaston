@@ -401,6 +401,17 @@ def controls(node: str, values: bool = True) -> list[dict]:
     at probe time and no amount of asking will produce any. A second
     camera on the same machine, costing less, advertises sixteen.
 
+    The 0ac8:3420 is a Hayear HDMI/USB microscope camera on a Z-Star
+    chip, and this was looked into properly (2026-10-16): it declares
+    one vendor extension unit, of whose eight controls only selector 1
+    answers, a 40-byte read-write block that refuses every request
+    while the stream is up and reads like the chip's maintenance
+    channel. Hayear's own Linux software (a rebadged ToupView) drives
+    the camera by name through V4L2 like we do and never touches that
+    unit; their SDK is for their Sonix-chipped industrial cameras. The
+    exposure and white balance of this camera live in its on-screen
+    menu, driven from the body or the remote. USB is a video sink.
+
     Which is the whole reason this exists: capability has to be asked
     for, per device, at runtime. It cannot be assumed from the class of
     device, the price, or the vendor.
