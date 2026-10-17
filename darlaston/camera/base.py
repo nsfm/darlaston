@@ -225,6 +225,12 @@ class CameraBackend(ABC):
         """The focus motor, or None for the many cameras without one."""
         return None
 
+    @property
+    def focus_control_id(self) -> int | None:
+        """The control the motor is behind, by the device's key, where
+        the motor is one of the device's controls; None otherwise."""
+        return None
+
     @abstractmethod
     def open(self) -> CameraInfo: ...
 

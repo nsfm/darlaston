@@ -748,18 +748,38 @@ class MainWindow(QtWidgets.QMainWindow):
         # The hairline sits on the edge that meets the picture, whichever
         # side the rail is on.
         edge = "right" if self.settings.sidebar_side == "left" else "left"
-        return (f"QFrame#rail {{ background:{theme.PANEL};"
-                f" border-{edge}:1px solid {theme.LINE}; }}")
+        return (f"QScrollArea#rail {{ background:{theme.PANEL};"
+                f" border-{edge}:1px solid {theme.LINE}; }}"
+                f"QScrollArea#rail > QWidget > QFrame#rail_inner"
+                f" {{ background: transparent; }}")
 
     def _rail(self) -> QtWidgets.QWidget:
-        rail = QtWidgets.QFrame()
-        rail.setFixedWidth(286)
+        # The rail is a frame inside a scroll area. The scroll area is
+        # what sits in the window and wears the panel and the hairline;
+        # the frame inside holds the groups. Without the scroll area the
+        # rail's height was the window's minimum height, so opening the
+        # Picture row grew the window, which rescaled the preview, which
+        # went black for a frame: the whole side of the window flashed
+        # for a disclosure.
+        shell = QtWidgets.QScrollArea()
+        shell.setFixedWidth(286)
+        shell.setWidgetResizable(True)
+        shell.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        shell.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        shell.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        shell.viewport().setAutoFillBackground(False)
         # Named, and the rule qualified to that name. An unqualified
         # `background:` on a container is applied to every child as well,
         # which is why a checked button inside the rail could never be
         # filled: the rail was repainting it panel-coloured underneath.
-        rail.setObjectName("rail")
-        rail.setStyleSheet(self._rail_style())
+        shell.setObjectName("rail")
+        shell.setStyleSheet(self._rail_style())
+        rail = QtWidgets.QFrame()
+        rail.setObjectName("rail_inner")
+        shell.setWidget(rail)
+        self._rail_frame = rail
 
         col = QtWidgets.QVBoxLayout(rail)
         col.setContentsMargins(14, 14, 14, 14)
@@ -928,7 +948,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shutter.set_available(False)
         col.addWidget(self.shutter)
 
-        return rail
+        return shell
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self.view and event.type() in (
@@ -1219,12 +1239,31 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_control_written(self, control_id: int, value: int) -> None:
         """A write from the controls page. One that lands in a picture
         slot is the Picture row's business too: shown on its bar and
-        kept with the camera, so it survives the next launch."""
+        kept with the camera, so it survives the next launch. Any other
+        may have been the time or the gain, so those two bars are read
+        back from the camera a beat later, once the write has landed."""
         for slot, control in getattr(self, "_slots", {}).items():
             if control is not None and control.id == control_id and slot != "focus":
                 self.picture.show_value(slot, int(value))
                 self.session.set_control(control_id, value, remember=True)
                 self._note_picture(control_id, value)
+                return
+        QtCore.QTimer.singleShot(300, self._show_camera_settings)
+
+    def _show_camera_settings(self) -> None:
+        """The time and gain bars, from the camera, without a word to it."""
+        actual = self.session.actual_settings()
+        if actual is None:
+            return
+        us, gain = actual
+        for widget, value in ((self.exposure, self._us_to_slider(us)),
+                              (self.gain, gain)):
+            widget.blockSignals(True)
+            widget.setValue(max(widget.minimum(), min(widget.maximum(), value)))
+            widget.blockSignals(False)
+        self.exposure.set_value_text(
+            f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
+        self.gain.set_value_text(f"{gain / 100:.1f}×")
 
     def _note_picture(self, control_id: int, value: int) -> None:
         """Into the profile in memory now, onto disk a beat later. A drag

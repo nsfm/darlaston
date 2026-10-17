@@ -366,6 +366,12 @@ class CameraSession:
         except Exception:
             return False
 
+    @property
+    def focus_control_id(self) -> int | None:
+        with self._lock:
+            backend = self._backend
+        return getattr(backend, "focus_control_id", None) if backend else None
+
     def forget_controls(self) -> None:
         """On a camera switch: the remembered values were that camera's."""
         self._control_values.clear()

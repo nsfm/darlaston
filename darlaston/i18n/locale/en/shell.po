@@ -186,6 +186,10 @@ msgstr "gamma"
 msgid "shell.picture.hue"
 msgstr "hue"
 
+#. The camera's colour temperature, in kelvin, where it offers one.
+msgid "shell.picture.temperature"
+msgstr "temperature"
+
 msgid "shell.picture.owned"
 msgstr "The camera's own automatic owns this right now."
 

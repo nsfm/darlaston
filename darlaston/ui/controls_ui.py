@@ -66,7 +66,7 @@ class ControlsPage(QtWidgets.QWidget):
         # the edge: the name is elided instead.
         self.grid.setColumnMinimumWidth(0, 140)
         self.grid.setColumnMinimumWidth(1, 160)
-        self.grid.setColumnMinimumWidth(3, 150)
+        self.grid.setColumnMinimumWidth(3, 180)
         self.grid.setColumnStretch(4, 1)
 
         inner = QtWidgets.QWidget()
@@ -117,7 +117,15 @@ class ControlsPage(QtWidgets.QWidget):
                        "saturation": _("controls.slot.saturation"),
                        "sharpness": _("controls.slot.sharpness"),
                        "gamma": _("controls.slot.gamma"),
-                       "hue": _("controls.slot.hue")}
+                       "hue": _("controls.slot.hue"),
+                       "temperature": _("controls.slot.temperature"),
+                       "time": _("controls.slot.time"),
+                       "gain": _("controls.slot.gain")}
+        # The backend's own motor, where it found one, is a focus the
+        # name may not say: the X5FCAM's is behind Backlight.
+        motor = getattr(self._live, "focus_control_id", None)
+        if motor is not None and "focus" not in guesses:
+            guesses["focus"] = motor
         for i, control in enumerate(controls, start=1):
             widgets = []
             name = QtWidgets.QLabel(_elide(control.name, 20))
@@ -144,6 +152,16 @@ class ControlsPage(QtWidgets.QWidget):
             use = QtWidgets.QComboBox()
             use.setVisible(control.kind == "int")   # a switch fills no bar
             guessed = next((s for s, cid in guesses.items() if cid == control.id), "")
+            fixed = roles_.rail_slot(control)
+            if fixed:
+                # The time and gain bars are the rail's own: not routable,
+                # and the box says so rather than "nothing".
+                use.addItem(_("controls.use_as.rail", slot=slot_labels[fixed]), "")
+                use.setEnabled(False)
+                widgets.append(use)
+                self.grid.addWidget(use, i, 3)
+                self._rows.append({"control": control, "widgets": widgets, "value": value})
+                continue
             placeholder = (_("controls.use_as.guess", slot=slot_labels[guessed])
                            if guessed else _("controls.use_as.nothing"))
             use.addItem(placeholder, "")
@@ -159,7 +177,7 @@ class ControlsPage(QtWidgets.QWidget):
             use.currentIndexChanged.connect(
                 lambda _i, c=control, box=use: self._route(c, box.currentData()))
             use.setToolTip(_("controls.use_as.tooltip"))
-            use.setFixedWidth(150)
+            use.setFixedWidth(180)
             widgets.append(use)
             self.grid.addWidget(use, i, 3)
             self._rows.append({"control": control, "widgets": widgets, "value": value})

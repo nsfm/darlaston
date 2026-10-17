@@ -19,7 +19,7 @@ from .base import Control, FocusAxis, FocusRange
 #: The slots the Picture row offers, in the order it shows them. Hue
 #: last: on a stained section it is the one that does the most damage.
 PICTURE_SLOTS = ("brightness", "contrast", "saturation", "sharpness",
-                 "gamma", "hue")
+                 "gamma", "hue", "temperature")
 #: Everything a control can be routed to from the controls page.
 SLOTS = ("focus",) + PICTURE_SLOTS
 
@@ -34,7 +34,25 @@ _NAMES = {
     "sharpness": ("sharpness",),
     "gamma": ("gamma",),
     "hue": ("hue",),
+    "temperature": ("white balance temperature", "white balance temperature, absolute",
+                    "whitebalance"),
 }
+
+#: The rail's own slots, filled by the backend rather than by a role:
+#: shown on the controls page as where a control already goes.
+RAIL_NAMES = {
+    "time": ("exposure time, absolute", "exposure (absolute)", "exposure"),
+    "gain": ("gain",),
+}
+
+
+def rail_slot(control: Control) -> str | None:
+    """The fixed slot a control already fills by name, if any."""
+    name = control.name.strip().lower()
+    for slot, names in RAIL_NAMES.items():
+        if name in names:
+            return slot
+    return None
 
 
 def guess(slot: str, controls: tuple[Control, ...]) -> Control | None:

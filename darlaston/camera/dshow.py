@@ -1185,6 +1185,12 @@ class DshowBackend(CvCaptureBackend):
     def focus_axis(self) -> FocusAxis | None:
         return self._focus
 
+    @property
+    def focus_control_id(self) -> int | None:
+        if self._focus is None:
+            return None
+        return control_id(self._focus.which, self._focus.prop)
+
     def _exposure_range(self) -> tuple[int, int] | None:
         """None where the exposure cannot be set by hand, which includes
         a device that lists the property and then says it is automatic

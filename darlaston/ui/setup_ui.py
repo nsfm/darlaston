@@ -573,7 +573,10 @@ class _LibraryDialog(QtWidgets.QDialog):
         self.setMinimumWidth(width)
 
         self.list = QtWidgets.QListWidget()
-        self.list.setFixedWidth(170)
+        # As wide as its column, which the buttons under it set; fixed
+        # at 170 it left a gap beside itself as wide as the list.
+        self.list.setMinimumWidth(170)
+        self.list.setMaximumWidth(320)
         self.list.currentRowChanged.connect(self._switch)
 
         self.buttons = QtWidgets.QDialogButtonBox(

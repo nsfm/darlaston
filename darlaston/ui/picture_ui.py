@@ -62,7 +62,8 @@ class PictureRow(QtWidgets.QWidget):
                   "saturation": _("shell.picture.saturation"),
                   "sharpness": _("shell.picture.sharpness"),
                   "gamma": _("shell.picture.gamma"),
-                  "hue": _("shell.picture.hue")}
+                  "hue": _("shell.picture.hue"),
+                  "temperature": _("shell.picture.temperature")}
         for slot in PICTURE_SLOTS:
             bar = ValueBar(labels[slot])
             bar.setFixedHeight(20)

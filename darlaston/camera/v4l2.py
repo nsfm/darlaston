@@ -564,6 +564,10 @@ class V4L2Backend(CvCaptureBackend):
     def focus_axis(self) -> FocusAxis | None:
         return self._focus
 
+    @property
+    def focus_control_id(self) -> int | None:
+        return V4L2_CID_FOCUS_ABSOLUTE if self._focus is not None else None
+
     # ---- lifecycle -------------------------------------------------------
 
     def _is_it(self, found: dict) -> bool:
