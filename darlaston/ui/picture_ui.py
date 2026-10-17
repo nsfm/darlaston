@@ -69,6 +69,9 @@ class PictureRow(QtWidgets.QWidget):
             bar.setFixedHeight(20)
             bar.valueChanged.connect(lambda value, s=slot: self._moved(s, value))
             bar.setVisible(False)
+            # darktable's habit: a right click puts the control back to
+            # its default, the camera's own here.
+            bar.installEventFilter(self)
             self._bars[slot] = bar
             self._body_col.addWidget(bar)
         self.body.setVisible(False)
@@ -113,6 +116,23 @@ class PictureRow(QtWidgets.QWidget):
         bar.setValue(int(value))
         bar.blockSignals(False)
         bar.set_value_text(self._text(control, int(value)))
+
+    def eventFilter(self, watched, event) -> bool:
+        if (event.type() == QtCore.QEvent.Type.MouseButtonPress
+                and event.button() == QtCore.Qt.MouseButton.RightButton):
+            for slot, bar in self._bars.items():
+                if bar is watched:
+                    self.reset(slot)
+                    return True
+        return super().eventFilter(watched, event)
+
+    def reset(self, slot: str) -> None:
+        """Back to the camera's default, as a move of the bar."""
+        control = self._controls.get(slot)
+        bar = self._bars.get(slot)
+        if control is None or bar is None or not bar.isEnabled():
+            return
+        bar.setValue(int(control.default))
 
     @property
     def open(self) -> bool:

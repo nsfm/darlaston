@@ -283,3 +283,23 @@ def test_the_session_replays_only_what_it_was_asked_to_remember():
     session._restore_controls(fresh)
     assert fresh.writes == [(0x00980900, 10)]
     assert fresh.autos == [(0x0098091a, True)]
+
+
+def test_a_right_click_on_a_picture_bar_goes_back_to_the_camera_s_default(qapp):
+    from PySide6 import QtCore, QtGui
+    from darlaston.ui.picture_ui import PictureRow
+
+    row = PictureRow()
+    got = []
+    row.changed.connect(lambda slot, cid, value: got.append((slot, value)))
+    slots = roles.resolve(_controls(), {})
+    row.set_controls({s: slots[s] for s in roles.PICTURE_SLOTS})
+    row.set_open(True)
+    bar = row._bars["contrast"]
+    bar.setValue(60)
+    assert got[-1] == ("contrast", 60)
+    press = QtGui.QMouseEvent(QtCore.QEvent.Type.MouseButtonPress, QtCore.QPointF(5, 5),
+                              QtCore.Qt.MouseButton.RightButton, QtCore.Qt.MouseButton.RightButton,
+                              QtCore.Qt.KeyboardModifier.NoModifier)
+    qapp.sendEvent(bar, press)
+    assert bar.value() == 32 and got[-1] == ("contrast", 32), "the camera's default, and written"

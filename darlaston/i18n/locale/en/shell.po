@@ -201,7 +201,7 @@ msgstr ""
 "the time is its to set. Switch it to manual there to take it back."
 
 msgid "shell.picture.bar.tooltip"
-msgstr "{name}. The camera's default is {default}."
+msgstr "{name}. The camera's default is {default}; right-click to go back to it."
 
 msgid "shell.group.measure_from"
 msgstr "measure from"
