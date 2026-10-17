@@ -99,34 +99,37 @@ def test_a_camera_that_cannot_be_loaded_is_not_offered():
 
 # ---- what the rail is allowed to offer ------------------------------------
 
-def test_a_control_the_camera_lacks_is_disabled_and_says_why(qapp, window):
+def test_a_control_the_camera_lacks_leaves_the_rail(qapp, window):
     """A slider over a control that does not exist is worse than no
     slider: it moves, nothing happens, and the person reasonably decides
-    the program is broken rather than the camera."""
+    the program is broken rather than the camera. Greyed, it still reads
+    as ours and broken, so while the camera is live it goes."""
     from darlaston.camera.base import CameraInfo, Resolution
     from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
 
     win = window()
+    win.show()
 
     sealed = CameraInfo(
         model="UVC Camera", serial="x",
         resolutions=(Resolution(0, 1920, 1080, 0.0),),
         max_bit_depth=8, bayer_pattern="",
         exposure_range_us=None, gain_range_pct=None)
-    win._fit_controls_to(sealed)
-    assert not win.exposure.isEnabled(), "offered an exposure it cannot set"
-    assert not win.gain.isEnabled(), "offered a gain it cannot set"
-    assert win.exposure.toolTip(), "disabled it without saying why"
+    win._apply_capabilities(sealed, live=True)
+    assert win.exposure.isHidden(), "offered an exposure it cannot set"
+    assert win.gain.isHidden(), "offered a gain it cannot set"
+    assert win.auto_exposure.isHidden(), "nothing for a switch to move"
 
     able = CameraInfo(
         model="HD USB Camera", serial="y",
         resolutions=(Resolution(0, 1920, 1080, 0.0),),
         max_bit_depth=8, bayer_pattern="",
         exposure_range_us=(100, 500000), gain_range_pct=(100, 200))
-    win._fit_controls_to(able)
+    win._apply_capabilities(able, live=True)
+    assert not win.exposure.isHidden() and not win.gain.isHidden()
     assert win.exposure.isEnabled() and win.gain.isEnabled()
-    assert not win.exposure.toolTip()
+    assert not win.auto_exposure.isHidden() and not win.auto_exposure_lock.isHidden()
     # And the gain slider takes the device's range rather than asserting
     # one: our old floor of 100 was this camera's ceiling.
     assert win.gain.minimum() == 100 and win.gain.maximum() == 200

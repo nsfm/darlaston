@@ -976,8 +976,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sync_optovar()
             self._push_turret()
 
-        if info is not None:
-            self._fit_controls_to(info)
         self.strip.update_status(status, self.setup)
         self.strip.select_resolution(self.session.preview_resolution)
         self.strip.select_rate(self.session.framerate_cap)
@@ -987,7 +985,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.shutter.set_available(status.is_live and not self.capture.busy)
         self._set_shooting_enabled(status.is_live)
-        self._sync_auto_exposure()
+        if info is not None:
+            self._apply_capabilities(info, status.is_live)
+        else:
+            self._sync_auto_exposure(None)
         # Including the balance controls, which need a camera to point at.
         # This was missing: they were disabled once at startup, before the
         # session had come up, and nothing ever enabled them again -- so
@@ -1026,6 +1027,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exposure.set_value_text(
             f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
         self.gain.set_value_text(f"{gain / 100:.1f}×")
+        info = self.session.status.info
+        if info is not None and info.meters_itself and info.auto_exposure_switch:
+            # The remembered position of the switch, handed to the camera
+            # whose switch it is.
+            self.session.set_auto_exposure(bool(self.settings.auto_exposure))
         self._synced = True
 
     def _measure_camera(self, parent=None) -> None:
@@ -1111,14 +1117,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # session goes on watching the camera we just switched away from.
         self.session.retarget(self._make_backend, presence_for(camera))
 
-    def _fit_controls_to(self, info) -> None:
-        """Show only the controls this camera really has.
+    def _apply_capabilities(self, info, live: bool) -> None:
+        """Offer only the controls this camera really has, in one pass.
 
         A slider over a control that does not exist is worse than no
         slider, because it moves and nothing happens -- and the person
         reasonably concludes the program is broken rather than the
         camera. Measured on two cameras in one machine: one exposes
-        sixteen controls, the other none whatsoever.
+        sixteen controls, the other none whatsoever. So a control the
+        camera lacks is taken off the rail while the camera is live,
+        rather than greyed with an excuse: the first external tester's
+        report was a dead slider, and a disabled one still reads as
+        ours, broken.
+
+        One pass, called last, because it used to be three. The fit, the
+        liveness greying and the Automatic sync each set the same
+        widgets, in an order where the liveness pass re-enabled the bar
+        the fit had just disabled, so a camera with no exposure showed a
+        live slider with a tooltip nobody hovers.
 
         Where the control exists, the widget takes the device's own
         range. It used to assert 100..2000 on everything, which on a
@@ -1126,15 +1142,14 @@ class MainWindow(QtWidgets.QMainWindow):
         the slider pinned gain at maximum and every movement clamped to
         the same place, looking for all the world like a dead control.
         """
-        for widget, span, why in (
-                (self.exposure, info.exposure_range_us, _("rail.no_exposure")),
-                (self.gain, info.gain_range_pct, _("rail.no_gain"))):
+        for widget, span in ((self.exposure, info.exposure_range_us),
+                             (self.gain, info.gain_range_pct)):
             if span is None:
+                widget.setVisible(not live)
                 widget.setEnabled(False)
-                widget.setToolTip(why)
                 continue
-            widget.setEnabled(True)
-            widget.setToolTip("")
+            widget.setVisible(True)
+            widget.setEnabled(live)
             low, high = span
             if widget is self.gain:
                 widget.setRange(int(low), int(high))
@@ -1146,6 +1161,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 # against for the other control.
                 widget.setRange(self._us_to_slider(int(low)),
                                 self._us_to_slider(int(high)))
+        self._sync_auto_exposure(info)
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
@@ -1189,6 +1205,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.save()
         self._ae_held_shown = None            # force the row to restyle
         self._refresh_auto_exposure_hold()
+        info = self.session.status.info
+        if info is not None and info.meters_itself:
+            # The camera's switch, not ours. Our loop never runs here;
+            # see `_auto_expose_guarded`.
+            self.session.set_auto_exposure(bool(on))
+            return
         # Coming back on after the scene has moved, so take the first step
         # at full stride rather than crawling from wherever it was left.
         self._ae_hurry = True
@@ -1198,7 +1220,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.save()
         self._ae_hurry = True
 
-    def _sync_auto_exposure(self) -> None:
+    def _sync_auto_exposure(self, info) -> None:
         """Offer the switch only where there is something for it to move.
 
         Hidden rather than disabled, on the same reasoning the camera
@@ -1207,15 +1229,23 @@ class MainWindow(QtWidgets.QMainWindow):
         switch, because it moves and nothing happens. `CameraInfo` reports
         None rather than a zero width range precisely so this is knowable.
 
-        The lock is offered only when both controls exist. On a camera
-        with gain alone there is no exposure to pin, and on one with
-        exposure alone pinning it would leave the loop nothing at all.
+        Two engines behind one switch. On a camera that exposes, it is
+        our loop, and the lock is offered only when both controls exist:
+        with gain alone there is no exposure to pin, and with exposure
+        alone pinning it would leave the loop nothing. On a camera that
+        meters itself there is no time for our loop to drive, so the
+        switch is the camera's own automatic, offered only where the
+        camera has one, and never the lock.
         """
-        info = self.session.status.info
         has_time = bool(info and info.exposure_range_us)
         has_gain = bool(info and info.gain_range_pct)
-        self.auto_exposure.setVisible(has_time or has_gain)
-        self.auto_exposure_lock.setVisible(has_time and has_gain)
+        device = bool(info and info.meters_itself)
+        if device:
+            self.auto_exposure.setVisible(bool(info.auto_exposure_switch))
+            self.auto_exposure_lock.setVisible(False)
+        else:
+            self.auto_exposure.setVisible(has_time or has_gain)
+            self.auto_exposure_lock.setVisible(has_time and has_gain)
         with QtCore.QSignalBlocker(self.auto_exposure):
             self.auto_exposure.setChecked(bool(self.settings.auto_exposure))
         with QtCore.QSignalBlocker(self.auto_exposure_lock):
@@ -1234,9 +1264,11 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         held = not self._auto_exposure_allowed()
         on = bool(self.settings.auto_exposure)
-        if getattr(self, "_ae_held_shown", None) == (held, on):
+        info = self.session.status.info
+        device = info is not None and info.meters_itself
+        if getattr(self, "_ae_held_shown", None) == (held, on, device):
             return
-        self._ae_held_shown = (held, on)
+        self._ae_held_shown = (held, on, device)
         self.auto_exposure.setEnabled(not held)
         # Brass lettering when there is something to do, which the rail
         # already means by this: off and available reads as an offer, on
@@ -1247,6 +1279,7 @@ class MainWindow(QtWidgets.QMainWindow):
         _invite(self.auto_exposure, not on and not held)
         self.auto_exposure.setToolTip(
             _("shell.auto_exposure.held") if held
+            else _("shell.auto_exposure.device.tooltip") if device
             else _("shell.auto_exposure.tooltip"))
         self.auto_exposure_lock.setEnabled(on and not held)
         _invite(self.auto_exposure_lock,
@@ -1306,6 +1339,11 @@ class MainWindow(QtWidgets.QMainWindow):
         a bit wrong.
         """
         if not self.settings.auto_exposure:
+            return
+        info = self.session.status.info
+        if info is not None and info.meters_itself:
+            # Its automatic, not ours. Ours would be driving gain against
+            # an exposure it cannot see, and the two fight.
             return
         try:
             self._auto_expose(signals)

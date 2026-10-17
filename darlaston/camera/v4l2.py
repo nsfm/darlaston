@@ -487,6 +487,7 @@ class V4L2Backend(CvCaptureBackend):
             bayer_pattern="",              # decoded already; no CFA exists
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
+            auto_exposure_switch=bool(self._has("Auto Exposure")),
             # Who made it, not which kernel module drives it. Read from
             # the USB descriptor, and frequently absent or a placeholder
             # -- one camera here says "HD Camera Manufacturer" -- but a
@@ -569,7 +570,11 @@ class V4L2Backend(CvCaptureBackend):
         if self._cap is None:
             return
         try:
-            if self._has("Auto Exposure"):
+            # Only where there is an exposure time to take over. A camera
+            # with the switch and no time meters itself; switching its
+            # auto off would leave it at whatever it last chose, dark or
+            # blown, with nothing of ours to drive in its place.
+            if self._has("Auto Exposure") and self._exposure_range():
                 self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)     # manual
             if self._has("White Balance, Automatic", "White Balance Temperature, Auto"):
                 self._cap.set(cv2.CAP_PROP_AUTO_WB, 0)
@@ -581,7 +586,11 @@ class V4L2Backend(CvCaptureBackend):
 
     def _write_control(self, what: str, value) -> None:
         """The actual writes. Called holding `_lock`, never from the UI."""
-        if what == "exposure":
+        if what == "auto_exposure":
+            # UVC's menu: 1 is manual, 3 is aperture priority, which is
+            # what every webcam measured calls its automatic.
+            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3 if value else 1)
+        elif what == "exposure":
             # Only writable once auto-exposure is off -- control 1
             # (manual) on UVC, not 0. Setting the value first silently
             # does nothing.

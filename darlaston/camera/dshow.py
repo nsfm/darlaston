@@ -1083,6 +1083,7 @@ class DshowBackend(CvCaptureBackend):
             bayer_pattern="",
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
+            auto_exposure_switch=self._auto_exposure_switch(),
             brand="ToupTek" if found["vid"] in TOUPTEK_VIDS else "",
             raw_capable=False,
             software_trigger=True,
@@ -1130,10 +1131,22 @@ class DshowBackend(CvCaptureBackend):
         return self._focus
 
     def _exposure_range(self) -> tuple[int, int] | None:
+        """None where the exposure cannot be set by hand, which includes
+        a device that lists the property and then says it is automatic
+        only: a range we cannot write is no range."""
         found = self._controls.get("Exposure")
-        if not found:
+        if not found or not self._manual_capable(found):
             return None
         return (exposure_to_us(found["min"]), exposure_to_us(found["max"]))
+
+    @staticmethod
+    def _manual_capable(control: dict) -> bool:
+        flags = control.get("flags", CameraControl_Flags_Manual)
+        return not flags or bool(flags & CameraControl_Flags_Manual)
+
+    def _auto_exposure_switch(self) -> bool:
+        found = self._controls.get("Exposure")
+        return bool(found and found.get("flags", 0) & CameraControl_Flags_Auto)
 
     def _gain_range(self) -> tuple[int, int] | None:
         found = self._controls.get("Gain")
@@ -1193,7 +1206,7 @@ class DshowBackend(CvCaptureBackend):
         if self._cap is None or self._device is None:
             return
         try:
-            if "Exposure" in self._controls:
+            if self._exposure_range() is not None:
                 current = self._device.get("camera", CameraControl_Exposure)
                 if current is not None:
                     self._device.set("camera", CameraControl_Exposure, current)
@@ -1214,7 +1227,18 @@ class DshowBackend(CvCaptureBackend):
     # ---- settings --------------------------------------------------------
 
     def _write_control(self, what: str, value) -> None:
-        if what == "exposure":
+        if what == "auto_exposure":
+            found = self._controls.get("Exposure")
+            if not found:
+                return
+            if self._device is not None:
+                current = self._device.get("camera", CameraControl_Exposure)
+                self._device.set("camera", CameraControl_Exposure,
+                                 found["default"] if current is None else current,
+                                 auto=bool(value))
+            else:
+                self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if value else 0)
+        elif what == "exposure":
             found = self._controls.get("Exposure")
             if not found:
                 return

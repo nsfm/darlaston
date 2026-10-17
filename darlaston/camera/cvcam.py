@@ -218,6 +218,12 @@ class CvCaptureBackend(CameraBackend):
         self._exposure_us = int(microseconds)
         self._queue("exposure", int(microseconds))
 
+    def set_auto_exposure(self, on: bool) -> bool:
+        if not (self._info and self._info.auto_exposure_switch):
+            return False
+        self._queue("auto_exposure", bool(on))
+        return True
+
     def set_gain(self, percent: int) -> None:
         """Map our percentage onto whatever scale this device uses.
 

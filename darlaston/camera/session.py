@@ -277,6 +277,16 @@ class CameraSession:
                 except Exception:
                     pass   # a dropped link surfaces through the supervisor
 
+    def set_auto_exposure(self, on: bool) -> bool:
+        """The camera's own automatic, for a camera that meters itself."""
+        with self._lock:
+            if self._backend is None:
+                return False
+            try:
+                return bool(self._backend.set_auto_exposure(bool(on)))
+            except Exception:
+                return False
+
     def set_gain(self, percent: int) -> None:
         self._gain_pct = int(percent)
         with self._lock:

@@ -101,10 +101,23 @@ class CameraInfo:
     #: camera from a *different* one plugged into the same USB port,
     #: which the port-based serial cannot.
     fingerprint: str = ""
+    #: The camera has an automatic exposure of its own that we can turn
+    #: on and off. Separate from having an exposure *time* we can set:
+    #: a webcam often has the switch and not the time.
+    auto_exposure_switch: bool = False
 
     @property
     def is_colour(self) -> bool:
         return bool(self.bayer_pattern)
+
+    @property
+    def meters_itself(self) -> bool:
+        """No exposure time to set, so the camera decides the light and
+        hands us a finished picture. The rail reads this: our own
+        exposure loop never runs on such a camera, because it would be
+        driving gain against an auto-exposure it cannot see, and
+        "Automatic" means the camera's own switch instead."""
+        return self.exposure_range_us is None
 
 
 @dataclass(frozen=True)
@@ -198,6 +211,15 @@ class CameraBackend(ABC):
     @abstractmethod
     def get_gain(self) -> int:
         """Percent, as the camera actually has it."""
+
+    def set_auto_exposure(self, on: bool) -> bool:
+        """Turn the camera's own automatic exposure on or off.
+
+        For cameras that meter themselves (`CameraInfo.meters_itself`),
+        where this is the only automatic there is. Returns False where
+        the camera has no such switch, which is the default.
+        """
+        return False
 
     def driver_dropped(self) -> int | None:
         """Frames the driver pulled off the bus and then threw away.
