@@ -505,6 +505,13 @@ class LiveView(QtWidgets.QWidget):
             lines.append(QtCore.QLineF(target.left(), y, target.right(), y))
         circles: list[tuple[QtCore.QPointF, float]] = []
         label: tuple[QtCore.QPointF, str] | None = None
+        # The grid is looked past; the cross is looked at. So the grid
+        # keeps the faint pair and the cross gets a stronger one: over a
+        # mid-grey object the faint white came out at 172 on 128 and the
+        # halo at 97, and the cross vanished into anything its own tone.
+        # At 210 over 140 it is 228 over 58, and no uniform tone can
+        # hide both the line and its halo.
+        cross_lines: list = []
         if self.framing_cross:
             cx = target.x() + target.width() / 2
             cy = target.y() + target.height() / 2
@@ -513,36 +520,41 @@ class LiveView(QtWidgets.QWidget):
             style = self.crosshair if self.crosshair in self.CROSSHAIRS else "plain"
             if style == "plain":
                 arm = short * 0.045
-                lines.append(QtCore.QLineF(cx - arm, cy, cx + arm, cy))
-                lines.append(QtCore.QLineF(cx, cy - arm, cx, cy + arm))
+                cross_lines.append(QtCore.QLineF(cx - arm, cy, cx + arm, cy))
+                cross_lines.append(QtCore.QLineF(cx, cy - arm, cx, cy + arm))
             elif style == "open":
                 # A gap at the centre a quarter of the arm each way: what
                 # is being centred stays visible while being centred.
                 arm, gap = short * 0.06, short * 0.015
                 for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    lines.append(QtCore.QLineF(cx + sx * gap, cy + sy * gap,
-                                               cx + sx * arm, cy + sy * arm))
+                    cross_lines.append(QtCore.QLineF(cx + sx * gap, cy + sy * gap,
+                                                     cx + sx * arm, cy + sy * arm))
             elif style == "reticle":
                 # The eyepiece classic: a circle with the cross reaching
                 # past it, the centre open.
                 arm, gap, radius = short * 0.09, short * 0.012, short * 0.05
                 for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    lines.append(QtCore.QLineF(cx + sx * gap, cy + sy * gap,
-                                               cx + sx * arm, cy + sy * arm))
+                    cross_lines.append(QtCore.QLineF(cx + sx * gap, cy + sy * gap,
+                                                     cx + sx * arm, cy + sy * arm))
                 circles.append((centre, radius))
             else:
-                lines, label = self._graduated(target, centre, short, lines)
-        if not lines and not circles:
+                cross_lines, label = self._graduated(target, centre, short, cross_lines)
+        if not lines and not cross_lines and not circles:
             return
         p.save()
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, bool(circles))
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
         for colour, width in ((QtGui.QColor(0, 0, 0, 60), 3),
                               (QtGui.QColor(255, 255, 255, 90), 1)):
-            pen = QtGui.QPen(colour, width)
-            p.setPen(pen)
-            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             if lines:
+                p.setPen(QtGui.QPen(colour, width))
                 p.drawLines(lines)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, bool(circles))
+        for colour, width in ((QtGui.QColor(0, 0, 0, 140), 3),
+                              (QtGui.QColor(255, 255, 255, 210), 1)):
+            p.setPen(QtGui.QPen(colour, width))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            if cross_lines:
+                p.drawLines(cross_lines)
             for centre, radius in circles:
                 p.drawEllipse(centre, radius, radius)
         if label is not None:
@@ -555,10 +567,10 @@ class LiveView(QtWidgets.QWidget):
             path = QtGui.QPainterPath()
             path.addText(at, font, text)
             p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 110), 2.5))
+            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 140), 2.5))
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             p.drawPath(path)
-            p.fillPath(path, QtGui.QColor(255, 255, 255, 170))
+            p.fillPath(path, QtGui.QColor(255, 255, 255, 210))
         p.restore()
 
     def _graduated(self, target: QtCore.QRect, centre: QtCore.QPointF,
