@@ -63,7 +63,7 @@ class ControlsPage(QtWidgets.QWidget):
         # the edge: the name is elided instead.
         self.grid.setColumnMinimumWidth(0, 150)
         self.grid.setColumnMinimumWidth(1, 170)
-        self.grid.setColumnMinimumWidth(3, 140)
+        self.grid.setColumnMinimumWidth(3, 160)
         self.grid.setColumnStretch(4, 1)
 
         inner = QtWidgets.QWidget()
@@ -155,7 +155,7 @@ class ControlsPage(QtWidgets.QWidget):
             use.currentIndexChanged.connect(
                 lambda _i, c=control, box=use: self._route(c, box.currentData()))
             use.setToolTip(_("controls.use_as.tooltip"))
-            use.setFixedWidth(140)
+            use.setFixedWidth(160)
             widgets.append(use)
             self.grid.addWidget(use, i, 3)
             self._rows.append({"control": control, "widgets": widgets, "value": value})

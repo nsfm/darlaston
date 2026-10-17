@@ -34,7 +34,7 @@ msgstr "Every control back to the value the camera ships with."
 
 #. The placeholder entry of "use as": what the heuristic guessed, or nothing.
 msgid "controls.use_as.guess"
-msgstr "(guessed: {slot})"
+msgstr "({slot}, our guess)"
 
 msgid "controls.use_as.nothing"
 msgstr "(nothing)"
