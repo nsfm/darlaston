@@ -715,7 +715,7 @@ class MainWindow(QtWidgets.QMainWindow):
             body.addWidget(rail)
         # The bar on the outer edge, away from the picture: on the left
         # of a left rail, which a right-to-left scroll area gives.
-        rail.setLayoutDirection(
+        self._rail_top.setLayoutDirection(
             QtCore.Qt.LayoutDirection.RightToLeft
             if self.settings.sidebar_side == "left"
             else QtCore.Qt.LayoutDirection.LeftToRight)
@@ -754,21 +754,35 @@ class MainWindow(QtWidgets.QMainWindow):
         # The hairline sits on the edge that meets the picture, whichever
         # side the rail is on.
         edge = "right" if self.settings.sidebar_side == "left" else "left"
-        return (f"QScrollArea#rail {{ background:{theme.PANEL};"
+        return (f"QFrame#rail {{ background:{theme.PANEL};"
                 f" border-{edge}:1px solid {theme.LINE}; }}"
-                f"QScrollArea#rail > QWidget > QFrame#rail_inner"
-                f" {{ background: transparent; }}")
+                f"QScrollArea#rail_top, QFrame#rail_inner, QFrame#rail_bottom"
+                f" {{ background: transparent; border: 0; }}")
 
     def _rail(self) -> QtWidgets.QWidget:
-        # The rail is a frame inside a scroll area. The scroll area is
-        # what sits in the window and wears the panel and the hairline;
-        # the frame inside holds the groups. Without the scroll area the
-        # rail's height was the window's minimum height, so opening the
-        # Picture row grew the window, which rescaled the preview, which
-        # went black for a frame: the whole side of the window flashed
-        # for a disclosure.
+        # Two sections, stacked. The top holds what you adjust while
+        # looking at the slide (exposure, picture, focus) and scrolls if
+        # a short screen needs it; the bottom holds what you reach for
+        # blind (subject, optics, the shutter) and never moves. The
+        # rail's height was once the window's minimum height, so opening
+        # the Picture row grew the window and rescaled the preview; now
+        # the top section gives instead. No gutter is reserved for the
+        # bar: Picture caps its own height and scrolls inside, so the
+        # top section overflows only on a genuinely short screen.
+        rail = QtWidgets.QFrame()
+        rail.setFixedWidth(286)
+        # Named, and the rule qualified to that name. An unqualified
+        # `background:` on a container is applied to every child as well,
+        # which is why a checked button inside the rail could never be
+        # filled: the rail was repainting it panel-coloured underneath.
+        rail.setObjectName("rail")
+        rail.setStyleSheet(self._rail_style())
+        outer = QtWidgets.QVBoxLayout(rail)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
         shell = QtWidgets.QScrollArea()
-        shell.setFixedWidth(286)
+        shell.setObjectName("rail_top")
         shell.setWidgetResizable(True)
         shell.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         shell.setHorizontalScrollBarPolicy(
@@ -776,35 +790,28 @@ class MainWindow(QtWidgets.QMainWindow):
         shell.setVerticalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         shell.viewport().setAutoFillBackground(False)
-        # The bar's width is reserved whether or not the bar is shown, so
-        # its appearing never reflows the groups. The frame inside is as
-        # wide as the rail less the gutter; the bar lives in the gutter.
-        gutter = shell.style().pixelMetric(
-            QtWidgets.QStyle.PixelMetric.PM_ScrollBarExtent, None, shell)
-        self._rail_gutter = max(8, int(gutter))
-        # Named, and the rule qualified to that name. An unqualified
-        # `background:` on a container is applied to every child as well,
-        # which is why a checked button inside the rail could never be
-        # filled: the rail was repainting it panel-coloured underneath.
-        shell.setObjectName("rail")
-        shell.setStyleSheet(self._rail_style())
-        rail = QtWidgets.QFrame()
-        rail.setObjectName("rail_inner")
-        rail.setFixedWidth(286 - self._rail_gutter)
-        # The groups are laid out left to right whatever side the bar is
-        # on; only the scroll area's direction decides the bar's side.
-        rail.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
-        shell.setWidget(rail)
-        self._rail_frame = rail
+        self._rail_top = shell
+        top = QtWidgets.QFrame()
+        top.setObjectName("rail_inner")
+        top.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
+        shell.setWidget(top)
+        bottom = QtWidgets.QFrame()
+        bottom.setObjectName("rail_bottom")
+        outer.addWidget(shell, 1)
+        outer.addWidget(bottom, 0)
 
-        col = QtWidgets.QVBoxLayout(rail)
+        col = QtWidgets.QVBoxLayout(top)
         col.setContentsMargins(14, 14, 14, 14)
         col.setSpacing(18)
 
-        # One row that is both status and doorway; the panel itself floats.
+        # The calibration doorway used to be the first row of the rail.
+        # It stops being pressable almost at once (a calibration is a
+        # thing you do, then have) and the Capture menu opens the same
+        # panel, so the row is gone; the button lives on unplaced,
+        # since it still carries the status the panel reports to.
         self.calib_button = CalibrationButton()
         self.calib_button.clicked.connect(self._toggle_calibration)
-        col.addWidget(self.calib_button)
+        self.calib_button.setVisible(False)
 
         # Exposure: what the sensor was given, and the two controls that
         # give it. The histogram is the reading and these are the knobs
@@ -925,6 +932,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         col.addStretch(1)
 
+        # From here down, the section that never scrolls away.
+        col = QtWidgets.QVBoxLayout(bottom)
+        col.setContentsMargins(14, 0, 14, 14)
+        col.setSpacing(18)
+
         # Subject and optics sit closest to the shutter: they are what this
         # particular shot is *of*, and they change more often than anything
         # above them. Everything higher up is instrument state.
@@ -964,7 +976,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shutter.set_available(False)
         col.addWidget(self.shutter)
 
-        return shell
+        return rail
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self.view and event.type() in (

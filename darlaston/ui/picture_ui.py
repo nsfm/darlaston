@@ -26,6 +26,9 @@ from .widgets import ValueBar
 class PictureRow(QtWidgets.QWidget):
     """A disclosure over the picture controls the camera has."""
 
+    #: How many bars show before the row scrolls inside itself.
+    BARS_SHOWN = 4
+
     #: (slot, control id, value) as a bar is moved.
     changed = QtCore.Signal(str, int, int)
 
@@ -51,10 +54,25 @@ class PictureRow(QtWidgets.QWidget):
         ref = weakref.WeakMethod(self._chevron)
         theme.on_change(lambda: (ref() or (lambda: None))())
 
-        self.body = QtWidgets.QWidget()
-        self._body_col = QtWidgets.QVBoxLayout(self.body)
+        # The bars live in a scroll area of their own, capped at four
+        # bars tall, so a camera with eight does not push the groups
+        # below it off the rail. Four is what fits in the eye at once.
+        self.body = QtWidgets.QScrollArea()
+        self.body.setWidgetResizable(True)
+        self.body.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.body.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.body.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.body.viewport().setAutoFillBackground(False)
+        self.body.setMaximumHeight(self.BARS_SHOWN * 20 + (self.BARS_SHOWN - 1) * 6 + 2)
+        theme.dress(self.body, lambda: "QScrollArea { background: transparent; border: 0; }"
+                    " QScrollArea > QWidget > QWidget { background: transparent; }")
+        inner = QtWidgets.QWidget()
+        self._body_col = QtWidgets.QVBoxLayout(inner)
         self._body_col.setContentsMargins(0, 0, 0, 0)
         self._body_col.setSpacing(6)
+        self.body.setWidget(inner)
         # Spelled out, one key per slot, so the catalogue check can see
         # them; the order is the order of PICTURE_SLOTS.
         labels = {"brightness": _("shell.picture.brightness"),
