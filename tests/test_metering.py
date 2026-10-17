@@ -235,3 +235,34 @@ def test_a_camera_switch_rebuilds_the_setup_for_the_new_camera(qapp, tmp_path, m
         assert not getattr(second, "control_writes", []), "nothing of the first camera's reached it"
     finally:
         win.shutdown()
+
+
+def test_our_loop_holds_and_our_writes_stay_away_while_the_camera_owns_the_exposure(monkeypatch):
+    """Measured on the bench: the page set the camera's menu to aperture
+    priority, our loop kept writing the time, and on V4L2 every such
+    write forces the menu back to manual, so the camera strobed between
+    the two three times a second."""
+    from darlaston.camera import v4l2
+
+    cam = v4l2.V4L2Backend.__new__(v4l2.V4L2Backend)
+    sets = []
+    class Cap:
+        def set(self, prop, value): sets.append((prop, value)); return True
+    cam._cap = Cap(); cam._exposure_us = 8000
+    menu = ("", "Manual Mode", "", "Aperture Priority Mode")
+    cam._controls = {"Auto Exposure": {"id": v4l2.V4L2_CID_EXPOSURE_AUTO, "min": 0, "max": 3,
+                                       "type": "menu", "menu": menu},
+                     "Exposure Time, Absolute": {"id": v4l2.V4L2_CID_EXPOSURE_ABSOLUTE,
+                                                 "min": 1, "max": 5000, "flags": 0}}
+    state = {"ae": 3}
+    monkeypatch.setattr(cam, "_control_fd", lambda: 7)
+    monkeypatch.setattr(v4l2, "_read_value", lambda fd, cid: state["ae"] if cid == v4l2.V4L2_CID_EXPOSURE_AUTO else None)
+    assert cam.exposure_owned_by_camera()
+    cam._write_control("exposure", 20000)
+    assert sets == [], "the camera has it; no write, and no flip to manual"
+    assert cam._exposure_us == 20000, "but the ask is remembered"
+    state["ae"] = 1
+    assert not cam.exposure_owned_by_camera()
+    cam._write_control("exposure", 20000)
+    import cv2
+    assert (cv2.CAP_PROP_AUTO_EXPOSURE, 1) in sets and (cv2.CAP_PROP_EXPOSURE, 200) in sets

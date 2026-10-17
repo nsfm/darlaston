@@ -1208,6 +1208,17 @@ class MainWindow(QtWidgets.QMainWindow):
                                 self._us_to_slider(int(high)))
         self._sync_auto_exposure(info)
         self._apply_roles(info, live)
+        self._sync_exposure_owner(info if live else None)
+
+    def _sync_exposure_owner(self, info=None) -> None:
+        """Grey the time bar while the camera's own automatic has it."""
+        info = info or self.session.status.info
+        live = self.session.status.is_live and info is not None
+        owned = live and not info.meters_itself and self.session.exposure_owned_by_camera()
+        self._exposure_owned = bool(owned)
+        if info is not None and info.exposure_range_us is not None and live:
+            self.exposure.setEnabled(not owned)
+            self.exposure.setToolTip(_("shell.exposure.owned") if owned else "")
 
     def _apply_roles(self, info, live: bool) -> None:
         """Fill the slots the profile and the heuristics agree on: the
@@ -1251,7 +1262,9 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(300, self._show_camera_settings)
 
     def _show_camera_settings(self) -> None:
-        """The time and gain bars, from the camera, without a word to it."""
+        """The time and gain bars, from the camera, without a word to it;
+        and whose hand is on the exposure, which the page can change."""
+        self._sync_exposure_owner()
         actual = self.session.actual_settings()
         if actual is None:
             return
@@ -1520,6 +1533,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if info is not None and info.meters_itself:
             # Its automatic, not ours. Ours would be driving gain against
             # an exposure it cannot see, and the two fight.
+            return
+        if getattr(self, "_exposure_owned", False):
+            # The camera's automatic has the exposure, switched on from
+            # the controls page. Same fight, other door.
+            self._ae_hurry = True
             return
         try:
             self._auto_expose(signals)

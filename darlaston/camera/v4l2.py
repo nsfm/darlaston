@@ -568,6 +568,32 @@ class V4L2Backend(CvCaptureBackend):
     def focus_control_id(self) -> int | None:
         return V4L2_CID_FOCUS_ABSOLUTE if self._focus is not None else None
 
+    def exposure_owned_by_camera(self) -> bool:
+        switch = self._by_id(V4L2_CID_EXPOSURE_AUTO)
+        if not switch:
+            return False
+        fd = self._control_fd()
+        now = _read_value(fd, V4L2_CID_EXPOSURE_AUTO) if fd is not None else None
+        return now is not None and now != _AE_MANUAL
+
+    def read_settings(self) -> tuple[int, int]:
+        """From the device, through our own handle, so no capture lock
+        is taken and the reader is not held. The gain comes back in
+        device units and goes out as our percentage, where before the
+        raw number reached a bar whose floor was 100 and pinned it."""
+        us, pct = self._exposure_us, self._gain_pct
+        fd = self._control_fd()
+        if fd is not None:
+            got = _read_value(fd, V4L2_CID_EXPOSURE_ABSOLUTE)
+            if got is not None and got > 0:
+                us = self._exposure_us = int(got) * 100
+            gain = self._has("Gain")
+            if gain:
+                got = _read_value(fd, gain["id"])
+                if got is not None:
+                    pct = self._gain_pct = 100 + max(0, int(got) - gain["min"])
+        return us, pct
+
     # ---- lifecycle -------------------------------------------------------
 
     def _is_it(self, found: dict) -> bool:
@@ -866,6 +892,11 @@ class V4L2Backend(CvCaptureBackend):
                 # connect and mode change, and on a camera that meters
                 # itself the write below would switch its automatic off
                 # and leave it frozen at whatever it last chose.
+                return
+            if self.exposure_owned_by_camera():
+                # The camera's automatic has it, by whatever door it was
+                # switched on. The write below would take it back.
+                self._exposure_us = int(value)
                 return
             # Only writable once auto-exposure is off -- control 1
             # (manual) on UVC, not 0. Setting the value first silently

@@ -223,7 +223,7 @@ class CameraSession:
         if b is None:
             return None
         try:
-            return b.get_exposure(), b.get_gain()
+            return b.read_settings()
         except Exception:
             return None
 
@@ -363,6 +363,16 @@ class CameraSession:
             return False
         try:
             return bool(backend.set_auto(int(control_id), bool(on)))
+        except Exception:
+            return False
+
+    def exposure_owned_by_camera(self) -> bool:
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return False
+        try:
+            return bool(backend.exposure_owned_by_camera())
         except Exception:
             return False
 

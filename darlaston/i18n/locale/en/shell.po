@@ -193,6 +193,13 @@ msgstr "temperature"
 msgid "shell.picture.owned"
 msgstr "The camera's own automatic owns this right now."
 
+#. On the time bar while the camera's automatic exposure is on, switched
+#. on from the controls page. Our loop holds too.
+msgid "shell.exposure.owned"
+msgstr ""
+"The camera's own automatic exposure is on (Cameras > Controls), so\n"
+"the time is its to set. Switch it to manual there to take it back."
+
 msgid "shell.picture.bar.tooltip"
 msgstr "{name}. The camera's default is {default}."
 

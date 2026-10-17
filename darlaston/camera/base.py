@@ -259,6 +259,24 @@ class CameraBackend(ABC):
     def get_gain(self) -> int:
         """Percent, as the camera actually has it."""
 
+    def exposure_owned_by_camera(self) -> bool:
+        """The camera's own automatic has the exposure right now, by
+        whatever door it was switched on (ours, or a raw write to its
+        menu). While it does, our loop holds and our exposure writes
+        stay away: on V4L2 a write forces the menu to manual, and a loop
+        that keeps writing flips the camera between auto and manual
+        three times a second, which looks like the picture strobing.
+        Read from the device, once per ask."""
+        return False
+
+    def read_settings(self) -> tuple[int, int]:
+        """(exposure_us, gain_pct) read from the device now, for a
+        window that has to show what another hand set: the controls
+        page, or the camera's own automatic. Once per ask, never per
+        frame; the per-frame answer is `get_exposure`/`get_gain`,
+        which may be a cached copy of what we last wrote."""
+        return self.get_exposure(), self.get_gain()
+
     def set_auto_exposure(self, on: bool) -> bool:
         """Turn the camera's own automatic exposure on or off.
 

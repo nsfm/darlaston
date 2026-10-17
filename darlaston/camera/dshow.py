@@ -1191,6 +1191,27 @@ class DshowBackend(CvCaptureBackend):
             return None
         return control_id(self._focus.which, self._focus.prop)
 
+    def exposure_owned_by_camera(self) -> bool:
+        if self._device is None or "Exposure" not in self._controls:
+            return False
+        got = getattr(self._device, "get_with_mode", lambda w, p: None)(
+            "camera", CameraControl_Exposure)
+        return bool(got and got[1] & CameraControl_Flags_Auto)
+
+    def read_settings(self) -> tuple[int, int]:
+        us, pct = self._exposure_us, self._gain_pct
+        if self._device is not None:
+            if self._exposure_range() is not None:
+                got = self._device.get("camera", CameraControl_Exposure)
+                if got is not None:
+                    us = self._exposure_us = exposure_to_us(got)
+            gain = self._controls.get("Gain")
+            if gain:
+                got = self._device.get("amp", VideoProcAmp_Gain)
+                if got is not None:
+                    pct = self._gain_pct = 100 + max(0, int(got) - gain["min"])
+        return us, pct
+
     def _exposure_range(self) -> tuple[int, int] | None:
         """None where the exposure cannot be set by hand, which includes
         a device that lists the property and then says it is automatic
@@ -1369,6 +1390,9 @@ class DshowBackend(CvCaptureBackend):
             found = self._controls.get("Exposure")
             if not found or not self._manual_capable(found):
                 return      # automatic only: a manual write is refused anyway
+            if self.exposure_owned_by_camera():
+                self._exposure_us = int(value)
+                return
             step = max(found["min"], min(found["max"], us_to_exposure(value)))
             # The frame's metadata should carry what the camera got,
             # which is the nearest power of two, not what was asked.
