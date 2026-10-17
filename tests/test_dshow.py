@@ -608,3 +608,24 @@ def test_an_exposure_that_goes_both_ways_is_a_switch(fake, monkeypatch):
     cam._apply_pending()
     assert fake.instances[0].writes[-1][:2] == ("camera", 4) and fake.instances[0].writes[-1][3] is False
     cam.close()
+
+
+def test_every_control_is_a_record_with_its_mode_and_is_written_by_id(fake, monkeypatch):
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [_found()])
+    cam = dshow.DshowBackend(key=_found()["key"])
+    info = cam.open()
+    by = {c.name: c for c in info.controls}
+    assert set(by) == {"Exposure", "Focus", "Gain"}
+    assert by["Exposure"].auto and by["Exposure"].auto_id == by["Exposure"].id
+    assert not by["Gain"].auto, "caps said manual only"
+    assert by["Gain"].id == dshow.control_id("amp", 9) and dshow.split_id(by["Gain"].id) == ("amp", 9)
+    assert cam.controls()[0].value is not None, "read through our own handle"
+    assert cam.set_control(by["Gain"].id, 30)
+    cam._apply_pending()
+    assert ("amp", 9, 30, False) in fake.instances[0].writes
+    assert cam.set_auto(by["Focus"].id, True)
+    cam._apply_pending()
+    assert fake.instances[0].writes[-1][:2] == ("camera", 6) and fake.instances[0].writes[-1][3] is True
+    assert not cam.set_auto(by["Gain"].id, True)
+    assert cam.get_control(by["Gain"].id) == 30
+    cam.close()

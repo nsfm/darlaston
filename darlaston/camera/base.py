@@ -75,6 +75,44 @@ def preferred_preview(resolutions):
 
 
 @dataclass(frozen=True)
+class Control:
+    """One control the camera reports, as it reports it.
+
+    The raw list, before anything of ours decides what a control is
+    for: the rail's slots are filled from these, the camera controls
+    page lists them, and a person can route one to a slot the
+    heuristics got wrong. `id` is the backend's own key (a V4L2 control
+    id, a DirectShow property) and means nothing across backends.
+    """
+    id: int
+    name: str
+    kind: str = "int"            # int | bool | menu
+    min: int = 0
+    max: int = 0
+    step: int = 1
+    default: int = 0
+    #: As last read, or None where the device would not say.
+    value: int | None = None
+    #: The switch that lets the camera run this control itself, where
+    #: there is one: a sibling control on V4L2 (auto_exposure for the
+    #: exposure time), the control's own auto flag on DirectShow. None
+    #: where the camera cannot run it.
+    auto_id: int | None = None
+    #: The camera's own automatic owns it right now, so a write would
+    #: be ignored. V4L2 says so with a flag; DirectShow with the mode.
+    inactive: bool = False
+    #: A menu's entries, by index from `min`.
+    menu: tuple[str, ...] = ()
+    #: False for a control the device lists and refuses to take: a
+    #: read-only V4L2 control, a DirectShow one with no manual mode.
+    writable: bool = True
+
+    @property
+    def auto(self) -> bool:
+        return self.auto_id is not None
+
+
+@dataclass(frozen=True)
 class CameraInfo:
     model: str
     serial: str
@@ -105,6 +143,9 @@ class CameraInfo:
     #: on and off. Separate from having an exposure *time* we can set:
     #: a webcam often has the switch and not the time.
     auto_exposure_switch: bool = False
+    #: Every control the device reports, as it reports it, at open.
+    #: `CameraBackend.controls()` reads them again with current values.
+    controls: tuple[Control, ...] = ()
 
     @property
     def is_colour(self) -> bool:
@@ -219,6 +260,28 @@ class CameraBackend(ABC):
         where this is the only automatic there is. Returns False where
         the camera has no such switch, which is the default.
         """
+        return False
+
+    # ---- every control, by the device's own key ---------------------------
+    #
+    # The fixed methods above are the slots the rail drives. These reach
+    # whatever else the device has, for the camera controls page and for
+    # a slot a person has routed to a control of their choosing. A
+    # backend with nothing generic to offer leaves the defaults.
+
+    def controls(self) -> tuple[Control, ...]:
+        """The device's controls with their current values and flags."""
+        info = self.info
+        return info.controls if info is not None else ()
+
+    def get_control(self, control_id: int) -> int | None:
+        return None
+
+    def set_control(self, control_id: int, value: int) -> bool:
+        return False
+
+    def set_auto(self, control_id: int, on: bool) -> bool:
+        """Hand a control to the camera's own automatic, or take it back."""
         return False
 
     def driver_dropped(self) -> int | None:

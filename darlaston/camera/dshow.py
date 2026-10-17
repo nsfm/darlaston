@@ -45,7 +45,7 @@ from ctypes import (POINTER, Structure, byref, c_int, c_int32, c_ubyte,
 
 import cv2
 
-from .base import CameraInfo, FocusAxis, FocusRange, Resolution
+from .base import Control, CameraInfo, FocusAxis, FocusRange, Resolution
 from .cvcam import CvCaptureBackend, usable_formats
 from .errors import CameraBusy, NoCameraFound
 
@@ -431,6 +431,39 @@ _CONTROL_NAMES = {
     ("amp", VideoProcAmp_Backlight): "Backlight", ("amp", VideoProcAmp_Gain): "Gain",
 }
 
+#: One integer key per property, for the generic control API: a camera
+#: control is its property number, a proc-amp one is that plus 100.
+_AMP_ID_BASE = 100
+
+
+def control_id(which: str, prop: int) -> int:
+    return prop + (_AMP_ID_BASE if which == "amp" else 0)
+
+
+def split_id(cid: int) -> tuple[str, int]:
+    return ("amp", cid - _AMP_ID_BASE) if cid >= _AMP_ID_BASE else ("camera", cid)
+
+
+def to_controls(raw: list[dict]) -> "tuple[Control, ...]":
+    """The enumeration's dicts as the records the rest of the program
+    reads. DirectShow keeps a control's automatic as a flag on the
+    control itself, so the switch is the control's own id; `mode` is
+    what Get reported, auto or manual, and auto is the inactive case."""
+    out = []
+    for c in raw:
+        cid = control_id(c["which"], c["prop"])
+        caps = c.get("flags", 0)
+        out.append(Control(
+            id=cid, name=c["name"], kind="int", min=c["min"], max=c["max"],
+            step=max(1, c.get("step", 1)), default=c["default"],
+            value=c.get("value"),
+            auto_id=cid if caps & CameraControl_Flags_Auto else None,
+            inactive=bool(c.get("mode", 0) & CameraControl_Flags_Auto),
+            writable=caps & (CameraControl_Flags_Auto | CameraControl_Flags_Manual)
+            != CameraControl_Flags_Auto))
+    return tuple(out)
+
+
 #: A Backlight Compensation whose range is wider than this is not a
 #: backlight compensation -- a real one is 0..1 or 0..2 -- and on a
 #: ToupTek device it is the focus motor: 0..854 on the X5FCAM4K8MPA.
@@ -461,15 +494,27 @@ def _control_ranges(filt: _Com) -> list[dict]:
                       prop, byref(lo), byref(hi), byref(step), byref(default),
                       byref(caps))
         except OSError:
+            ctrl.release()
             continue
+        if hi.value <= lo.value:
+            ctrl.release()
+            continue
+        # And where it stands now, with whose hand is on it. The second
+        # call costs nothing beside the first and the listing is the
+        # only place a stranger's camera gets described to us.
+        value, mode = c_int32(), c_int32()
+        try:
+            ctrl.call(_CTRL_GET, (c_int32, POINTER(c_int32), POINTER(c_int32)),
+                      prop, byref(value), byref(mode))
+            now, held = value.value, mode.value
+        except OSError:
+            now, held = None, 0
         finally:
             ctrl.release()
-        if hi.value <= lo.value:
-            continue
         found.append({"name": name, "which": which, "prop": prop,
                       "min": lo.value, "max": hi.value,
                       "step": max(1, step.value), "default": default.value,
-                      "flags": caps.value})
+                      "flags": caps.value, "value": now, "mode": held})
     return found
 
 
@@ -936,6 +981,11 @@ class _Controls:
             return False
 
     def get(self, which: str, prop: int) -> int | None:
+        got = self.get_with_mode(which, prop)
+        return None if got is None else got[0]
+
+    def get_with_mode(self, which: str, prop: int) -> tuple[int, int] | None:
+        """The value and whose hand is on it (auto or manual flags)."""
         cam, amp = self._here()
         ctrl = cam if which == "camera" else amp
         if ctrl is None:
@@ -944,7 +994,7 @@ class _Controls:
         try:
             ctrl.call(_CTRL_GET, (c_int32, POINTER(c_int32), POINTER(c_int32)),
                       prop, byref(value), byref(flags))
-            return value.value
+            return value.value, flags.value
         except OSError:
             return None
 
@@ -1084,6 +1134,8 @@ class DshowBackend(CvCaptureBackend):
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
             auto_exposure_switch=self._auto_exposure_switch(),
+            # Read again after settling, which is what moves the modes.
+            controls=self.controls(),
             brand="ToupTek" if found["vid"] in TOUPTEK_VIDS else "",
             raw_capable=False,
             software_trigger=True,
@@ -1141,8 +1193,10 @@ class DshowBackend(CvCaptureBackend):
 
     @staticmethod
     def _manual_capable(control: dict) -> bool:
-        flags = control.get("flags", CameraControl_Flags_Manual)
-        return not flags or bool(flags & CameraControl_Flags_Manual)
+        # Only the automatic-only case is refused: a caps word with
+        # neither bit, or with other bits only, is treated as manual.
+        both = CameraControl_Flags_Auto | CameraControl_Flags_Manual
+        return control.get("flags", 0) & both != CameraControl_Flags_Auto
 
     def _auto_exposure_switch(self) -> bool:
         """A switch is one that goes both ways. An Exposure that is
@@ -1230,7 +1284,43 @@ class DshowBackend(CvCaptureBackend):
 
     # ---- settings --------------------------------------------------------
 
+    # ---- every control, by id ----------------------------------------------
+
+    def controls(self) -> "tuple[Control, ...]":
+        """With the values and modes read again through our own handle,
+        where we have one; a software filter answers with what it said
+        at open."""
+        if self._device is not None:
+            for c in self._controls.values():
+                got = getattr(self._device, "get_with_mode", lambda w, p: None)(
+                    c["which"], c["prop"])
+                if got is None:
+                    now = self._device.get(c["which"], c["prop"])
+                    if now is not None:
+                        c["value"] = now
+                else:
+                    c["value"], c["mode"] = got
+        return to_controls(list(self._controls.values()))
+
+    def get_control(self, control_id: int) -> int | None:
+        which, prop = split_id(control_id)
+        return self._device.get(which, prop) if self._device is not None else None
+
     def _write_control(self, what: str, value) -> None:
+        if what.startswith("control:") or what.startswith("auto:"):
+            which, prop = split_id(int(what.split(":", 1)[1]))
+            if self._device is None:
+                return
+            if what.startswith("control:"):
+                self._device.set(which, prop, int(value))
+            else:
+                current = self._device.get(which, prop)
+                if current is None:
+                    found = next((c for c in self._controls.values()
+                                  if (c["which"], c["prop"]) == (which, prop)), None)
+                    current = found["default"] if found else 0
+                self._device.set(which, prop, current, auto=bool(value))
+            return
         if what == "auto_exposure":
             found = self._controls.get("Exposure")
             if not found:

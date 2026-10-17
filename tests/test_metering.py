@@ -180,16 +180,20 @@ def test_a_v4l2_camera_with_the_switch_and_no_time_is_left_metering(monkeypatch)
 
     cam = v4l2.V4L2Backend.__new__(v4l2.V4L2Backend)
     cam._cap = Cap()
-    cam._controls = {"Auto Exposure": {"id": 1, "min": 0, "max": 3}}
+    raw: list = []
+    monkeypatch.setattr(cam, "_write_raw", lambda cid, value: raw.append((cid, value)) or True)
+    menu = ("", "Manual Mode", "", "Aperture Priority Mode")
+    cam._controls = {"Auto Exposure": {"id": v4l2.V4L2_CID_EXPOSURE_AUTO, "min": 0,
+                                       "max": 3, "type": "menu", "menu": menu}}
     monkeypatch.setattr(cam, "_warm_up", lambda: None)
     cam._settle()
     import cv2
     assert (cv2.CAP_PROP_AUTO_EXPOSURE, 1) not in cam._cap.sets
-    cam._controls["Exposure Time, Absolute"] = {"id": 2, "min": 1, "max": 5000}
+    cam._controls["Exposure Time, Absolute"] = {"id": v4l2.V4L2_CID_EXPOSURE_ABSOLUTE,
+                                                "min": 1, "max": 5000, "flags": 0}
     cam._settle()
     assert (cv2.CAP_PROP_AUTO_EXPOSURE, 1) in cam._cap.sets
-    cam._cap.sets.clear()
     cam._write_control("auto_exposure", True)
-    assert cam._cap.sets == [(cv2.CAP_PROP_AUTO_EXPOSURE, 3)]
+    assert raw[-1] == (v4l2.V4L2_CID_EXPOSURE_AUTO, 3)
     cam._write_control("auto_exposure", False)
-    assert cam._cap.sets[-1] == (cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+    assert raw[-1] == (v4l2.V4L2_CID_EXPOSURE_AUTO, 1)
