@@ -3,9 +3,8 @@
 
 msgid "controls.note"
 msgstr ""
-"Every control this camera reports, as it reports it. Drag one and watch\n"
-"the picture. \"Use as\" routes a control to a slot on the rail where our\n"
-"guess was wrong, and is kept with this camera."
+"Controls reported by your camera. Map useful ones to access them under\n"
+"Picture from the control panel."
 
 msgid "controls.column.control"
 msgstr "control"
