@@ -1014,10 +1014,21 @@ def test_a_stalled_interface_thread_is_shown_the_newest_frame(qapp):
     from where the emit happens, so publishing from *this* thread would be
     a direct call and would never exercise the queue this exists to bound.
     """
-    from darlaston.camera.mock import MockCamera
     from darlaston.ui.main import MainWindow
+    from darlaston.camera.errors import NoCameraFound
 
-    win = MainWindow(lambda: MockCamera(fps=30.0))
+    # No camera, on purpose. The window opens one on another thread as
+    # soon as it is built, and on a slow machine it came up *during*
+    # this test and published its own frames into the very cell under
+    # test -- 3.11 on the runner delivered [19, 2] where [19, 20] was
+    # expected, twice. Stopping the session afterwards is too late: the
+    # frames already in flight still land. A backend that never opens
+    # leaves the session waiting, which is what a stalled interface with
+    # nothing behind it looks like.
+    def nothing():
+        raise NoCameraFound("a stall, with no camera behind it")
+
+    win = MainWindow(nothing)
     try:
         seen = []
         win.slidemap.update_live = lambda s: seen.append(s.seq)
