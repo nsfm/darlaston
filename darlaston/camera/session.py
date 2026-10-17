@@ -108,6 +108,9 @@ class CameraSession:
         self._backend: CameraBackend | None = None
         #: The camera's own automatic, as last asked; None until asked.
         self._auto_exposure: bool | None = None
+        #: Any other control written by id, as last asked, so a restart
+        #: after a mode change or a reconnect hands them back.
+        self._control_values: dict[int, int] = {}
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
         self._lock = threading.Lock()
@@ -195,6 +198,7 @@ class CameraSession:
         camera to switch between.
         """
         self.stop()
+        self.forget_controls()
         self._make_backend = make_backend
         self._is_present = is_present or (lambda: True)
         self._attempt = 0
@@ -305,8 +309,52 @@ class CameraSession:
                 backend.set_auto_exposure(self._auto_exposure)
             except Exception:
                 pass
+        for cid, value in list(self._control_values.items()):
+            try:
+                backend.set_control(cid, value)
+            except Exception:
+                pass
         if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
             backend.set_framerate_cap(self.framerate_cap)
+
+    # ---- every control, by the device's key ----------------------------------
+
+    def controls(self) -> tuple:
+        """The open camera's controls with current values, or ()."""
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return ()
+        try:
+            return tuple(backend.controls())
+        except Exception:
+            return ()
+
+    def set_control(self, control_id: int, value: int) -> bool:
+        self._control_values[int(control_id)] = int(value)
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return False
+        try:
+            return bool(backend.set_control(int(control_id), int(value)))
+        except Exception:
+            return False
+
+    def set_auto(self, control_id: int, on: bool) -> bool:
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return False
+        try:
+            return bool(backend.set_auto(int(control_id), bool(on)))
+        except Exception:
+            return False
+
+    def forget_controls(self) -> None:
+        """On a camera switch: the remembered values were that camera's."""
+        self._control_values.clear()
+        self._auto_exposure = None
 
     def set_gain(self, percent: int) -> None:
         self._gain_pct = int(percent)

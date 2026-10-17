@@ -265,6 +265,16 @@ class CameraProfile:
     #: turned our loop off for a long manual exposure on one camera
     #: does not want the next webcam frozen at whatever it last chose.
     camera_auto_exposure: bool = True
+    #: Which control fills which slot, where a person has said: slot
+    #: name to the device's control id, or 0 for "nothing". Empty means
+    #: the heuristics decide. See camera/roles.py for why ids.
+    roles: dict = field(default_factory=dict)
+    #: The in-camera picture controls as last set on this camera, by
+    #: control id (as a string, since JSON keys are), re-applied at
+    #: open. On a camera that finishes its own picture these are its
+    #: whole pipeline, and a sharpness left at the factory default puts
+    #: halos on diatom striae every time the camera is plugged in.
+    picture: dict = field(default_factory=dict)
     #: What a profiling run measured, or empty until one has been done.
     #:
     #: `geometry` is one entry per resolution mode: its size, whether the

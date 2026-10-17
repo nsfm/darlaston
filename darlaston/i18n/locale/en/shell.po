@@ -158,6 +158,40 @@ msgstr "running a timelapse"
 msgid "shell.group.exposure"
 msgstr "exposure"
 
+#. The disclosure over the in-camera picture controls, on a camera that
+#. finishes its own picture. Closed by default; the header is the switch.
+msgid "shell.group.picture"
+msgstr "picture"
+
+msgid "shell.picture.tooltip"
+msgstr ""
+"The camera's own picture controls. On a camera that sends a finished\n"
+"picture these are the whole pipeline. Remembered with the camera."
+
+msgid "shell.picture.brightness"
+msgstr "brightness"
+
+msgid "shell.picture.contrast"
+msgstr "contrast"
+
+msgid "shell.picture.saturation"
+msgstr "saturation"
+
+msgid "shell.picture.sharpness"
+msgstr "sharpness"
+
+msgid "shell.picture.gamma"
+msgstr "gamma"
+
+msgid "shell.picture.hue"
+msgstr "hue"
+
+msgid "shell.picture.owned"
+msgstr "The camera's own automatic owns this right now."
+
+msgid "shell.picture.bar.tooltip"
+msgstr "{name}. The camera's default is {default}."
+
 msgid "shell.group.measure_from"
 msgstr "measure from"
 

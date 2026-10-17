@@ -322,7 +322,7 @@ def test_a_camera_can_be_forgotten(qapp, tmp_path, monkeypatch):
 
     dialog = CameraDialog(library, "TP2112071101", None)
     assert dialog.list.count() == 2
-    assert dialog.editor.isHidden() is False
+    assert dialog.tabs.isHidden() is False
 
     # Through the dialog's own copy, which is what the button touches.
     dialog._library.remove_camera("WEBCAM-1")
@@ -389,7 +389,7 @@ def test_the_camera_window_says_so_when_none_has_been_seen(qapp, tmp_path,
 
     dialog = CameraDialog(Library(tmp_path / "library.json"), None, None)
     assert dialog.empty.isHidden() is False
-    assert dialog.editor.isHidden() is True
+    assert dialog.tabs.isHidden() is True
     assert dialog.list.isHidden() is True
 
 

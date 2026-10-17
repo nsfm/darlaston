@@ -1278,6 +1278,15 @@ class DshowBackend(CvCaptureBackend):
                 if current is not None:
                     self._focus._position = current
                     self._device.set(self._focus.which, self._focus.prop, current)
+            # Pan, Tilt, Roll and Zoom change what a pixel covers and
+            # which way is up, under a scale bar and a stage tracker
+            # that assume neither moves. Pinned to their defaults, so an
+            # on-screen menu or another program cannot leave them
+            # elsewhere between our launches.
+            for name in ("Pan", "Tilt", "Roll", "Zoom"):
+                found = self._controls.get(name)
+                if found and found.get("value") not in (None, found["default"]):
+                    self._device.set(found["which"], found["prop"], found["default"])
         except Exception as why:
             _log.debug("settling controls: %s", why)
         self._warm_up()

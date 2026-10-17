@@ -73,6 +73,7 @@ from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .present import (HeaderDialog, PresentWindow, ScreenDialog,
                       screen_width_cm)
+from .picture_ui import PictureRow
 from .widgets import (UI_METER, BalanceSwatch, FocusGroup, Histogram,
                       LiveView, SaveGauge, ValueBar)
 
@@ -845,6 +846,14 @@ class MainWindow(QtWidgets.QMainWindow):
         exposure.addLayout(wb_row)
 
         col.addLayout(exposure)
+
+        # The in-camera pipeline, on a camera that finishes its own
+        # picture, behind a disclosure. Its own group so the slot order
+        # of the rail never changes: exposure, picture, focus.
+        self.picture = PictureRow()
+        self.picture.changed.connect(self._on_picture_control)
+        self.picture.setVisible(False)
+        col.addWidget(self.picture)
         col.addWidget(self.focus)
 
         # Where the metric looks. Field curvature puts the frame edges on a
@@ -1037,6 +1046,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # camera whose switch it is. The session keeps it from here,
             # across reconnects and mode changes.
             self.session.set_auto_exposure(self._auto_on(info))
+        if info is not None:
+            self._restore_picture(info)
         self._synced = True
 
     def _measure_camera(self, parent=None) -> None:
@@ -1167,6 +1178,46 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.setRange(self._us_to_slider(int(low)),
                                 self._us_to_slider(int(high)))
         self._sync_auto_exposure(info)
+        self._apply_roles(info, live)
+
+    def _apply_roles(self, info, live: bool) -> None:
+        """Fill the slots the profile and the heuristics agree on: the
+        Picture row's bars, and a focus motor behind any control."""
+        from ..camera import roles as roles_
+        profile_roles = self.setup.camera.roles if self.setup is not None else {}
+        self._slots = roles_.resolve(info.controls, profile_roles)
+        picture = {s: self._slots.get(s) for s in roles_.PICTURE_SLOTS}
+        self.picture.set_controls(picture if live else {})
+        self.picture.setVisible(live and any(picture.values()))
+
+    def _on_picture_control(self, slot: str, control_id: int, value: int) -> None:
+        """A bar moved: to the camera now, and into the profile so the
+        next open puts it back."""
+        self.session.set_control(control_id, value)
+        if self.setup is None or not self.setup.camera.serial:
+            return
+        from dataclasses import replace
+        picture = dict(self.setup.camera.picture)
+        picture[str(control_id)] = int(value)
+        self.setup.camera = replace(self.setup.camera, picture=picture)
+        self.library.file_camera(self.setup.camera)
+        self.library.save()
+
+    def _restore_picture(self, info) -> None:
+        """At open: the picture controls as this camera last had them."""
+        if self.setup is None or not self.setup.camera.picture:
+            return
+        known = {c.id for c in info.controls}
+        for key, value in self.setup.camera.picture.items():
+            try:
+                cid = int(key)
+            except ValueError:
+                continue
+            if cid in known:
+                self.session.set_control(cid, int(value))
+        for slot, control in getattr(self, "_slots", {}).items():
+            if control is not None and str(control.id) in self.setup.camera.picture:
+                self.picture.show_value(slot, int(self.setup.camera.picture[str(control.id)]))
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
@@ -2270,9 +2321,24 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- the focus motor -------------------------------------------------
 
     def _focus_axis(self):
-        """The camera's motor, if it has one and the camera is open."""
+        """The camera's motor, if it has one and the camera is open.
+
+        A person's routing wins: a control the profile names as focus
+        is the motor, through the generic API, whatever the backend
+        found or did not find on its own.
+        """
         backend = self.session.backend if self.session is not None else None
-        return backend.focus_axis if backend is not None else None
+        if backend is None:
+            return None
+        routed = getattr(self, "_slots", {}).get("focus")
+        if routed is not None and self.setup is not None \
+                and self.setup.camera.roles.get("focus"):
+            from ..camera.roles import ControlFocusAxis
+            axis = getattr(self, "_routed_axis", None)
+            if axis is None or axis._control.id != routed.id or axis._backend is not backend:
+                axis = self._routed_axis = ControlFocusAxis(backend, routed)
+            return axis
+        return backend.focus_axis
 
     def _on_focus_slider(self, position: int) -> None:
         axis = self._focus_axis()
@@ -3220,7 +3286,8 @@ class MainWindow(QtWidgets.QMainWindow):
         full = max(((r.width, r.height) for r in resolutions),
                    key=lambda wh: wh[0] * wh[1], default=(0, 0))
         dialog = CameraDialog(self.library, current, self,
-                              settings=self.settings, open_size=full)
+                              settings=self.settings, open_size=full,
+                              live=self.session if self.session.status.is_live else None)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
@@ -3236,6 +3303,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup.camera = updated
             self.strip.update_status(self.session.status, self.setup)
             self._refresh_calibration()
+            info = self.session.status.info
+            if info is not None:
+                # Roles may have moved: the Picture row and the focus
+                # motor follow the profile as it stands now.
+                self._apply_roles(info, self.session.status.is_live)
+                if self.assembly is not None:
+                    self.assembly.set_focus_axis(self._focus_axis())
 
     def _set_scale_bar(self, on: bool) -> None:
         self.settings.scale_bar = bool(on)

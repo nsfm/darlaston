@@ -1,0 +1,70 @@
+# The camera controls page in the Cameras window: every control the
+# device reports, live, and "use as" to route one to a slot on the rail.
+
+msgid "controls.note"
+msgstr ""
+"Every control this camera reports, as it reports it. Drag one and watch\n"
+"the picture. \"Use as\" routes a control to a slot on the rail where our\n"
+"guess was wrong, and is kept with this camera."
+
+msgid "controls.column.control"
+msgstr "control"
+
+msgid "controls.column.value"
+msgstr "value"
+
+msgid "controls.column.auto"
+msgstr "auto"
+
+msgid "controls.column.use_as"
+msgstr "use as"
+
+msgid "controls.auto.tooltip"
+msgstr "Let the camera run this control itself."
+
+#. {lo}, {hi} and {default} are the device's own numbers.
+msgid "controls.bar.tooltip"
+msgstr "{lo} to {hi}. The camera's default is {default}."
+
+msgid "controls.action.defaults"
+msgstr "Device defaults"
+
+msgid "controls.defaults.tooltip"
+msgstr "Every control back to the value the camera ships with."
+
+#. The placeholder entry of "use as": what the heuristic guessed, or nothing.
+msgid "controls.use_as.guess"
+msgstr "(guessed: {slot})"
+
+msgid "controls.use_as.nothing"
+msgstr "(nothing)"
+
+#. The entry that empties a slot the heuristic would have filled.
+msgid "controls.use_as.none"
+msgstr "nothing, not even the guess"
+
+msgid "controls.use_as.tooltip"
+msgstr ""
+"Which slot on the rail this control fills. The guess is shown in\n"
+"brackets; pick a slot to override it, or nothing to empty the slot."
+
+msgid "controls.slot.focus"
+msgstr "focus"
+
+msgid "controls.slot.brightness"
+msgstr "brightness"
+
+msgid "controls.slot.contrast"
+msgstr "contrast"
+
+msgid "controls.slot.saturation"
+msgstr "saturation"
+
+msgid "controls.slot.sharpness"
+msgstr "sharpness"
+
+msgid "controls.slot.gamma"
+msgstr "gamma"
+
+msgid "controls.slot.hue"
+msgstr "hue"
