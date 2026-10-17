@@ -38,7 +38,7 @@ import struct
 
 import cv2
 
-from .base import CameraInfo, FocusAxis, FocusRange, Resolution
+from .base import CameraInfo, Control, FocusAxis, FocusRange, Resolution
 from .cvcam import (PREFERRED_FOURCC, REFUSED_FOURCC,  # noqa: F401 -- re-exported
                     SETTLE_FRAMES, WARMUP_FRAMES, CvCaptureBackend)
 from .cvcam import usable_formats as _usable_formats
@@ -62,8 +62,97 @@ _CAP_VIDEO_CAPTURE = 0x00000001
 _FRMSIZE_DISCRETE = 1
 _VIDIOC_QUERYCTRL = (3 << 30) | (68 << 16) | (ord("V") << 8) | 36
 #: Walk the control list rather than guessing at identifiers.
+_VIDIOC_G_CTRL = (3 << 30) | (8 << 16) | (ord("V") << 8) | 27
+_VIDIOC_S_CTRL = (3 << 30) | (8 << 16) | (ord("V") << 8) | 28
+_VIDIOC_QUERYMENU = (3 << 30) | (44 << 16) | (ord("V") << 8) | 37
 _CTRL_FLAG_NEXT = 0x80000000
 _CTRL_FLAG_DISABLED = 0x0001
+_CTRL_FLAG_READ_ONLY = 0x0004
+_CTRL_FLAG_INACTIVE = 0x0010
+_CTRL_FLAG_WRITE_ONLY = 0x0040
+_CTRL_FLAG_HAS_PAYLOAD = 0x0100
+_CTRL_TYPE_INTEGER, _CTRL_TYPE_BOOLEAN, _CTRL_TYPE_MENU = 1, 2, 3
+_CTRL_TYPE_INTEGER_MENU = 9
+_CTRL_KINDS = {_CTRL_TYPE_INTEGER: "int", _CTRL_TYPE_BOOLEAN: "bool",
+               _CTRL_TYPE_MENU: "menu", _CTRL_TYPE_INTEGER_MENU: "menu"}
+
+#: The switch that runs a control, by the names the kernel gives them,
+#: old and new. V4L2 keeps the automatic as a sibling control rather
+#: than a flag on the one it drives, so the pairing has to be known.
+_AUTO_SIBLINGS = {
+    ("Exposure Time, Absolute", "Exposure (Absolute)"): ("Auto Exposure", "Exposure, Auto"),
+    ("White Balance Temperature",): ("White Balance, Automatic", "White Balance Temperature, Auto"),
+    ("Focus, Absolute",): ("Focus, Automatic Continuous", "Focus, Auto"),
+    ("Hue",): ("Hue, Auto",),
+    ("Brightness",): ("Brightness, Automatic",),
+    ("Gain",): ("Gain, Automatic",),
+}
+
+
+def _ioctl(fh, request: int, buf) -> None:
+    """One seam for the tests to stand on."""
+    fcntl.ioctl(fh, request, buf, True)
+
+
+def _menu_entries(fh, cid: int, low: int, high: int, kind: int) -> tuple[str, ...]:
+    """A menu's entries, by index. A hole in the index range is a real
+    thing (a camera may skip a mode) and comes back as an empty name."""
+    entries = []
+    for index in range(low, min(high, low + 32) + 1):
+        buf = bytearray(44)
+        struct.pack_into("<II", buf, 0, cid, index)
+        try:
+            _ioctl(fh, _VIDIOC_QUERYMENU, buf)
+        except OSError:
+            entries.append("")
+            continue
+        if kind == _CTRL_TYPE_INTEGER_MENU:
+            entries.append(str(struct.unpack_from("<q", buf, 8)[0]))
+        else:
+            entries.append(bytes(buf[8:40]).split(b"\0")[0].decode("ascii", "replace"))
+    return tuple(entries)
+
+
+def _read_value(fh, cid: int) -> int | None:
+    buf = bytearray(8)
+    struct.pack_into("<I", buf, 0, cid)
+    try:
+        _ioctl(fh, _VIDIOC_G_CTRL, buf)
+    except OSError:
+        return None
+    return struct.unpack_from("<i", buf, 4)[0]
+
+
+def read_control(node: str, cid: int) -> int | None:
+    """The current value of one control, by id, on its own handle."""
+    try:
+        fh = open(node, "rb", buffering=0)
+    except OSError:
+        return None
+    with fh:
+        return _read_value(fh, cid)
+
+
+def write_control(node: str, cid: int, value: int) -> bool:
+    """Set one control by id, on our own handle beside the stream.
+
+    Not through cv2, which reaches only the handful of properties it
+    has names for. A control is device state, not stream state, so a
+    write on a second handle lands all the same.
+    """
+    try:
+        fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        buf = bytearray(8)
+        struct.pack_into("<Ii", buf, 0, cid, int(value))
+        _ioctl(fd, _VIDIOC_S_CTRL, buf)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
 #: The focus motor, by identifier. By identifier and not by name
 #: because the name has changed under us: `Focus (absolute)` on older
 #: kernels, `Focus, Absolute` now, and the auto switch went from
@@ -310,22 +399,60 @@ def controls(node: str) -> list[dict]:
             buf = bytearray(68)
             struct.pack_into("<I", buf, 0, cid)
             try:
-                fcntl.ioctl(fh, _VIDIOC_QUERYCTRL, buf, True)
+                _ioctl(fh, _VIDIOC_QUERYCTRL, buf)
             except OSError:
                 break            # EINVAL ends the walk; anything else, stop
             got, kind = struct.unpack_from("<II", buf, 0)
             name = bytes(buf[8:40]).split(b"\0")[0].decode("ascii", "replace")
             low, high, step, default, flags = struct.unpack_from("<iiiiI",
                                                                  buf, 40)
-            if not flags & _CTRL_FLAG_DISABLED and not name.endswith(
-                    "Controls"):
+            cid = got | _CTRL_FLAG_NEXT
+            if flags & _CTRL_FLAG_DISABLED or name.endswith("Controls"):
                 # The "User Controls"/"Camera Controls" entries are class
                 # headers, not settings. Keeping them would put two
                 # unusable rows in front of somebody.
-                found.append({"id": got, "name": name, "min": low,
-                              "max": high, "step": step, "default": default})
-            cid = got | _CTRL_FLAG_NEXT
+                continue
+            if kind not in _CTRL_KINDS or flags & _CTRL_FLAG_HAS_PAYLOAD:
+                # Strings, 64-bit integers, buttons, regions: nothing a
+                # bar or a tick could show, and nothing we would drive.
+                continue
+            # Kept now, where before only the range was: the type, the
+            # flags and the value. The inactive flag is the camera
+            # saying its own automatic owns this control right now,
+            # which is exactly the thing the rail has to know.
+            menu = (_menu_entries(fh, got, low, high, kind)
+                    if _CTRL_KINDS[kind] == "menu" else ())
+            value = (None if flags & _CTRL_FLAG_WRITE_ONLY
+                     else _read_value(fh, got))
+            found.append({"id": got, "name": name, "min": low,
+                          "max": high, "step": step, "default": default,
+                          "type": _CTRL_KINDS[kind], "flags": flags,
+                          "value": value, "menu": menu})
     return found
+
+
+def _auto_sibling(name: str, by_name: dict) -> dict | None:
+    for driven, switches in _AUTO_SIBLINGS.items():
+        if name in driven:
+            return next((by_name[s] for s in switches if s in by_name), None)
+    return None
+
+
+def to_controls(raw: list[dict]) -> tuple[Control, ...]:
+    """The enumeration's dicts as the records the rest of the program
+    reads, with each control's automatic found among its siblings."""
+    by_name = {c["name"]: c for c in raw}
+    out = []
+    for c in raw:
+        sibling = _auto_sibling(c["name"], by_name)
+        out.append(Control(
+            id=c["id"], name=c["name"], kind=c.get("type", "int"),
+            min=c["min"], max=c["max"], step=max(1, c.get("step", 1)),
+            default=c["default"], value=c.get("value"),
+            auto_id=sibling["id"] if sibling else None,
+            inactive=bool(c.get("flags", 0) & _CTRL_FLAG_INACTIVE),
+            menu=tuple(c.get("menu", ()))))
+    return tuple(out)
 
 
 def usable_formats(found: dict) -> list[str]:
@@ -488,6 +615,7 @@ class V4L2Backend(CvCaptureBackend):
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
             auto_exposure_switch=bool(self._has("Auto Exposure")),
+            controls=to_controls(list(self._controls.values())),
             # Who made it, not which kernel module drives it. Read from
             # the USB descriptor, and frequently absent or a placeholder
             # -- one camera here says "HD Camera Manufacturer" -- but a
@@ -584,9 +712,40 @@ class V4L2Backend(CvCaptureBackend):
 
     # ---- settings --------------------------------------------------------
 
+    # ---- every control, by id ----------------------------------------------
+
+    def controls(self) -> tuple[Control, ...]:
+        """Read again rather than remembered: the values and the
+        inactive flags are what change under the camera's own automatic."""
+        if self._node is None:
+            return ()
+        fresh = controls(self._node)
+        if fresh:
+            self._controls = {c["name"]: c for c in fresh}
+        return to_controls(list(self._controls.values()))
+
+    def get_control(self, control_id: int) -> int | None:
+        return read_control(self._node, control_id) if self._node else None
+
+    def _auto_value(self, switch: dict, on: bool) -> int:
+        """What 'on' is for a switch: a bool is 1, and UVC's auto
+        exposure menu is 3 (aperture priority) against 1 (manual)."""
+        if switch.get("type") == "menu":
+            return 3 if on else 1
+        return 1 if on else 0
+
     def _write_control(self, what: str, value) -> None:
         """The actual writes. Called holding `_lock`, never from the UI."""
-        if what == "auto_exposure":
+        if what.startswith("control:"):
+            write_control(self._node, int(what.split(":", 1)[1]), int(value))
+        elif what.startswith("auto:"):
+            cid = int(what.split(":", 1)[1])
+            driven = self._by_id(cid)
+            switch = _auto_sibling(driven["name"], self._controls) if driven else None
+            if switch is not None:
+                write_control(self._node, switch["id"],
+                              self._auto_value(switch, bool(value)))
+        elif what == "auto_exposure":
             # UVC's menu: 1 is manual, 3 is aperture priority, which is
             # what every webcam measured calls its automatic.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3 if value else 1)

@@ -224,6 +224,25 @@ class CvCaptureBackend(CameraBackend):
         self._queue("auto_exposure", bool(on))
         return True
 
+    def _known(self, control_id: int):
+        return next((c for c in (self._info.controls if self._info else ())
+                     if c.id == control_id), None)
+
+    def set_control(self, control_id: int, value: int) -> bool:
+        """Any control, by the device's key, through the same queue the
+        sliders use, so it lands between frames and never on them."""
+        if self._known(control_id) is None:
+            return False
+        self._queue(f"control:{control_id}", int(value))
+        return True
+
+    def set_auto(self, control_id: int, on: bool) -> bool:
+        known = self._known(control_id)
+        if known is None or known.auto_id is None:
+            return False
+        self._queue(f"auto:{control_id}", bool(on))
+        return True
+
     def set_gain(self, percent: int) -> None:
         """Map our percentage onto whatever scale this device uses.
 

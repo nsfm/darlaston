@@ -4163,6 +4163,10 @@ def _list_cameras_to(print) -> int:       # noqa: A002 -- shadowed on purpose
                 if c["name"] == "Exposure":
                     extra = (f"  = {exposure_to_us(c['min'])} us .. "
                              f"{exposure_to_us(c['max'])} us")
+                if c.get("value") is not None:
+                    extra += f"  now {c['value']}"
+                if c.get("mode", 0) & 1:
+                    extra += "  (automatic)"
                 print(f"      control {c['name']}: {c['min']}..{c['max']} "
                       f"step {c['step']} default {c['default']} "
                       f"caps {c['flags']}{extra}")
