@@ -197,3 +197,41 @@ def test_a_v4l2_camera_with_the_switch_and_no_time_is_left_metering(monkeypatch)
     assert raw[-1] == (v4l2.V4L2_CID_EXPOSURE_AUTO, 3)
     cam._write_control("auto_exposure", False)
     assert raw[-1] == (v4l2.V4L2_CID_EXPOSURE_AUTO, 1)
+
+
+def test_a_camera_switch_rebuilds_the_setup_for_the_new_camera(qapp, tmp_path, monkeypatch):
+    """The setup used to be built once and kept: after a switch the
+    first camera's profile sat under the second, and once the profile
+    carried picture values that meant writing one camera's settings
+    into another."""
+    from darlaston.camera.base import Control
+
+    class Second(MeteringCamera):
+        def open(self):
+            info = super().open()
+            self._info = dataclasses.replace(
+                info, serial="MOCK-SECOND", model="Second",
+                controls=(Control(id=0x00980900, name="Brightness", min=-64, max=64,
+                                  default=0, value=0),))
+            return self._info
+
+        def set_control(self, cid, value):
+            self.control_writes = getattr(self, "control_writes", []) + [(cid, value)]
+            return True
+
+    first = MeteringCamera(switch=True)
+    win = _window(tmp_path, monkeypatch, first)
+    try:
+        assert win.setup.camera.serial == first.info.serial
+        second = Second(switch=True)
+        win._synced = False
+        win.session.retarget(lambda: second)
+        deadline = time.monotonic() + 8
+        from PySide6 import QtWidgets
+        app = QtWidgets.QApplication.instance()
+        while time.monotonic() < deadline and win.setup.camera.serial != "MOCK-SECOND":
+            app.processEvents(); time.sleep(0.02)
+        assert win.setup.camera.serial == "MOCK-SECOND"
+        assert not getattr(second, "control_writes", []), "nothing of the first camera's reached it"
+    finally:
+        win.shutdown()

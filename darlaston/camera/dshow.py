@@ -432,16 +432,19 @@ _CONTROL_NAMES = {
 }
 
 #: One integer key per property, for the generic control API: a camera
-#: control is its property number, a proc-amp one is that plus 100.
-_AMP_ID_BASE = 100
+#: control is 1000 plus its property number, a proc-amp one 2000 plus.
+#: Never zero, since a role of zero means "nothing" and Pan is property 0.
+_CAM_ID_BASE = 1000
+_AMP_ID_BASE = 2000
 
 
 def control_id(which: str, prop: int) -> int:
-    return prop + (_AMP_ID_BASE if which == "amp" else 0)
+    return prop + (_AMP_ID_BASE if which == "amp" else _CAM_ID_BASE)
 
 
 def split_id(cid: int) -> tuple[str, int]:
-    return ("amp", cid - _AMP_ID_BASE) if cid >= _AMP_ID_BASE else ("camera", cid)
+    return (("amp", cid - _AMP_ID_BASE) if cid >= _AMP_ID_BASE
+            else ("camera", cid - _CAM_ID_BASE))
 
 
 def to_controls(raw: list[dict]) -> "tuple[Control, ...]":
@@ -1285,7 +1288,10 @@ class DshowBackend(CvCaptureBackend):
             # elsewhere between our launches.
             for name in ("Pan", "Tilt", "Roll", "Zoom"):
                 found = self._controls.get(name)
-                if found and found.get("value") not in (None, found["default"]):
+                if not found:
+                    continue
+                now = self._device.get(found["which"], found["prop"])
+                if now is not None and now != found["default"]:
                     self._device.set(found["which"], found["prop"], found["default"])
         except Exception as why:
             _log.debug("settling controls: %s", why)
@@ -1314,6 +1320,18 @@ class DshowBackend(CvCaptureBackend):
     def get_control(self, control_id: int) -> int | None:
         which, prop = split_id(control_id)
         return self._device.get(which, prop) if self._device is not None else None
+
+    def set_control(self, control_id: int, value: int) -> bool:
+        # A software filter keeps its state per instance, so a write to
+        # our second handle reaches nothing; say so rather than queue it.
+        if self._device is None:
+            return False
+        return super().set_control(control_id, value)
+
+    def set_auto(self, control_id: int, on: bool) -> bool:
+        if self._device is None:
+            return False
+        return super().set_auto(control_id, on)
 
     def _write_control(self, what: str, value) -> None:
         if what.startswith("control:") or what.startswith("auto:"):

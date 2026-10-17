@@ -42,9 +42,28 @@ def guess(slot: str, controls: tuple[Control, ...]) -> Control | None:
     wanted = _NAMES.get(slot, ())
     for control in controls:
         name = control.name.strip().lower()
-        if name in wanted and control.kind != "bool":
+        if name in wanted and control.kind == "int":
             return control
     return None
+
+
+#: Controls the rail or the backend already drive, by name: the exposure
+#: time and its switch, gain, focus and its switch, the white balance
+#: switch, and UVC's frame-rate priority. "Device defaults" leaves these
+#: alone, and a route from the page cannot take them: resetting a focus
+#: switch to its factory value turns continuous autofocus back on under
+#: a sweep, and the backend settles these itself at open.
+_OWNED = ("exposure", "gain", "focus", "white balance, auto",
+          "whitebalance", "auto exposure", "autogain", "backlight")
+
+
+def rail_owned(control: Control, roles: dict | None = None) -> bool:
+    name = control.name.strip().lower()
+    if control.kind != "int":
+        return True                     # switches and menus are the camera's
+    if roles and any(int(v) == control.id for v in roles.values() if v):
+        return True                     # routed somewhere on the rail
+    return any(name.startswith(w) or name == w for w in _OWNED)
 
 
 def resolve(controls: tuple[Control, ...], roles: dict | None,
@@ -67,7 +86,7 @@ def resolve(controls: tuple[Control, ...], roles: dict | None,
     for slot in slots:
         if slot in roles and roles[slot] and int(roles[slot]) in by_id:
             control = by_id[int(roles[slot])]
-            if control.id not in taken:
+            if control.id not in taken and control.kind == "int":
                 out[slot] = control
                 taken.add(control.id)
     for slot in slots:

@@ -784,7 +784,8 @@ class CameraDialog(_LibraryDialog):
 
     def __init__(self, library, current: str | None = None,
                  parent=None, settings=None, open_size=None, live=None) -> None:
-        super().__init__(library, parent, width=860)
+        super().__init__(library, parent, width=720)
+        self.resize(900, 620)
         self.setWindowTitle(_("setup.cameras.title"))
         #: Whatever drives the open camera's controls (the session), for
         #: the controls page. None in a test, or with no camera open.
@@ -905,6 +906,8 @@ class CameraDialog(_LibraryDialog):
     #: Emitted when somebody asks to measure the open camera. The window
     #: owns the session, so it runs the measurement; this only asks.
     measure_requested = QtCore.Signal()
+    #: A control written from the controls page: (control id, value).
+    control_written = QtCore.Signal(int, int)
 
     #: Set when a camera is chosen, and read by the caller afterwards.
     #: This dialog does not open cameras: it is a dialog.
@@ -1044,6 +1047,7 @@ class CameraDialog(_LibraryDialog):
             return
         page = ControlsPage(self._live, profile.roles)
         page.role_changed.connect(lambda *_: self._refresh())
+        page.written.connect(self.control_written)
         self._controls_page = page
         self._controls_col.addWidget(page)
 
@@ -1083,6 +1087,7 @@ class CameraDialog(_LibraryDialog):
             self._selected = serial
             self._hand_over(self._profile_for(serial))
         self._refresh()
+        self._show_controls_for(self._selected)
 
     def _set_ignored(self, on: bool) -> None:
         """Pass this camera over on startup, or stop doing so.

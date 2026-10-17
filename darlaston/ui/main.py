@@ -965,7 +965,15 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(object)
     def _on_status(self, status: SessionStatus) -> None:
         info = status.info
-        if info is not None and self.setup is None:
+        if info is not None and (self.setup is None
+                                 or self.setup.camera.serial != info.serial):
+            # A different camera than the setup was built for: switched
+            # from the menu, or the first one. The setup used to be
+            # built once and kept, so a switch left the first camera's
+            # profile under the second, and once the profile carried
+            # picture values and roles that meant writing one camera's
+            # settings into another.
+            self._flush_profile()
             profile = self.library.remember_camera(
                 info.serial, info.model, make=info.brand or "",
                 fingerprint=getattr(info, "fingerprint", ""))
@@ -974,7 +982,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # ignored on every subsequent launch -- a configured Zeiss
             # reverting to a placeholder turret every time the app started.
             scope = (self.library.scope_or_default(profile.last_scope)
-                     or self._first_scope())
+                     or (self.setup.scope if self.setup is not None
+                         else self._first_scope()))
             self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
             # The camera's calibrated rolling-shutter readout, or zero
@@ -1182,41 +1191,91 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_roles(self, info, live: bool) -> None:
         """Fill the slots the profile and the heuristics agree on: the
-        Picture row's bars, and a focus motor behind any control."""
+        Picture row's bars, and a focus motor behind any control.
+
+        From the camera's controls as they stand now, not the snapshot
+        `open()` took: the session restores the remembered values after
+        the open, and a bar refilled from the snapshot read the factory
+        value while the device sat at the one the person had set.
+        """
         from ..camera import roles as roles_
-        profile_roles = self.setup.camera.roles if self.setup is not None else {}
-        self._slots = roles_.resolve(info.controls, profile_roles)
+        profile = self.setup.camera if self.setup is not None else None
+        controls = (self.session.controls() if live else ()) or info.controls
+        self._slots = roles_.resolve(controls, profile.roles if profile else {})
         picture = {s: self._slots.get(s) for s in roles_.PICTURE_SLOTS}
         self.picture.set_controls(picture if live else {})
         self.picture.setVisible(live and any(picture.values()))
+        if profile is not None and live:
+            for slot, control in picture.items():
+                if control is not None and str(control.id) in profile.picture:
+                    self.picture.show_value(slot, int(profile.picture[str(control.id)]))
 
     def _on_picture_control(self, slot: str, control_id: int, value: int) -> None:
         """A bar moved: to the camera now, and into the profile so the
         next open puts it back."""
-        self.session.set_control(control_id, value)
+        self.session.set_control(control_id, value, remember=True)
+        self._note_picture(control_id, value)
+
+    def _on_control_written(self, control_id: int, value: int) -> None:
+        """A write from the controls page. One that lands in a picture
+        slot is the Picture row's business too: shown on its bar and
+        kept with the camera, so it survives the next launch."""
+        for slot, control in getattr(self, "_slots", {}).items():
+            if control is not None and control.id == control_id and slot != "focus":
+                self.picture.show_value(slot, int(value))
+                self.session.set_control(control_id, value, remember=True)
+                self._note_picture(control_id, value)
+
+    def _note_picture(self, control_id: int, value: int) -> None:
+        """Into the profile in memory now, onto disk a beat later. A drag
+        emits a value per step, and each step used to rewrite the whole
+        library; one write a half-second after the last step is enough."""
         if self.setup is None or not self.setup.camera.serial:
             return
         from dataclasses import replace
         picture = dict(self.setup.camera.picture)
         picture[str(control_id)] = int(value)
         self.setup.camera = replace(self.setup.camera, picture=picture)
-        self.library.file_camera(self.setup.camera)
-        self.library.save()
+        timer = getattr(self, "_profile_timer", None)
+        if timer is None:
+            timer = self._profile_timer = QtCore.QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(500)
+            timer.timeout.connect(self._save_profile)
+        timer.start()
+
+    def _save_profile(self) -> None:
+        if self.setup is not None and self.setup.camera.serial:
+            self.library.file_camera(self.setup.camera)
+            self.library.save()
+
+    def _flush_profile(self) -> None:
+        """Write the profile now, if a write is pending: before a camera
+        switch takes the setup away, and at shutdown."""
+        timer = getattr(self, "_profile_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            self._save_profile()
 
     def _restore_picture(self, info) -> None:
-        """At open: the picture controls as this camera last had them."""
+        """At open: the picture controls as this camera last had them,
+        for the controls that still fill a picture slot. A value kept
+        for a control since routed away stays in the file but is not
+        sent, and is pruned the next time the roles change."""
         if self.setup is None or not self.setup.camera.picture:
             return
-        known = {c.id for c in info.controls}
+        slotted = {c.id for s, c in getattr(self, "_slots", {}).items()
+                   if c is not None and s != "focus"}
         for key, value in self.setup.camera.picture.items():
             try:
                 cid = int(key)
             except ValueError:
                 continue
-            if cid in known:
-                self.session.set_control(cid, int(value))
+            if cid in slotted:
+                self.session.set_control(cid, int(value), remember=True)
         for slot, control in getattr(self, "_slots", {}).items():
-            if control is not None and str(control.id) in self.setup.camera.picture:
+            if slot != "focus" and control is not None \
+                    and str(control.id) in self.setup.camera.picture:
                 self.picture.show_value(slot, int(self.setup.camera.picture[str(control.id)]))
 
     def _switch_to_synthetic(self) -> None:
@@ -2332,7 +2391,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         routed = getattr(self, "_slots", {}).get("focus")
         if routed is not None and self.setup is not None \
-                and self.setup.camera.roles.get("focus"):
+                and self.setup.camera.roles.get("focus") \
+                and int(self.setup.camera.roles["focus"]) == routed.id:
             from ..camera.roles import ControlFocusAxis
             axis = getattr(self, "_routed_axis", None)
             if axis is None or axis._control.id != routed.id or axis._backend is not backend:
@@ -3289,6 +3349,7 @@ class MainWindow(QtWidgets.QMainWindow):
                               settings=self.settings, open_size=full,
                               live=self.session if self.session.status.is_live else None)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
+        dialog.control_written.connect(self._on_control_written)
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
         # and reloading the old one over the top of it would undo the
@@ -3306,8 +3367,19 @@ class MainWindow(QtWidgets.QMainWindow):
             info = self.session.status.info
             if info is not None:
                 # Roles may have moved: the Picture row and the focus
-                # motor follow the profile as it stands now.
+                # motor follow the profile as it stands now, and a value
+                # kept for a control routed away from the row goes.
                 self._apply_roles(info, self.session.status.is_live)
+                slotted = {str(c.id) for s, c in self._slots.items()
+                           if c is not None and s != "focus"}
+                if set(self.setup.camera.picture) - slotted:
+                    from dataclasses import replace
+                    self.setup.camera = replace(
+                        self.setup.camera,
+                        picture={k: v for k, v in self.setup.camera.picture.items()
+                                 if k in slotted})
+                    self.library.file_camera(self.setup.camera)
+                    self.library.save()
                 if self.assembly is not None:
                     self.assembly.set_focus_axis(self._focus_axis())
 
@@ -3994,6 +4066,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_shut", False):
             return
         self._shut = True
+        self._flush_profile()
         # First, and before the seal below reads the slice list. Frames
         # that have been exposed exist nowhere but in this process, and
         # the writer is a daemon thread: whatever is still in it when this

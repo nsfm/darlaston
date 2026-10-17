@@ -178,9 +178,9 @@ def test_the_session_hands_a_camera_its_controls_back_after_a_start():
     import threading
     session._lock = threading.Lock(); session._backend = None
     session._exposure_us = 8000; session._gain_pct = 100
-    session._auto_exposure = None; session._control_values = {}
+    session._auto_exposure = None; session._control_values = {}; session._auto_values = {}
     session.framerate_cap = 0
-    assert not session.set_control(0x00980900, 10), "nothing open yet, remembered all the same"
+    assert not session.set_control(0x00980900, 10, remember=True), "nothing open yet, remembered all the same"
     backend = Backend()
     session._restore_controls(backend)
     assert backend.writes == [(0x00980900, 10)]
@@ -188,3 +188,98 @@ def test_the_session_hands_a_camera_its_controls_back_after_a_start():
     backend.writes.clear()
     session._restore_controls(backend)
     assert backend.writes == []
+
+
+# ---- what the reviews found ----------------------------------------------------
+
+def test_the_route_bookkeeping_undoes_a_none_and_keeps_another_s_route(qapp):
+    from darlaston.ui.controls_ui import ControlsPage
+
+    profile_roles: dict = {}
+    page = ControlsPage(_Live(_controls()), profile_roles)
+    brightness = page._rows[0]["widgets"][3]
+    backlight = page._rows[3]["widgets"][3]
+    # Brightness -> nothing, then the guess picked again: the zero goes.
+    brightness.setCurrentIndex(brightness.findData("none"))
+    assert profile_roles == {"brightness": 0}
+    brightness.setCurrentIndex(0)
+    assert profile_roles == {}
+    # Backlight routed to brightness, then Brightness -> nothing: the
+    # route stands, since it is another control's, not the guess.
+    backlight.setCurrentIndex(backlight.findData("brightness"))
+    brightness.setCurrentIndex(brightness.findData("none"))
+    assert profile_roles == {"brightness": 0x0098091c}
+
+
+def test_device_defaults_leave_what_the_rail_owns_alone(qapp):
+    from darlaston.ui.controls_ui import ControlsPage
+
+    live = _Live(_controls())
+    page = ControlsPage(live, {"focus": 0x0098091c})
+    page.defaults.click()
+    touched = {cid for cid, _ in live.writes}
+    assert 0x00980900 in touched and 0x0098091b in touched, "picture controls reset"
+    assert 0x009a090a not in touched, "the focus motor stays where it is"
+    assert 0x0098091c not in touched, "and so does a control routed to focus"
+    assert 0x009a090c not in touched, "a switch is the camera's"
+
+
+def test_only_int_controls_can_fill_a_slot(qapp):
+    from darlaston.ui.controls_ui import ControlsPage
+
+    assert roles.resolve(_controls(), {"hue": 0x009a090c})["hue"] is None, "a bool is no bar"
+    page = ControlsPage(_Live(_controls()), {})
+    assert page._rows[4]["widgets"][3].isHidden(), "no use-as on a switch"
+
+
+def test_a_route_reaches_library_json_and_cancel_discards(qapp, tmp_path, monkeypatch):
+    import json
+    from darlaston.session.model import Library
+    from darlaston.ui.setup_ui import CameraDialog
+
+    monkeypatch.setattr("darlaston.camera.discovery.look", lambda: [])
+    lib = Library(tmp_path / "library.json")
+    lib.remember_camera("AAA", "Open"); lib.remember_camera("BBB", "Other"); lib.save()
+    d = CameraDialog(lib, "AAA", None, live=_Live(_controls()))
+    assert d.tabs.isTabEnabled(1)
+    box = d._controls_page._rows[3]["widgets"][3]
+    box.setCurrentIndex(box.findData("focus"))
+    rows = {d.list.item(i).data(256): i for i in range(d.list.count())}
+    d.list.setCurrentRow(rows["BBB"])
+    assert not d.tabs.isTabEnabled(1), "the page is the open camera's only"
+    d.list.setCurrentRow(rows["AAA"])
+    assert d.tabs.isTabEnabled(1)
+    d._save()
+    saved = json.loads((tmp_path / "library.json").read_text())
+    assert saved["cameras"]["AAA"]["roles"] == {"focus": 0x0098091c}
+    d2 = CameraDialog(lib, "AAA", None, live=_Live(_controls()))
+    b = d2._controls_page._rows[0]["widgets"][3]
+    b.setCurrentIndex(b.findData("none"))
+    d2.reject()
+    assert lib.cameras["AAA"].roles == {"focus": 0x0098091c}
+
+
+def test_the_session_replays_only_what_it_was_asked_to_remember():
+    from darlaston.camera.session import CameraSession
+    import threading
+
+    class Backend:
+        info = None
+        def __init__(self): self.writes = []; self.autos = []
+        def set_exposure(self, us): pass
+        def set_gain(self, pct): pass
+        def set_control(self, cid, value): self.writes.append((cid, value)); return True
+        def set_auto(self, cid, on): self.autos.append((cid, on)); return True
+
+    session = CameraSession.__new__(CameraSession)
+    session._lock = threading.Lock(); session._backend = Backend()
+    session._exposure_us = 8000; session._gain_pct = 100
+    session._auto_exposure = None; session._control_values = {}; session._auto_values = {}
+    session.framerate_cap = 0
+    session.set_control(0x009a0903, 1)                 # the page: not remembered
+    session.set_control(0x00980900, 10, remember=True)  # the row: remembered
+    session.set_auto(0x0098091a, True, remember=True)
+    fresh = Backend()
+    session._restore_controls(fresh)
+    assert fresh.writes == [(0x00980900, 10)]
+    assert fresh.autos == [(0x0098091a, True)]

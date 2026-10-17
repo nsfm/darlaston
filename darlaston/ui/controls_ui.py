@@ -38,6 +38,9 @@ class ControlsPage(QtWidgets.QWidget):
     #: A role changed: (slot or "", control id). The dialog marks the
     #: profile dirty; the window re-resolves the slots on accept.
     role_changed = QtCore.Signal(str, int)
+    #: A value written to the camera: (control id, value). The window
+    #: keeps the ones in picture slots with the camera.
+    written = QtCore.Signal(int, int)
 
     def __init__(self, live, roles: dict, parent=None) -> None:
         super().__init__(parent)
@@ -61,9 +64,9 @@ class ControlsPage(QtWidgets.QWidget):
             self.grid.addWidget(head, 0, col)
         # Fixed columns, so a long control name cannot push "use as" off
         # the edge: the name is elided instead.
-        self.grid.setColumnMinimumWidth(0, 150)
-        self.grid.setColumnMinimumWidth(1, 170)
-        self.grid.setColumnMinimumWidth(3, 160)
+        self.grid.setColumnMinimumWidth(0, 140)
+        self.grid.setColumnMinimumWidth(1, 160)
+        self.grid.setColumnMinimumWidth(3, 150)
         self.grid.setColumnStretch(4, 1)
 
         inner = QtWidgets.QWidget()
@@ -117,10 +120,10 @@ class ControlsPage(QtWidgets.QWidget):
                        "hue": _("controls.slot.hue")}
         for i, control in enumerate(controls, start=1):
             widgets = []
-            name = QtWidgets.QLabel(_elide(control.name, 22))
+            name = QtWidgets.QLabel(_elide(control.name, 20))
             name.setToolTip(f"{control.name}  ({control.id:#010x})")
             name.setProperty("role", "label")
-            name.setMaximumWidth(150)
+            name.setMaximumWidth(140)
             name.setEnabled(not control.inactive)
             widgets.append(name)
             self.grid.addWidget(name, i, 0)
@@ -139,6 +142,7 @@ class ControlsPage(QtWidgets.QWidget):
             self.grid.addWidget(auto, i, 2)
 
             use = QtWidgets.QComboBox()
+            use.setVisible(control.kind == "int")   # a switch fills no bar
             guessed = next((s for s, cid in guesses.items() if cid == control.id), "")
             placeholder = (_("controls.use_as.guess", slot=slot_labels[guessed])
                            if guessed else _("controls.use_as.nothing"))
@@ -155,7 +159,7 @@ class ControlsPage(QtWidgets.QWidget):
             use.currentIndexChanged.connect(
                 lambda _i, c=control, box=use: self._route(c, box.currentData()))
             use.setToolTip(_("controls.use_as.tooltip"))
-            use.setFixedWidth(160)
+            use.setFixedWidth(150)
             widgets.append(use)
             self.grid.addWidget(use, i, 3)
             self._rows.append({"control": control, "widgets": widgets, "value": value})
@@ -180,7 +184,7 @@ class ControlsPage(QtWidgets.QWidget):
             return box
         bar = ValueBar("")
         bar.setFixedHeight(20)
-        bar.setFixedWidth(170)
+        bar.setFixedWidth(160)
         bar.setRange(int(control.min), int(control.max))
         value = control.value if control.value is not None else control.default
         bar.setValue(int(value))
@@ -198,6 +202,10 @@ class ControlsPage(QtWidgets.QWidget):
         if value is None or self._live is None:
             return
         self._live.set_control(int(control.id), int(value))
+        self.written.emit(int(control.id), int(value))
+        if control.kind != "int":
+            # A switch moved: whatever it owns changes hands.
+            self._reload_soon()
 
     def _auto(self, control, on: bool) -> None:
         if self._live is None:
@@ -218,14 +226,18 @@ class ControlsPage(QtWidgets.QWidget):
         for s in list(self._roles):
             if self._roles[s] == control.id:
                 del self._roles[s]
+        guessed = next((s for s, c in roles_.resolve(
+            tuple(r["control"] for r in self._rows), {}).items()
+            if c is not None and c.id == control.id), None)
         if slot == "none":
-            guessed = next((s for s, c in roles_.resolve(
-                tuple(r["control"] for r in self._rows), {}).items()
-                if c is not None and c.id == control.id), None)
-            if guessed:
+            # Empty the guessed slot, unless another control holds it by
+            # a route of its own, which stands.
+            if guessed and not self._roles.get(guessed):
                 self._roles[guessed] = 0
             self.role_changed.emit("", int(control.id))
             return
+        if not slot and guessed and self._roles.get(guessed) == 0:
+            del self._roles[guessed]            # the guess, taken back
         if slot:
             self._roles[slot] = int(control.id)
             self.role_changed.emit(slot, int(control.id))
@@ -240,8 +252,15 @@ class ControlsPage(QtWidgets.QWidget):
             self.role_changed.emit("", int(control.id))
 
     def _all_defaults(self) -> None:
+        """The picture controls back to the camera's own, and nothing
+        the rail or the backend owns: not the exposure or gain, not the
+        focus motor (a Backlight routed to focus included), and not a
+        switch, since a focus switch at its factory value is continuous
+        autofocus under a sweep."""
         for row in self._rows:
             control = row["control"]
+            if roles_.rail_owned(control, self._roles):
+                continue
             if control.writable and not control.inactive:
                 self._set(control, control.default)
         self._reload_soon()

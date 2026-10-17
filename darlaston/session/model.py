@@ -320,6 +320,13 @@ class CameraProfile:
     readout_us: float = 0.0
     last_scope: str | None = None
 
+    def __post_init__(self) -> None:
+        # A hand-edited file may say null where a dict belongs.
+        if not isinstance(self.roles, dict):
+            self.roles = {}
+        if not isinstance(self.picture, dict):
+            self.picture = {}
+
     @property
     def display(self) -> str:
         return self.name or self.model or self.serial[:12]

@@ -45,6 +45,11 @@ class PictureRow(QtWidgets.QWidget):
         self.header.setToolTip(_("shell.picture.tooltip"))
         self.header.toggled.connect(self._toggle)
         theme.dress(self.header, self._header_sheet)
+        # The icon is drawn in the palette's colour, so it is drawn again
+        # on a change; weakly, so a row that is gone is not asked to.
+        import weakref
+        ref = weakref.WeakMethod(self._chevron)
+        theme.on_change(lambda: (ref() or (lambda: None))())
 
         self.body = QtWidgets.QWidget()
         self._body_col = QtWidgets.QVBoxLayout(self.body)
