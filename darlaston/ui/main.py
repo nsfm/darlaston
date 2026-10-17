@@ -713,6 +713,12 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             body.addWidget(self.stack, 1)
             body.addWidget(rail)
+        # The bar on the outer edge, away from the picture: on the left
+        # of a left rail, which a right-to-left scroll area gives.
+        rail.setLayoutDirection(
+            QtCore.Qt.LayoutDirection.RightToLeft
+            if self.settings.sidebar_side == "left"
+            else QtCore.Qt.LayoutDirection.LeftToRight)
         rail.setStyleSheet(self._rail_style())
 
     def _open_appearance(self) -> None:
@@ -770,6 +776,12 @@ class MainWindow(QtWidgets.QMainWindow):
         shell.setVerticalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         shell.viewport().setAutoFillBackground(False)
+        # The bar's width is reserved whether or not the bar is shown, so
+        # its appearing never reflows the groups. The frame inside is as
+        # wide as the rail less the gutter; the bar lives in the gutter.
+        gutter = shell.style().pixelMetric(
+            QtWidgets.QStyle.PixelMetric.PM_ScrollBarExtent, None, shell)
+        self._rail_gutter = max(8, int(gutter))
         # Named, and the rule qualified to that name. An unqualified
         # `background:` on a container is applied to every child as well,
         # which is why a checked button inside the rail could never be
@@ -778,6 +790,10 @@ class MainWindow(QtWidgets.QMainWindow):
         shell.setStyleSheet(self._rail_style())
         rail = QtWidgets.QFrame()
         rail.setObjectName("rail_inner")
+        rail.setFixedWidth(286 - self._rail_gutter)
+        # The groups are laid out left to right whatever side the bar is
+        # on; only the scroll area's direction decides the bar's side.
+        rail.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
         shell.setWidget(rail)
         self._rail_frame = rail
 
