@@ -203,8 +203,14 @@ class ControlsPage(QtWidgets.QWidget):
         if self._live is None:
             return
         self._live.set_auto(int(control.id), bool(on))
-        # The camera's answer is the truth about who owns what now.
-        self.reload()
+        self._reload_soon()
+
+    def _reload_soon(self) -> None:
+        """The camera's answer is the truth about who owns what now, but
+        the write lands between frames, on the reader thread, so asking
+        straight away reads the state before it. A beat later, and not
+        from inside the handler of a widget the rebuild will delete."""
+        QtCore.QTimer.singleShot(250, self.reload)
 
     def _route(self, control, slot) -> None:
         """Route a control to a slot, or free it. One control per slot,
@@ -238,4 +244,4 @@ class ControlsPage(QtWidgets.QWidget):
             control = row["control"]
             if control.writable and not control.inactive:
                 self._set(control, control.default)
-        self.reload()
+        self._reload_soon()

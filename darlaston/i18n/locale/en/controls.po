@@ -33,8 +33,9 @@ msgid "controls.defaults.tooltip"
 msgstr "Every control back to the value the camera ships with."
 
 #. The placeholder entry of "use as": what the heuristic guessed, or nothing.
+#. Short, since it sits in a narrow box; the tooltip explains the brackets.
 msgid "controls.use_as.guess"
-msgstr "({slot}, our guess)"
+msgstr "({slot})"
 
 msgid "controls.use_as.nothing"
 msgstr "(nothing)"
