@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import fcntl
 import glob
+import logging
 import os
 import struct
 
@@ -43,6 +44,8 @@ from .cvcam import (PREFERRED_FOURCC, REFUSED_FOURCC,  # noqa: F401 -- re-export
                     SETTLE_FRAMES, WARMUP_FRAMES, CvCaptureBackend)
 from .cvcam import usable_formats as _usable_formats
 from .errors import CameraBusy, NoCameraFound, PermissionDenied
+
+_log = logging.getLogger(__name__)
 
 #: Raw Bayer fourccs, so a device that *does* offer one can be recognised
 #: and reported. The Imaging Source's industrial cameras are the realistic
@@ -76,17 +79,27 @@ _CTRL_TYPE_INTEGER_MENU = 9
 _CTRL_KINDS = {_CTRL_TYPE_INTEGER: "int", _CTRL_TYPE_BOOLEAN: "bool",
                _CTRL_TYPE_MENU: "menu", _CTRL_TYPE_INTEGER_MENU: "menu"}
 
-#: The switch that runs a control, by the names the kernel gives them,
-#: old and new. V4L2 keeps the automatic as a sibling control rather
-#: than a flag on the one it drives, so the pairing has to be known.
+#: The switch that runs a control, by id. V4L2 keeps the automatic as
+#: a sibling control rather than a flag on the one it drives, and the
+#: ids are kernel ABI where the names have changed twice.
+V4L2_CID_EXPOSURE_AUTO = 0x009a0901
+V4L2_CID_EXPOSURE_ABSOLUTE = 0x009a0902
+V4L2_CID_EXPOSURE_AUTO_PRIORITY = 0x009a0903
+V4L2_CID_AUTO_WHITE_BALANCE = 0x0098090c
 _AUTO_SIBLINGS = {
-    ("Exposure Time, Absolute", "Exposure (Absolute)"): ("Auto Exposure", "Exposure, Auto"),
-    ("White Balance Temperature",): ("White Balance, Automatic", "White Balance Temperature, Auto"),
-    ("Focus, Absolute",): ("Focus, Automatic Continuous", "Focus, Auto"),
-    ("Hue",): ("Hue, Auto",),
-    ("Brightness",): ("Brightness, Automatic",),
-    ("Gain",): ("Gain, Automatic",),
+    V4L2_CID_EXPOSURE_ABSOLUTE: (V4L2_CID_EXPOSURE_AUTO,),
+    0x0098091a: (V4L2_CID_AUTO_WHITE_BALANCE,),   # white balance temperature
+    0x0098090e: (V4L2_CID_AUTO_WHITE_BALANCE,),   # red balance
+    0x0098090f: (V4L2_CID_AUTO_WHITE_BALANCE,),   # blue balance
+    0x009a090a: (0x009a090c,),                    # focus absolute: focus auto
+    0x00980903: (0x00980919,),                    # hue: hue automatic
+    0x00980913: (0x00980912,),                    # gain: autogain
+    0x00980900: (0x00980920,),                    # brightness: autobrightness
 }
+#: The auto-exposure menu: 0 auto, 1 manual, 2 shutter priority, 3
+#: aperture priority. A camera offers a subset and refuses the rest.
+_AE_MANUAL = 1
+_AE_PREFERRED = (3, 0, 2)
 
 
 def _ioctl(fh, request: int, buf) -> None:
@@ -374,8 +387,12 @@ def _interface_of(node: str) -> str:
     return tail.split(":")[-1] if ":" in tail else ""
 
 
-def controls(node: str) -> list[dict]:
+def controls(node: str, values: bool = True) -> list[dict]:
     """Every control the driver advertises for this device.
+
+    With `values`, each control's current value is read too: one USB
+    transfer per control, which listing the machine's cameras should
+    not pay. The enumeration asks without; open() and controls() with.
 
     Empty is a real answer, not a failure. Cameras that expose nothing at
     all exist and are not rare: measured on a 0ac8:3420, whose USB
@@ -414,7 +431,13 @@ def controls(node: str) -> list[dict]:
                 continue
             if kind not in _CTRL_KINDS or flags & _CTRL_FLAG_HAS_PAYLOAD:
                 # Strings, 64-bit integers, buttons, regions: nothing a
-                # bar or a tick could show, and nothing we would drive.
+                # bar or a tick could show. Kept as "other" all the same,
+                # since the fingerprint is every control's name and a
+                # camera must not become a stranger on upgrade.
+                found.append({"id": got, "name": name, "min": low,
+                              "max": high, "step": step, "default": default,
+                              "type": "other", "flags": flags,
+                              "value": None, "menu": ()})
                 continue
             # Kept now, where before only the range was: the type, the
             # flags and the value. The inactive flag is the camera
@@ -422,7 +445,7 @@ def controls(node: str) -> list[dict]:
             # which is exactly the thing the rail has to know.
             menu = (_menu_entries(fh, got, low, high, kind)
                     if _CTRL_KINDS[kind] == "menu" else ())
-            value = (None if flags & _CTRL_FLAG_WRITE_ONLY
+            value = (None if not values or flags & _CTRL_FLAG_WRITE_ONLY
                      else _read_value(fh, got))
             found.append({"id": got, "name": name, "min": low,
                           "max": high, "step": step, "default": default,
@@ -431,26 +454,46 @@ def controls(node: str) -> list[dict]:
     return found
 
 
-def _auto_sibling(name: str, by_name: dict) -> dict | None:
-    for driven, switches in _AUTO_SIBLINGS.items():
-        if name in driven:
-            return next((by_name[s] for s in switches if s in by_name), None)
-    return None
+def _auto_sibling(cid: int, by_id: dict) -> dict | None:
+    return next((by_id[s] for s in _AUTO_SIBLINGS.get(cid, ()) if s in by_id),
+                None)
+
+
+def ae_menu_value(switch: dict, on: bool) -> int | None:
+    """The entry to write to the auto-exposure menu, from what the
+    camera offered: aperture priority, else auto, else shutter priority
+    for on; manual for off. None where the camera offers no such
+    entry, which is a switch that does not go that way."""
+    menu = switch.get("menu") or ()
+    low = switch.get("min", 0)
+
+    def offered(index: int) -> bool:
+        k = index - low
+        return 0 <= k < len(menu) and bool(menu[k])
+
+    if not menu:
+        return _AE_PREFERRED[0] if on else _AE_MANUAL
+    if not on:
+        return _AE_MANUAL if offered(_AE_MANUAL) else None
+    return next((i for i in _AE_PREFERRED if offered(i)), None)
 
 
 def to_controls(raw: list[dict]) -> tuple[Control, ...]:
     """The enumeration's dicts as the records the rest of the program
     reads, with each control's automatic found among its siblings."""
-    by_name = {c["name"]: c for c in raw}
+    by_id = {c["id"]: c for c in raw}
     out = []
     for c in raw:
-        sibling = _auto_sibling(c["name"], by_name)
+        if c.get("type", "int") == "other":
+            continue
+        sibling = _auto_sibling(c["id"], by_id)
         out.append(Control(
             id=c["id"], name=c["name"], kind=c.get("type", "int"),
             min=c["min"], max=c["max"], step=max(1, c.get("step", 1)),
             default=c["default"], value=c.get("value"),
             auto_id=sibling["id"] if sibling else None,
             inactive=bool(c.get("flags", 0) & _CTRL_FLAG_INACTIVE),
+            writable=not c.get("flags", 0) & _CTRL_FLAG_READ_ONLY,
             menu=tuple(c.get("menu", ()))))
     return tuple(out)
 
@@ -467,7 +510,7 @@ def _detail(found: dict) -> dict:
     same way, without walking every other camera on the machine to do it.
     """
     node = found["node"]
-    found["controls"] = controls(node)
+    found["controls"] = controls(node, values=False)
     found["usable"] = usable_formats(found)
     found["key"] = identity(node)
     found["fingerprint"] = fingerprint(found)
@@ -614,8 +657,10 @@ class V4L2Backend(CvCaptureBackend):
             bayer_pattern="",              # decoded already; no CFA exists
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
-            auto_exposure_switch=bool(self._has("Auto Exposure")),
-            controls=to_controls(list(self._controls.values())),
+            auto_exposure_switch=self._auto_exposure_switch(),
+            # Read again after settling, which is what moves the inactive
+            # flags; the enumeration's copy carries no values at all.
+            controls=self.controls(),
             # Who made it, not which kernel module drives it. Read from
             # the USB descriptor, and frequently absent or a placeholder
             # -- one camera here says "HD Camera Manufacturer" -- but a
@@ -657,10 +702,21 @@ class V4L2Backend(CvCaptureBackend):
         beats the range we used to assert, which was the same on every
         camera and true of none.
         """
-        found = self._has("Exposure Time, Absolute", "Exposure (Absolute)")
-        if not found:
+        found = self._by_id(V4L2_CID_EXPOSURE_ABSOLUTE)
+        if not found or found["max"] <= found["min"]:
             return None
+        if found.get("flags", 0) & _CTRL_FLAG_READ_ONLY:
+            return None                  # listed, never ours to set
+        switch = self._by_id(V4L2_CID_EXPOSURE_AUTO)
+        if switch and ae_menu_value(switch, False) is None:
+            return None                  # no manual entry: writes refused for good
         return (max(1, found["min"]) * 100, max(1, found["max"]) * 100)
+
+    def _auto_exposure_switch(self) -> bool:
+        """A switch goes both ways: an automatic entry and a manual one."""
+        switch = self._by_id(V4L2_CID_EXPOSURE_AUTO)
+        return bool(switch and ae_menu_value(switch, True) is not None
+                    and ae_menu_value(switch, False) is not None)
 
     def _gain_range(self) -> tuple[int, int] | None:
         """As a percentage where 100 is the device's own floor.
@@ -702,8 +758,13 @@ class V4L2Backend(CvCaptureBackend):
             # with the switch and no time meters itself; switching its
             # auto off would leave it at whatever it last chose, dark or
             # blown, with nothing of ours to drive in its place.
-            if self._has("Auto Exposure") and self._exposure_range():
+            if self._by_id(V4L2_CID_EXPOSURE_AUTO) and self._exposure_range():
                 self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)     # manual
+            # Never trade frame rate for exposure: UVC's auto-exposure
+            # priority lets the camera's automatic stretch the frame
+            # period, which a preview cannot afford. Off where offered.
+            if self._by_id(V4L2_CID_EXPOSURE_AUTO_PRIORITY):
+                self._write_raw(V4L2_CID_EXPOSURE_AUTO_PRIORITY, 0)
             if self._has("White Balance, Automatic", "White Balance Temperature, Auto"):
                 self._cap.set(cv2.CAP_PROP_AUTO_WB, 0)
         except Exception:
@@ -719,36 +780,82 @@ class V4L2Backend(CvCaptureBackend):
         inactive flags are what change under the camera's own automatic."""
         if self._node is None:
             return ()
-        fresh = controls(self._node)
-        if fresh:
-            self._controls = {c["name"]: c for c in fresh}
+        # A walk cut short by a device error must not replace the table
+        # with a shorter one and lose a control until reopen: the values
+        # are copied in by id unless the walk came back whole.
+        fresh = {c["id"]: c for c in controls(self._node)}
+        have = {c["id"]: c for c in self._controls.values()}
+        if fresh and set(fresh) == set(have):
+            self._controls = {c["name"]: c for c in fresh.values()}
+        else:
+            for cid, c in fresh.items():
+                if cid in have:
+                    have[cid].update(value=c["value"], flags=c["flags"])
         return to_controls(list(self._controls.values()))
 
     def get_control(self, control_id: int) -> int | None:
-        return read_control(self._node, control_id) if self._node else None
+        fd = self._control_fd()
+        return _read_value(fd, control_id) if fd is not None else None
 
-    def _auto_value(self, switch: dict, on: bool) -> int:
-        """What 'on' is for a switch: a bool is 1, and UVC's auto
-        exposure menu is 3 (aperture priority) against 1 (manual)."""
+    def _control_fd(self) -> int | None:
+        """One handle for the control reads and writes, kept open beside
+        the stream rather than opened and closed per slider move."""
+        fd = getattr(self, "_ctl_fd", None)
+        if fd is None and self._node:
+            try:
+                fd = os.open(self._node, os.O_RDWR | os.O_NONBLOCK)
+            except OSError as why:
+                _log.debug("no control handle on %s: %s", self._node, why)
+                return None
+            self._ctl_fd = fd
+        return fd
+
+    def _write_raw(self, cid: int, value: int) -> bool:
+        fd = self._control_fd()
+        if fd is None:
+            return False
+        buf = bytearray(8)
+        struct.pack_into("<Ii", buf, 0, cid, int(value))
+        try:
+            _ioctl(fd, _VIDIOC_S_CTRL, buf)
+            return True
+        except OSError as why:
+            _log.debug("control %#x refused %d: %s", cid, value, why)
+            return False
+
+    def close(self) -> None:
+        super().close()
+        fd = getattr(self, "_ctl_fd", None)
+        if fd is not None:
+            self._ctl_fd = None
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _auto_value(self, switch: dict, on: bool) -> int | None:
+        """What 'on' is for a switch: a bool is 1; the auto-exposure
+        menu is whichever automatic entry the camera offered."""
         if switch.get("type") == "menu":
-            return 3 if on else 1
+            return ae_menu_value(switch, on)
         return 1 if on else 0
 
     def _write_control(self, what: str, value) -> None:
         """The actual writes. Called holding `_lock`, never from the UI."""
         if what.startswith("control:"):
-            write_control(self._node, int(what.split(":", 1)[1]), int(value))
+            self._write_raw(int(what.split(":", 1)[1]), int(value))
         elif what.startswith("auto:"):
             cid = int(what.split(":", 1)[1])
-            driven = self._by_id(cid)
-            switch = _auto_sibling(driven["name"], self._controls) if driven else None
-            if switch is not None:
-                write_control(self._node, switch["id"],
-                              self._auto_value(switch, bool(value)))
+            by_id = {c["id"]: c for c in self._controls.values()}
+            switch = _auto_sibling(cid, by_id)
+            entry = self._auto_value(switch, bool(value)) if switch else None
+            if entry is not None:
+                self._write_raw(switch["id"], entry)
         elif what == "auto_exposure":
-            # UVC's menu: 1 is manual, 3 is aperture priority, which is
-            # what every webcam measured calls its automatic.
-            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3 if value else 1)
+            switch = self._by_id(V4L2_CID_EXPOSURE_AUTO)
+            entry = ae_menu_value(switch, bool(value)) if switch else None
+            if entry is not None:
+                self._write_raw(V4L2_CID_EXPOSURE_AUTO, entry)
         elif what == "exposure":
             if self._exposure_range() is None:
                 # No time to set. The session sends its exposure on every

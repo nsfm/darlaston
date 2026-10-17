@@ -458,7 +458,9 @@ def to_controls(raw: list[dict]) -> "tuple[Control, ...]":
             step=max(1, c.get("step", 1)), default=c["default"],
             value=c.get("value"),
             auto_id=cid if caps & CameraControl_Flags_Auto else None,
-            inactive=bool(c.get("mode", 0) & CameraControl_Flags_Auto)))
+            inactive=bool(c.get("mode", 0) & CameraControl_Flags_Auto),
+            writable=caps & (CameraControl_Flags_Auto | CameraControl_Flags_Manual)
+            != CameraControl_Flags_Auto))
     return tuple(out)
 
 
@@ -1132,7 +1134,8 @@ class DshowBackend(CvCaptureBackend):
             exposure_range_us=self._exposure_range(),
             gain_range_pct=self._gain_range(),
             auto_exposure_switch=self._auto_exposure_switch(),
-            controls=to_controls(list(self._controls.values())),
+            # Read again after settling, which is what moves the modes.
+            controls=self.controls(),
             brand="ToupTek" if found["vid"] in TOUPTEK_VIDS else "",
             raw_capable=False,
             software_trigger=True,
@@ -1190,8 +1193,10 @@ class DshowBackend(CvCaptureBackend):
 
     @staticmethod
     def _manual_capable(control: dict) -> bool:
-        flags = control.get("flags", CameraControl_Flags_Manual)
-        return not flags or bool(flags & CameraControl_Flags_Manual)
+        # Only the automatic-only case is refused: a caps word with
+        # neither bit, or with other bits only, is treated as manual.
+        both = CameraControl_Flags_Auto | CameraControl_Flags_Manual
+        return control.get("flags", 0) & both != CameraControl_Flags_Auto
 
     def _auto_exposure_switch(self) -> bool:
         """A switch is one that goes both ways. An Exposure that is

@@ -4139,7 +4139,7 @@ def _list_cameras_to(print) -> int:       # noqa: A002 -- shadowed on purpose
         # the driver said about formats, sizes and controls is the
         # ground truth for a camera nobody here has.
         from ..camera.dshow import enumerate_cameras as _dshow_enum
-        from ..camera.dshow import exposure_to_us
+        from ..camera.dshow import CameraControl_Flags_Auto, exposure_to_us
         found = _dshow_enum()
         print(f"\nDirectShow / UVC: {len(found)} capture device"
               f"{'' if len(found) == 1 else 's'}")
@@ -4165,7 +4165,7 @@ def _list_cameras_to(print) -> int:       # noqa: A002 -- shadowed on purpose
                              f"{exposure_to_us(c['max'])} us")
                 if c.get("value") is not None:
                     extra += f"  now {c['value']}"
-                if c.get("mode", 0) & 1:
+                if c.get("mode", 0) & CameraControl_Flags_Auto:
                     extra += "  (automatic)"
                 print(f"      control {c['name']}: {c['min']}..{c['max']} "
                       f"step {c['step']} default {c['default']} "
@@ -4194,6 +4194,13 @@ def _list_cameras_to(print) -> int:       # noqa: A002 -- shadowed on purpose
                 if f"v4l2:{cam.get('key', '')}" in ignored else "")
         print(f"    {cam['node']}  {cam['card']}  [{cam['driver']}]  "
               f"{w}x{h}  {'/'.join(cam['formats'])}{raw}{skip}")
+        for c in cam.get("controls") or []:
+            if c.get("type") == "other":
+                continue
+            held = "  (the camera's automatic owns this)" if c.get("flags", 0) & 0x10 else ""
+            menu = f"  {list(c['menu'])}" if c.get("menu") else ""
+            print(f"      control {c['name']}: {c['min']}..{c['max']} "
+                  f"default {c['default']}{menu}{held}")
     if found:
         print("\n    run with --usb to use one")
     return 0

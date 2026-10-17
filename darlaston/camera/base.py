@@ -103,6 +103,9 @@ class Control:
     inactive: bool = False
     #: A menu's entries, by index from `min`.
     menu: tuple[str, ...] = ()
+    #: False for a control the device lists and refuses to take: a
+    #: read-only V4L2 control, a DirectShow one with no manual mode.
+    writable: bool = True
 
     @property
     def auto(self) -> bool:
