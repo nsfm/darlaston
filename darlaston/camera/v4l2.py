@@ -591,6 +591,12 @@ class V4L2Backend(CvCaptureBackend):
             # what every webcam measured calls its automatic.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3 if value else 1)
         elif what == "exposure":
+            if self._exposure_range() is None:
+                # No time to set. The session sends its exposure on every
+                # connect and mode change, and on a camera that meters
+                # itself the write below would switch its automatic off
+                # and leave it frozen at whatever it last chose.
+                return
             # Only writable once auto-exposure is off -- control 1
             # (manual) on UVC, not 0. Setting the value first silently
             # does nothing.

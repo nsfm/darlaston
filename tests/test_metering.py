@@ -77,21 +77,67 @@ def test_the_rail_offers_what_a_metering_camera_has_and_nothing_else(qapp, tmp_p
         assert not win.auto_exposure.isHidden()
         assert win.auto_exposure_lock.isHidden()
         assert "meters itself" in win.auto_exposure.toolTip()
-        # The remembered position of the switch went to the camera at open.
-        assert cam.auto_writes and cam.auto_writes[-1] == bool(win.settings.auto_exposure)
-        # And the switch is the camera's: no loop of ours moves the gain.
-        before = len(cam.auto_writes)
-        win.auto_exposure.setChecked(not win.auto_exposure.isChecked())
-        assert len(cam.auto_writes) == before + 1
-        assert cam.auto_writes[-1] == win.auto_exposure.isChecked()
+        # This camera's remembered switch position went to the camera at
+        # open: on, for a camera never seen before.
+        assert cam.auto_writes and cam.auto_writes[-1] is True
+        assert win.auto_exposure.isChecked()
+        # The switch is the camera's, and it is remembered with the camera
+        # rather than with the global switch that runs our loop.
+        win.auto_exposure.setChecked(False)
+        assert cam.auto_writes[-1] is False
+        assert win.setup.camera.camera_auto_exposure is False
+        assert win.settings.auto_exposure, "the loop's own switch is untouched"
+        # And no loop of ours moves the gain, however dark the picture.
+        import numpy as np
         gain = win.gain.value()
         win.settings.auto_exposure = True
 
         class Signals:
             levels_seq = 99
-            histogram = [0] * 200 + [1000] * 56
+            histogram = np.array([1000] * 20 + [0] * 236, dtype=np.float64)
         win._auto_expose_guarded(Signals())
         assert win.gain.value() == gain, "our loop ran on a camera that meters itself"
+        assert win.settings.auto_exposure, "or it ran and failed, and turned itself off"
+    finally:
+        win.shutdown()
+
+
+def test_the_hold_reaches_the_camera_s_own_automatic(qapp, tmp_path, monkeypatch):
+    """A stack needs matching frames whichever engine meters. The row
+    said 'paused'; now the camera is handed the switch off for the run."""
+    cam = MeteringCamera(switch=True)
+    win = _window(tmp_path, monkeypatch, cam)
+    try:
+        assert cam.auto_writes[-1] is True
+        monkeypatch.setattr(win, "_auto_exposure_allowed", lambda: False)
+        win._refresh_auto_exposure_hold()
+        assert cam.auto_writes[-1] is False, "held, so the camera's automatic is off"
+        assert not win.auto_exposure.isEnabled()
+        monkeypatch.setattr(win, "_auto_exposure_allowed", lambda: True)
+        win._refresh_auto_exposure_hold()
+        assert cam.auto_writes[-1] is True, "and back when the hold ends"
+    finally:
+        win.shutdown()
+
+
+def test_the_switch_survives_a_mode_change_and_a_reconnect(qapp, tmp_path, monkeypatch):
+    """The position lived only in the window before; a cable that
+    wobbled, or a new preview size, left the camera in manual under a
+    button that still said Automatic."""
+    cam = MeteringCamera(switch=True)
+    win = _window(tmp_path, monkeypatch, cam)
+    try:
+        win.auto_exposure.setChecked(False)
+        assert cam.auto_writes[-1] is False
+        before = len(cam.auto_writes)
+        other = 0 if win.session.preview_resolution != 0 else 1
+        assert win.session.set_preview_resolution(other)
+        assert len(cam.auto_writes) > before and cam.auto_writes[-1] is False
+        # No exposure reached the camera either: it has no time to set.
+        assert not getattr(cam._inner, "exposure_writes", None)
+        before = len(cam.auto_writes)
+        win.session._restore_controls(cam)
+        assert cam.auto_writes[-1] is False and len(cam.auto_writes) == before + 1
     finally:
         win.shutdown()
 

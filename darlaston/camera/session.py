@@ -106,6 +106,8 @@ class CameraSession:
         self._preview = preview_resolution
 
         self._backend: CameraBackend | None = None
+        #: The camera's own automatic, as last asked; None until asked.
+        self._auto_exposure: bool | None = None
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
         self._lock = threading.Lock()
@@ -243,10 +245,7 @@ class CameraSession:
             backend.stop_stream()
             backend.set_resolution(index)
             backend.start_stream(self._on_frame)
-            backend.set_exposure(self._exposure_us)
-            backend.set_gain(self._gain_pct)
-            if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
-                backend.set_framerate_cap(self.framerate_cap)
+            self._restore_controls(backend)
             return True
         except Exception:
             # The supervisor notices a dead stream and reconnects; saying so
@@ -278,7 +277,15 @@ class CameraSession:
                     pass   # a dropped link surfaces through the supervisor
 
     def set_auto_exposure(self, on: bool) -> bool:
-        """The camera's own automatic, for a camera that meters itself."""
+        """The camera's own automatic, for a camera that meters itself.
+
+        Remembered, like exposure and gain, so a reconnect or a mode
+        change hands the camera the same switch position it had; before
+        this the position lived only in the window, and a cable that
+        wobbled left the camera in manual under a button saying
+        Automatic.
+        """
+        self._auto_exposure = bool(on)
         with self._lock:
             if self._backend is None:
                 return False
@@ -286,6 +293,20 @@ class CameraSession:
                 return bool(self._backend.set_auto_exposure(bool(on)))
             except Exception:
                 return False
+
+    def _restore_controls(self, backend) -> None:
+        """What the session holds for the camera, after a start."""
+        info = getattr(backend, "info", None)
+        if not (info is not None and info.meters_itself):
+            backend.set_exposure(self._exposure_us)
+        backend.set_gain(self._gain_pct)
+        if self._auto_exposure is not None:
+            try:
+                backend.set_auto_exposure(self._auto_exposure)
+            except Exception:
+                pass
+        if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
+            backend.set_framerate_cap(self.framerate_cap)
 
     def set_gain(self, percent: int) -> None:
         self._gain_pct = int(percent)
@@ -350,10 +371,7 @@ class CameraSession:
 
         backend.set_resolution(self._preview)
         backend.start_stream(self._on_frame)
-        backend.set_exposure(self._exposure_us)
-        backend.set_gain(self._gain_pct)
-        if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
-            backend.set_framerate_cap(self.framerate_cap)
+        self._restore_controls(backend)
 
         detail = ""
         if link.is_degraded and link.advice:

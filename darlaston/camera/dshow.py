@@ -1145,8 +1145,12 @@ class DshowBackend(CvCaptureBackend):
         return not flags or bool(flags & CameraControl_Flags_Manual)
 
     def _auto_exposure_switch(self) -> bool:
+        """A switch is one that goes both ways. An Exposure that is
+        automatic only cannot be turned off, and a switch that moves
+        and does nothing is the thing the rail is rid of."""
         found = self._controls.get("Exposure")
-        return bool(found and found.get("flags", 0) & CameraControl_Flags_Auto)
+        both = CameraControl_Flags_Auto | CameraControl_Flags_Manual
+        return bool(found and found.get("flags", 0) & both == both)
 
     def _gain_range(self) -> tuple[int, int] | None:
         found = self._controls.get("Gain")
@@ -1240,8 +1244,8 @@ class DshowBackend(CvCaptureBackend):
                 self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1 if value else 0)
         elif what == "exposure":
             found = self._controls.get("Exposure")
-            if not found:
-                return
+            if not found or not self._manual_capable(found):
+                return      # automatic only: a manual write is refused anyway
             step = max(found["min"], min(found["max"], us_to_exposure(value)))
             # The frame's metadata should carry what the camera got,
             # which is the nearest power of two, not what was asked.

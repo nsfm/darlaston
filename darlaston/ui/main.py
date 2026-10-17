@@ -980,15 +980,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.strip.select_resolution(self.session.preview_resolution)
         self.strip.select_rate(self.session.framerate_cap)
 
-        if status.is_live and not self._synced:
-            self._adopt_camera_settings()
-
         self.shutter.set_available(status.is_live and not self.capture.busy)
         self._set_shooting_enabled(status.is_live)
         if info is not None:
             self._apply_capabilities(info, status.is_live)
         else:
+            # Waiting for a camera: the rail as it looks at launch, both
+            # bars present and greyed, whatever the last camera had.
+            for widget in (self.exposure, self.gain):
+                widget.setVisible(True)
             self._sync_auto_exposure(None)
+        # After the ranges, so the adopted values are not clamped into
+        # the previous camera's.
+        if status.is_live and not self._synced:
+            self._adopt_camera_settings(info)
         # Including the balance controls, which need a camera to point at.
         # This was missing: they were disabled once at startup, before the
         # session had come up, and nothing ever enabled them again -- so
@@ -1007,7 +1012,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.stack.setCurrentWidget(self.waiting)
             self.view.clear_peaking()
 
-    def _adopt_camera_settings(self) -> None:
+    def _adopt_camera_settings(self, info) -> None:
         """Show what the camera actually has, not what we guessed.
 
         The sliders were initialised to fixed positions that did not correspond
@@ -1027,11 +1032,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exposure.set_value_text(
             f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
         self.gain.set_value_text(f"{gain / 100:.1f}×")
-        info = self.session.status.info
         if info is not None and info.meters_itself and info.auto_exposure_switch:
-            # The remembered position of the switch, handed to the camera
-            # whose switch it is.
-            self.session.set_auto_exposure(bool(self.settings.auto_exposure))
+            # This camera's remembered switch position, handed to the
+            # camera whose switch it is. The session keeps it from here,
+            # across reconnects and mode changes.
+            self.session.set_auto_exposure(self._auto_on(info))
         self._synced = True
 
     def _measure_camera(self, parent=None) -> None:
@@ -1200,16 +1205,32 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- automatic exposure ---------------------------------------------
 
+    def _auto_on(self, info) -> bool:
+        """Whether Automatic is on: this camera's own switch where it
+        meters itself, our loop's global switch otherwise."""
+        if info is not None and info.meters_itself:
+            if self.setup is not None:
+                return bool(self.setup.camera.camera_auto_exposure)
+            return True
+        return bool(self.settings.auto_exposure)
+
     def _on_auto_exposure(self, on: bool) -> None:
-        self.settings.auto_exposure = bool(on)
-        self.settings.save()
-        self._ae_held_shown = None            # force the row to restyle
-        self._refresh_auto_exposure_hold()
         info = self.session.status.info
         if info is not None and info.meters_itself:
-            # The camera's switch, not ours. Our loop never runs here;
-            # see `_auto_expose_guarded`.
-            self.session.set_auto_exposure(bool(on))
+            # The camera's switch, not ours, and remembered with the
+            # camera. Our loop never runs here; see `_auto_expose_guarded`.
+            # The hold refresh below hands the position to the camera.
+            if self.setup is not None:
+                from dataclasses import replace
+                self.setup.camera = replace(self.setup.camera,
+                                            camera_auto_exposure=bool(on))
+                self.library.file_camera(self.setup.camera)
+                self.library.save()
+        else:
+            self.settings.auto_exposure = bool(on)
+            self.settings.save()
+        self._refresh_auto_exposure_hold()
+        if info is not None and info.meters_itself:
             return
         # Coming back on after the scene has moved, so take the first step
         # at full stride rather than crawling from wherever it was left.
@@ -1247,7 +1268,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.auto_exposure.setVisible(has_time or has_gain)
             self.auto_exposure_lock.setVisible(has_time and has_gain)
         with QtCore.QSignalBlocker(self.auto_exposure):
-            self.auto_exposure.setChecked(bool(self.settings.auto_exposure))
+            self.auto_exposure.setChecked(self._auto_on(info))
         with QtCore.QSignalBlocker(self.auto_exposure_lock):
             self.auto_exposure_lock.setChecked(
                 bool(self.settings.auto_exposure_lock_time))
@@ -1263,12 +1284,18 @@ class MainWindow(QtWidgets.QMainWindow):
         is worse than one that says so.
         """
         held = not self._auto_exposure_allowed()
-        on = bool(self.settings.auto_exposure)
         info = self.session.status.info
         device = info is not None and info.meters_itself
+        on = self._auto_on(info)
         if getattr(self, "_ae_held_shown", None) == (held, on, device):
             return
         self._ae_held_shown = (held, on, device)
+        if device and info.auto_exposure_switch:
+            # The hold is real on the camera's own automatic too: a stack
+            # or a mosaic needs matching frames whichever engine meters,
+            # so the camera is handed the switch off for the run and
+            # back after. The tooltip below said it was paused; now it is.
+            self.session.set_auto_exposure(on and not held)
         self.auto_exposure.setEnabled(not held)
         # Brass lettering when there is something to do, which the rail
         # already means by this: off and available reads as an offer, on

@@ -584,11 +584,27 @@ def test_an_automatic_only_exposure_is_no_exposure_but_is_a_switch(fake, monkeyp
     cam = dshow.DshowBackend(key=auto_only["key"])
     info = cam.open()
     assert info.exposure_range_us is None and info.meters_itself
-    assert info.auto_exposure_switch
+    assert not info.auto_exposure_switch, "a switch that cannot turn off is no switch"
     assert info.gain_range_pct == (100, 155)
-    # Settling did not try to take an exposure it cannot hold.
+    # Settling did not try to take an exposure it cannot hold, and nor
+    # does the session's exposure on connect.
     assert not any(w[:2] == ("camera", 4) for w in fake.instances[0].writes)
+    cam.set_exposure(20000)
+    cam._apply_pending()
+    assert not any(w[:2] == ("camera", 4) for w in fake.instances[0].writes)
+    assert not cam.set_auto_exposure(True)
+    cam.close()
+
+
+def test_an_exposure_that_goes_both_ways_is_a_switch(fake, monkeypatch):
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [_found()])
+    cam = dshow.DshowBackend(key=_found()["key"])
+    info = cam.open()
+    assert info.auto_exposure_switch and not info.meters_itself
     assert cam.set_auto_exposure(True)
     cam._apply_pending()
-    assert ("camera", 4, -6, True) in fake.instances[0].writes
+    assert fake.instances[0].writes[-1] == ("camera", 4, -6, True)
+    assert cam.set_auto_exposure(False)
+    cam._apply_pending()
+    assert fake.instances[0].writes[-1][:2] == ("camera", 4) and fake.instances[0].writes[-1][3] is False
     cam.close()
