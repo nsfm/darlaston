@@ -573,7 +573,10 @@ class _LibraryDialog(QtWidgets.QDialog):
         self.setMinimumWidth(width)
 
         self.list = QtWidgets.QListWidget()
-        self.list.setFixedWidth(170)
+        # As wide as its column, which the buttons under it set; fixed
+        # at 170 it left a gap beside itself as wide as the list.
+        self.list.setMinimumWidth(170)
+        self.list.setMaximumWidth(320)
         self.list.currentRowChanged.connect(self._switch)
 
         self.buttons = QtWidgets.QDialogButtonBox(
@@ -783,9 +786,14 @@ class CameraDialog(_LibraryDialog):
     """
 
     def __init__(self, library, current: str | None = None,
-                 parent=None, settings=None, open_size=None) -> None:
-        super().__init__(library, parent, width=520)
+                 parent=None, settings=None, open_size=None, live=None) -> None:
+        super().__init__(library, parent, width=720)
+        self.resize(900, 620)
         self.setWindowTitle(_("setup.cameras.title"))
+        #: Whatever drives the open camera's controls (the session), for
+        #: the controls page. None in a test, or with no camera open.
+        self._live = live
+        self._controls_page = None
         #: Which camera the session actually has open, as opposed to
         #: merely attached. Measuring needs to drive it.
         self._open_serial = current
@@ -864,10 +872,23 @@ class CameraDialog(_LibraryDialog):
         left.addWidget(self.ignore)
         left.addLayout(list_buttons)
 
+        # The profile, and beside it the controls page for the camera
+        # that is open: every control the device reports, live, with
+        # "use as" to route one to a slot on the rail. Tabs, because the
+        # page is long and the profile is not, and because a page for a
+        # camera that is not open would be a page of nothing.
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.addTab(self.editor, _("setup.cameras.tab.profile"))
+        self.controls_holder = QtWidgets.QWidget()
+        self._controls_col = QtWidgets.QVBoxLayout(self.controls_holder)
+        self._controls_col.setContentsMargins(0, 8, 0, 0)
+        self.tabs.addTab(self.controls_holder, _("setup.cameras.tab.controls"))
+
         right = QtWidgets.QVBoxLayout()
         right.setSpacing(10)
         right.addWidget(self.empty)
-        right.addWidget(self.editor)
+        right.addWidget(self.tabs)
         right.addWidget(self.bound)
         right.addStretch(1)
 
@@ -888,6 +909,8 @@ class CameraDialog(_LibraryDialog):
     #: Emitted when somebody asks to measure the open camera. The window
     #: owns the session, so it runs the measurement; this only asks.
     measure_requested = QtCore.Signal()
+    #: A control written from the controls page: (control id, value).
+    control_written = QtCore.Signal(int, int)
 
     #: Set when a camera is chosen, and read by the caller afterwards.
     #: This dialog does not open cameras: it is a dialog.
@@ -994,7 +1017,7 @@ class CameraDialog(_LibraryDialog):
         self.list.blockSignals(False)
 
         known = bool(rows)
-        for w in (self.list, self.editor, self.bound, self.remove,
+        for w in (self.list, self.tabs, self.bound, self.remove,
                   self.use, self.profile):
             w.setVisible(known)
         self.empty.setVisible(not known)
@@ -1004,7 +1027,32 @@ class CameraDialog(_LibraryDialog):
             self._hand_over(self._profile_for(serial))
         else:
             self._selected = None
+        self._show_controls_for(self._selected)
         self._refresh()
+
+    def _show_controls_for(self, serial: str | None) -> None:
+        """The controls page exists for the open camera only; for any
+        other row the tab is out of reach rather than empty."""
+        from .controls_ui import ControlsPage
+        if self._controls_page is not None:
+            self._controls_col.removeWidget(self._controls_page)
+            self._controls_page.deleteLater()
+            self._controls_page = None
+        is_open = bool(serial and serial == self._open_serial and self._live is not None)
+        self.tabs.setTabEnabled(1, is_open)
+        if not is_open:
+            if self.tabs.currentIndex() == 1:
+                self.tabs.setCurrentIndex(0)
+            return
+        profile = self._library.cameras.get(serial)
+        if profile is None:
+            self.tabs.setTabEnabled(1, False)
+            return
+        page = ControlsPage(self._live, profile.roles)
+        page.role_changed.connect(lambda *_: self._refresh())
+        page.written.connect(self.control_written)
+        self._controls_page = page
+        self._controls_col.addWidget(page)
 
     def _profile_for(self, serial: str):
         """The library's profile, or a stand-in for a device it has not
@@ -1042,6 +1090,7 @@ class CameraDialog(_LibraryDialog):
             self._selected = serial
             self._hand_over(self._profile_for(serial))
         self._refresh()
+        self._show_controls_for(self._selected)
 
     def _set_ignored(self, on: bool) -> None:
         """Pass this camera over on startup, or stop doing so.

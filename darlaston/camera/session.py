@@ -108,6 +108,13 @@ class CameraSession:
         self._backend: CameraBackend | None = None
         #: The camera's own automatic, as last asked; None until asked.
         self._auto_exposure: bool | None = None
+        #: Controls written by id that the window asked to be remembered
+        #: (the Picture row's), so a restart after a mode change or a
+        #: reconnect hands them back. Not every write: the controls page
+        #: reaches the switches the backend settles itself, and replaying
+        #: those would undo the settling on every restart.
+        self._control_values: dict[int, int] = {}
+        self._auto_values: dict[int, bool] = {}
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
         self._lock = threading.Lock()
@@ -195,6 +202,7 @@ class CameraSession:
         camera to switch between.
         """
         self.stop()
+        self.forget_controls()
         self._make_backend = make_backend
         self._is_present = is_present or (lambda: True)
         self._attempt = 0
@@ -215,7 +223,7 @@ class CameraSession:
         if b is None:
             return None
         try:
-            return b.get_exposure(), b.get_gain()
+            return b.read_settings()
         except Exception:
             return None
 
@@ -305,8 +313,80 @@ class CameraSession:
                 backend.set_auto_exposure(self._auto_exposure)
             except Exception:
                 pass
+        for cid, value in list(self._control_values.items()):
+            try:
+                backend.set_control(cid, value)
+            except Exception:
+                pass
+        for cid, on in list(self._auto_values.items()):
+            try:
+                backend.set_auto(cid, on)
+            except Exception:
+                pass
         if self.framerate_cap and hasattr(backend, "set_framerate_cap"):
             backend.set_framerate_cap(self.framerate_cap)
+
+    # ---- every control, by the device's key ----------------------------------
+
+    def controls(self) -> tuple:
+        """The open camera's controls with current values, or ()."""
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return ()
+        try:
+            return tuple(backend.controls())
+        except Exception:
+            return ()
+
+    def set_control(self, control_id: int, value: int,
+                    remember: bool = False) -> bool:
+        if remember:
+            self._control_values[int(control_id)] = int(value)
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return False
+        try:
+            return bool(backend.set_control(int(control_id), int(value)))
+        except Exception:
+            return False
+
+    def set_auto(self, control_id: int, on: bool, remember: bool = False) -> bool:
+        if remember:
+            self._auto_values[int(control_id)] = bool(on)
+            if on:
+                self._control_values.pop(int(control_id), None)
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return False
+        try:
+            return bool(backend.set_auto(int(control_id), bool(on)))
+        except Exception:
+            return False
+
+    def exposure_owned_by_camera(self) -> bool:
+        with self._lock:
+            backend = self._backend
+        if backend is None:
+            return False
+        try:
+            return bool(backend.exposure_owned_by_camera())
+        except Exception:
+            return False
+
+    @property
+    def focus_control_id(self) -> int | None:
+        with self._lock:
+            backend = self._backend
+        return getattr(backend, "focus_control_id", None) if backend else None
+
+    def forget_controls(self) -> None:
+        """On a camera switch: the remembered values were that camera's."""
+        self._control_values.clear()
+        self._auto_values.clear()
+        self._auto_exposure = None
 
     def set_gain(self, percent: int) -> None:
         self._gain_pct = int(percent)

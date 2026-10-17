@@ -293,6 +293,13 @@ msgstr ""
 msgid "setup.cameras.title"
 msgstr "Cameras"
 
+#. The two tabs beside the camera list. Controls is for the open camera only.
+msgid "setup.cameras.tab.profile"
+msgstr "Profile"
+
+msgid "setup.cameras.tab.controls"
+msgstr "Controls"
+
 msgid "setup.cameras.action.remove"
 msgstr "Remove"
 

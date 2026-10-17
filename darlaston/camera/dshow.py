@@ -432,16 +432,19 @@ _CONTROL_NAMES = {
 }
 
 #: One integer key per property, for the generic control API: a camera
-#: control is its property number, a proc-amp one is that plus 100.
-_AMP_ID_BASE = 100
+#: control is 1000 plus its property number, a proc-amp one 2000 plus.
+#: Never zero, since a role of zero means "nothing" and Pan is property 0.
+_CAM_ID_BASE = 1000
+_AMP_ID_BASE = 2000
 
 
 def control_id(which: str, prop: int) -> int:
-    return prop + (_AMP_ID_BASE if which == "amp" else 0)
+    return prop + (_AMP_ID_BASE if which == "amp" else _CAM_ID_BASE)
 
 
 def split_id(cid: int) -> tuple[str, int]:
-    return ("amp", cid - _AMP_ID_BASE) if cid >= _AMP_ID_BASE else ("camera", cid)
+    return (("amp", cid - _AMP_ID_BASE) if cid >= _AMP_ID_BASE
+            else ("camera", cid - _CAM_ID_BASE))
 
 
 def to_controls(raw: list[dict]) -> "tuple[Control, ...]":
@@ -1182,6 +1185,33 @@ class DshowBackend(CvCaptureBackend):
     def focus_axis(self) -> FocusAxis | None:
         return self._focus
 
+    @property
+    def focus_control_id(self) -> int | None:
+        if self._focus is None:
+            return None
+        return control_id(self._focus.which, self._focus.prop)
+
+    def exposure_owned_by_camera(self) -> bool:
+        if self._device is None or "Exposure" not in self._controls:
+            return False
+        got = getattr(self._device, "get_with_mode", lambda w, p: None)(
+            "camera", CameraControl_Exposure)
+        return bool(got and got[1] & CameraControl_Flags_Auto)
+
+    def read_settings(self) -> tuple[int, int]:
+        us, pct = self._exposure_us, self._gain_pct
+        if self._device is not None:
+            if self._exposure_range() is not None:
+                got = self._device.get("camera", CameraControl_Exposure)
+                if got is not None:
+                    us = self._exposure_us = exposure_to_us(got)
+            gain = self._controls.get("Gain")
+            if gain:
+                got = self._device.get("amp", VideoProcAmp_Gain)
+                if got is not None:
+                    pct = self._gain_pct = 100 + max(0, int(got) - gain["min"])
+        return us, pct
+
     def _exposure_range(self) -> tuple[int, int] | None:
         """None where the exposure cannot be set by hand, which includes
         a device that lists the property and then says it is automatic
@@ -1278,6 +1308,18 @@ class DshowBackend(CvCaptureBackend):
                 if current is not None:
                     self._focus._position = current
                     self._device.set(self._focus.which, self._focus.prop, current)
+            # Pan, Tilt, Roll and Zoom change what a pixel covers and
+            # which way is up, under a scale bar and a stage tracker
+            # that assume neither moves. Pinned to their defaults, so an
+            # on-screen menu or another program cannot leave them
+            # elsewhere between our launches.
+            for name in ("Pan", "Tilt", "Roll", "Zoom"):
+                found = self._controls.get(name)
+                if not found:
+                    continue
+                now = self._device.get(found["which"], found["prop"])
+                if now is not None and now != found["default"]:
+                    self._device.set(found["which"], found["prop"], found["default"])
         except Exception as why:
             _log.debug("settling controls: %s", why)
         self._warm_up()
@@ -1305,6 +1347,18 @@ class DshowBackend(CvCaptureBackend):
     def get_control(self, control_id: int) -> int | None:
         which, prop = split_id(control_id)
         return self._device.get(which, prop) if self._device is not None else None
+
+    def set_control(self, control_id: int, value: int) -> bool:
+        # A software filter keeps its state per instance, so a write to
+        # our second handle reaches nothing; say so rather than queue it.
+        if self._device is None:
+            return False
+        return super().set_control(control_id, value)
+
+    def set_auto(self, control_id: int, on: bool) -> bool:
+        if self._device is None:
+            return False
+        return super().set_auto(control_id, on)
 
     def _write_control(self, what: str, value) -> None:
         if what.startswith("control:") or what.startswith("auto:"):
@@ -1336,6 +1390,9 @@ class DshowBackend(CvCaptureBackend):
             found = self._controls.get("Exposure")
             if not found or not self._manual_capable(found):
                 return      # automatic only: a manual write is refused anyway
+            if self.exposure_owned_by_camera():
+                self._exposure_us = int(value)
+                return
             step = max(found["min"], min(found["max"], us_to_exposure(value)))
             # The frame's metadata should carry what the camera got,
             # which is the nearest power of two, not what was asked.

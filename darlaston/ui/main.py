@@ -73,6 +73,7 @@ from .timelapse_ui import TimelapseDialog
 from .floating import FloatingPanel
 from .present import (HeaderDialog, PresentWindow, ScreenDialog,
                       screen_width_cm)
+from .picture_ui import PictureRow
 from .widgets import (UI_METER, BalanceSwatch, FocusGroup, Histogram,
                       LiveView, SaveGauge, ValueBar)
 
@@ -712,6 +713,12 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             body.addWidget(self.stack, 1)
             body.addWidget(rail)
+        # The bar on the outer edge, away from the picture: on the left
+        # of a left rail, which a right-to-left scroll area gives.
+        self._rail_top.setLayoutDirection(
+            QtCore.Qt.LayoutDirection.RightToLeft
+            if self.settings.sidebar_side == "left"
+            else QtCore.Qt.LayoutDirection.LeftToRight)
         rail.setStyleSheet(self._rail_style())
 
     def _open_appearance(self) -> None:
@@ -748,9 +755,20 @@ class MainWindow(QtWidgets.QMainWindow):
         # side the rail is on.
         edge = "right" if self.settings.sidebar_side == "left" else "left"
         return (f"QFrame#rail {{ background:{theme.PANEL};"
-                f" border-{edge}:1px solid {theme.LINE}; }}")
+                f" border-{edge}:1px solid {theme.LINE}; }}"
+                f"QScrollArea#rail_top, QFrame#rail_inner, QFrame#rail_bottom"
+                f" {{ background: transparent; border: 0; }}")
 
     def _rail(self) -> QtWidgets.QWidget:
+        # Two sections, stacked. The top holds what you adjust while
+        # looking at the slide (exposure, picture, focus) and scrolls if
+        # a short screen needs it; the bottom holds what you reach for
+        # blind (subject, optics, the shutter) and never moves. The
+        # rail's height was once the window's minimum height, so opening
+        # the Picture row grew the window and rescaled the preview; now
+        # the top section gives instead. No gutter is reserved for the
+        # bar: Picture caps its own height and scrolls inside, so the
+        # top section overflows only on a genuinely short screen.
         rail = QtWidgets.QFrame()
         rail.setFixedWidth(286)
         # Named, and the rule qualified to that name. An unqualified
@@ -759,15 +777,45 @@ class MainWindow(QtWidgets.QMainWindow):
         # filled: the rail was repainting it panel-coloured underneath.
         rail.setObjectName("rail")
         rail.setStyleSheet(self._rail_style())
+        outer = QtWidgets.QVBoxLayout(rail)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        col = QtWidgets.QVBoxLayout(rail)
+        shell = QtWidgets.QScrollArea()
+        shell.setObjectName("rail_top")
+        shell.setWidgetResizable(True)
+        shell.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        shell.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        shell.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        shell.viewport().setAutoFillBackground(False)
+        self._rail_top = shell
+        top = QtWidgets.QFrame()
+        top.setObjectName("rail_inner")
+        top.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
+        shell.setWidget(top)
+        bottom = QtWidgets.QFrame()
+        bottom.setObjectName("rail_bottom")
+        outer.addWidget(shell, 1)
+        outer.addWidget(bottom, 0)
+        # A fade over the hidden end, so the top section reads as
+        # continuing rather than ending where the window cut it.
+        from .scrollfade import ScrollFade
+        self._rail_fade = ScrollFade(shell)
+
+        col = QtWidgets.QVBoxLayout(top)
         col.setContentsMargins(14, 14, 14, 14)
         col.setSpacing(18)
 
-        # One row that is both status and doorway; the panel itself floats.
+        # The calibration doorway used to be the first row of the rail.
+        # It stops being pressable almost at once (a calibration is a
+        # thing you do, then have) and the Capture menu opens the same
+        # panel, so the row is gone; the button lives on unplaced,
+        # since it still carries the status the panel reports to.
         self.calib_button = CalibrationButton()
         self.calib_button.clicked.connect(self._toggle_calibration)
-        col.addWidget(self.calib_button)
+        self.calib_button.setVisible(False)
 
         # Exposure: what the sensor was given, and the two controls that
         # give it. The histogram is the reading and these are the knobs
@@ -845,6 +893,14 @@ class MainWindow(QtWidgets.QMainWindow):
         exposure.addLayout(wb_row)
 
         col.addLayout(exposure)
+
+        # The in-camera pipeline, on a camera that finishes its own
+        # picture, behind a disclosure. Its own group so the slot order
+        # of the rail never changes: exposure, picture, focus.
+        self.picture = PictureRow()
+        self.picture.changed.connect(self._on_picture_control)
+        self.picture.setVisible(False)
+        col.addWidget(self.picture)
         col.addWidget(self.focus)
 
         # Where the metric looks. Field curvature puts the frame edges on a
@@ -879,6 +935,11 @@ class MainWindow(QtWidgets.QMainWindow):
         col.addLayout(measure)
 
         col.addStretch(1)
+
+        # From here down, the section that never scrolls away.
+        col = QtWidgets.QVBoxLayout(bottom)
+        col.setContentsMargins(14, 0, 14, 14)
+        col.setSpacing(18)
 
         # Subject and optics sit closest to the shutter: they are what this
         # particular shot is *of*, and they change more often than anything
@@ -956,7 +1017,15 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(object)
     def _on_status(self, status: SessionStatus) -> None:
         info = status.info
-        if info is not None and self.setup is None:
+        if info is not None and (self.setup is None
+                                 or self.setup.camera.serial != info.serial):
+            # A different camera than the setup was built for: switched
+            # from the menu, or the first one. The setup used to be
+            # built once and kept, so a switch left the first camera's
+            # profile under the second, and once the profile carried
+            # picture values and roles that meant writing one camera's
+            # settings into another.
+            self._flush_profile()
             profile = self.library.remember_camera(
                 info.serial, info.model, make=info.brand or "",
                 fingerprint=getattr(info, "fingerprint", ""))
@@ -965,7 +1034,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # ignored on every subsequent launch -- a configured Zeiss
             # reverting to a placeholder turret every time the app started.
             scope = (self.library.scope_or_default(profile.last_scope)
-                     or self._first_scope())
+                     or (self.setup.scope if self.setup is not None
+                         else self._first_scope()))
             self.setup = Setup(camera=profile, scope=scope,
                                illumination=self._illumination)
             # The camera's calibrated rolling-shutter readout, or zero
@@ -1037,6 +1107,8 @@ class MainWindow(QtWidgets.QMainWindow):
             # camera whose switch it is. The session keeps it from here,
             # across reconnects and mode changes.
             self.session.set_auto_exposure(self._auto_on(info))
+        if info is not None:
+            self._restore_picture(info)
         self._synced = True
 
     def _measure_camera(self, parent=None) -> None:
@@ -1167,6 +1239,128 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.setRange(self._us_to_slider(int(low)),
                                 self._us_to_slider(int(high)))
         self._sync_auto_exposure(info)
+        self._apply_roles(info, live)
+        self._sync_exposure_owner(info if live else None)
+
+    def _sync_exposure_owner(self, info=None) -> None:
+        """Grey the time bar while the camera's own automatic has it."""
+        info = info or self.session.status.info
+        live = self.session.status.is_live and info is not None
+        owned = live and not info.meters_itself and self.session.exposure_owned_by_camera()
+        self._exposure_owned = bool(owned)
+        if info is not None and info.exposure_range_us is not None and live:
+            self.exposure.setEnabled(not owned)
+            self.exposure.setToolTip(_("shell.exposure.owned") if owned else "")
+
+    def _apply_roles(self, info, live: bool) -> None:
+        """Fill the slots the profile and the heuristics agree on: the
+        Picture row's bars, and a focus motor behind any control.
+
+        From the camera's controls as they stand now, not the snapshot
+        `open()` took: the session restores the remembered values after
+        the open, and a bar refilled from the snapshot read the factory
+        value while the device sat at the one the person had set.
+        """
+        from ..camera import roles as roles_
+        profile = self.setup.camera if self.setup is not None else None
+        controls = (self.session.controls() if live else ()) or info.controls
+        self._slots = roles_.resolve(controls, profile.roles if profile else {})
+        picture = {s: self._slots.get(s) for s in roles_.PICTURE_SLOTS}
+        self.picture.set_controls(picture if live else {})
+        self.picture.setVisible(live and any(picture.values()))
+        if profile is not None and live:
+            for slot, control in picture.items():
+                if control is not None and str(control.id) in profile.picture:
+                    self.picture.show_value(slot, int(profile.picture[str(control.id)]))
+
+    def _on_picture_control(self, slot: str, control_id: int, value: int) -> None:
+        """A bar moved: to the camera now, and into the profile so the
+        next open puts it back."""
+        self.session.set_control(control_id, value, remember=True)
+        self._note_picture(control_id, value)
+
+    def _on_control_written(self, control_id: int, value: int) -> None:
+        """A write from the controls page. One that lands in a picture
+        slot is the Picture row's business too: shown on its bar and
+        kept with the camera, so it survives the next launch. Any other
+        may have been the time or the gain, so those two bars are read
+        back from the camera a beat later, once the write has landed."""
+        for slot, control in getattr(self, "_slots", {}).items():
+            if control is not None and control.id == control_id and slot != "focus":
+                self.picture.show_value(slot, int(value))
+                self.session.set_control(control_id, value, remember=True)
+                self._note_picture(control_id, value)
+                return
+        QtCore.QTimer.singleShot(300, self._show_camera_settings)
+
+    def _show_camera_settings(self) -> None:
+        """The time and gain bars, from the camera, without a word to it;
+        and whose hand is on the exposure, which the page can change."""
+        self._sync_exposure_owner()
+        actual = self.session.actual_settings()
+        if actual is None:
+            return
+        us, gain = actual
+        for widget, value in ((self.exposure, self._us_to_slider(us)),
+                              (self.gain, gain)):
+            widget.blockSignals(True)
+            widget.setValue(max(widget.minimum(), min(widget.maximum(), value)))
+            widget.blockSignals(False)
+        self.exposure.set_value_text(
+            f"{us / 1000:.1f} ms" if us < 1_000_000 else f"{us / 1e6:.2f} s")
+        self.gain.set_value_text(f"{gain / 100:.1f}×")
+
+    def _note_picture(self, control_id: int, value: int) -> None:
+        """Into the profile in memory now, onto disk a beat later. A drag
+        emits a value per step, and each step used to rewrite the whole
+        library; one write a half-second after the last step is enough."""
+        if self.setup is None or not self.setup.camera.serial:
+            return
+        from dataclasses import replace
+        picture = dict(self.setup.camera.picture)
+        picture[str(control_id)] = int(value)
+        self.setup.camera = replace(self.setup.camera, picture=picture)
+        timer = getattr(self, "_profile_timer", None)
+        if timer is None:
+            timer = self._profile_timer = QtCore.QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(500)
+            timer.timeout.connect(self._save_profile)
+        timer.start()
+
+    def _save_profile(self) -> None:
+        if self.setup is not None and self.setup.camera.serial:
+            self.library.file_camera(self.setup.camera)
+            self.library.save()
+
+    def _flush_profile(self) -> None:
+        """Write the profile now, if a write is pending: before a camera
+        switch takes the setup away, and at shutdown."""
+        timer = getattr(self, "_profile_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            self._save_profile()
+
+    def _restore_picture(self, info) -> None:
+        """At open: the picture controls as this camera last had them,
+        for the controls that still fill a picture slot. A value kept
+        for a control since routed away stays in the file but is not
+        sent, and is pruned the next time the roles change."""
+        if self.setup is None or not self.setup.camera.picture:
+            return
+        slotted = {c.id for s, c in getattr(self, "_slots", {}).items()
+                   if c is not None and s != "focus"}
+        for key, value in self.setup.camera.picture.items():
+            try:
+                cid = int(key)
+            except ValueError:
+                continue
+            if cid in slotted:
+                self.session.set_control(cid, int(value), remember=True)
+        for slot, control in getattr(self, "_slots", {}).items():
+            if slot != "focus" and control is not None \
+                    and str(control.id) in self.setup.camera.picture:
+                self.picture.show_value(slot, int(self.setup.camera.picture[str(control.id)]))
 
     def _switch_to_synthetic(self) -> None:
         from ..camera.mock import MockCamera
@@ -1371,6 +1565,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if info is not None and info.meters_itself:
             # Its automatic, not ours. Ours would be driving gain against
             # an exposure it cannot see, and the two fight.
+            return
+        if getattr(self, "_exposure_owned", False):
+            # The camera's automatic has the exposure, switched on from
+            # the controls page. Same fight, other door.
+            self._ae_hurry = True
             return
         try:
             self._auto_expose(signals)
@@ -2270,9 +2469,25 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- the focus motor -------------------------------------------------
 
     def _focus_axis(self):
-        """The camera's motor, if it has one and the camera is open."""
+        """The camera's motor, if it has one and the camera is open.
+
+        A person's routing wins: a control the profile names as focus
+        is the motor, through the generic API, whatever the backend
+        found or did not find on its own.
+        """
         backend = self.session.backend if self.session is not None else None
-        return backend.focus_axis if backend is not None else None
+        if backend is None:
+            return None
+        routed = getattr(self, "_slots", {}).get("focus")
+        if routed is not None and self.setup is not None \
+                and self.setup.camera.roles.get("focus") \
+                and int(self.setup.camera.roles["focus"]) == routed.id:
+            from ..camera.roles import ControlFocusAxis
+            axis = getattr(self, "_routed_axis", None)
+            if axis is None or axis._control.id != routed.id or axis._backend is not backend:
+                axis = self._routed_axis = ControlFocusAxis(backend, routed)
+            return axis
+        return backend.focus_axis
 
     def _on_focus_slider(self, position: int) -> None:
         axis = self._focus_axis()
@@ -3220,8 +3435,10 @@ class MainWindow(QtWidgets.QMainWindow):
         full = max(((r.width, r.height) for r in resolutions),
                    key=lambda wh: wh[0] * wh[1], default=(0, 0))
         dialog = CameraDialog(self.library, current, self,
-                              settings=self.settings, open_size=full)
+                              settings=self.settings, open_size=full,
+                              live=self.session if self.session.status.is_live else None)
         dialog.measure_requested.connect(lambda: self._measure_camera(dialog))
+        dialog.control_written.connect(self._on_control_written)
         accepted = dialog.exec()
         # Selection first: a different camera means a different profile,
         # and reloading the old one over the top of it would undo the
@@ -3236,6 +3453,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setup.camera = updated
             self.strip.update_status(self.session.status, self.setup)
             self._refresh_calibration()
+            info = self.session.status.info
+            if info is not None:
+                # Roles may have moved: the Picture row and the focus
+                # motor follow the profile as it stands now, and a value
+                # kept for a control routed away from the row goes.
+                self._apply_roles(info, self.session.status.is_live)
+                slotted = {str(c.id) for s, c in self._slots.items()
+                           if c is not None and s != "focus"}
+                if set(self.setup.camera.picture) - slotted:
+                    from dataclasses import replace
+                    self.setup.camera = replace(
+                        self.setup.camera,
+                        picture={k: v for k, v in self.setup.camera.picture.items()
+                                 if k in slotted})
+                    self.library.file_camera(self.setup.camera)
+                    self.library.save()
+                if self.assembly is not None:
+                    self.assembly.set_focus_axis(self._focus_axis())
 
     def _set_scale_bar(self, on: bool) -> None:
         self.settings.scale_bar = bool(on)
@@ -3920,6 +4155,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_shut", False):
             return
         self._shut = True
+        self._flush_profile()
         # First, and before the seal below reads the slice list. Frames
         # that have been exposed exist nowhere but in this process, and
         # the writer is a daemon thread: whatever is still in it when this

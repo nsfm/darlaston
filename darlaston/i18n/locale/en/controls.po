@@ -1,0 +1,84 @@
+# The camera controls page in the Cameras window: every control the
+# device reports, live, and "use as" to route one to a slot on the rail.
+
+msgid "controls.note"
+msgstr ""
+"Controls reported by your camera. Map useful ones to access them under\n"
+"Picture from the control panel."
+
+msgid "controls.column.control"
+msgstr "control"
+
+msgid "controls.column.value"
+msgstr "value"
+
+msgid "controls.column.auto"
+msgstr "auto"
+
+msgid "controls.column.use_as"
+msgstr "use as"
+
+msgid "controls.auto.tooltip"
+msgstr "Let the camera run this control itself."
+
+#. {lo}, {hi} and {default} are the device's own numbers.
+msgid "controls.bar.tooltip"
+msgstr "{lo} to {hi}. The camera's default is {default}."
+
+msgid "controls.action.defaults"
+msgstr "Device defaults"
+
+msgid "controls.defaults.tooltip"
+msgstr "Every control back to the value the camera ships with."
+
+#. The placeholder entry of "use as": what the heuristic guessed, or nothing.
+#. The first entry: our guess stands. Short, since the box is narrow.
+msgid "controls.use_as.guess"
+msgstr "guess: {slot}"
+
+msgid "controls.use_as.nothing"
+msgstr "guess: nothing"
+
+#. The entry that empties the slot, whatever we guessed.
+msgid "controls.use_as.none"
+msgstr "nothing"
+
+#. A control the rail already drives through a fixed slot: the exposure
+#. time or the gain. Not routable; the box says where it goes.
+msgid "controls.use_as.rail"
+msgstr "the rail: {slot}"
+
+msgid "controls.slot.time"
+msgstr "time"
+
+msgid "controls.slot.gain"
+msgstr "gain"
+
+msgid "controls.slot.temperature"
+msgstr "temperature"
+
+msgid "controls.use_as.tooltip"
+msgstr ""
+"Which slot on the rail this control fills. The first entry is our\n"
+"guess; pick a slot to override it, or nothing to empty the slot."
+
+msgid "controls.slot.focus"
+msgstr "focus"
+
+msgid "controls.slot.brightness"
+msgstr "brightness"
+
+msgid "controls.slot.contrast"
+msgstr "contrast"
+
+msgid "controls.slot.saturation"
+msgstr "saturation"
+
+msgid "controls.slot.sharpness"
+msgstr "sharpness"
+
+msgid "controls.slot.gamma"
+msgstr "gamma"
+
+msgid "controls.slot.hue"
+msgstr "hue"

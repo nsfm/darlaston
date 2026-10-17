@@ -158,6 +158,51 @@ msgstr "running a timelapse"
 msgid "shell.group.exposure"
 msgstr "exposure"
 
+#. The disclosure over the in-camera picture controls, on a camera that
+#. finishes its own picture. Closed by default; the header is the switch.
+msgid "shell.group.picture"
+msgstr "picture"
+
+msgid "shell.picture.tooltip"
+msgstr ""
+"The camera's own picture controls. On a camera that sends a finished\n"
+"picture these are the whole pipeline. Remembered with the camera."
+
+msgid "shell.picture.brightness"
+msgstr "brightness"
+
+msgid "shell.picture.contrast"
+msgstr "contrast"
+
+msgid "shell.picture.saturation"
+msgstr "saturation"
+
+msgid "shell.picture.sharpness"
+msgstr "sharpness"
+
+msgid "shell.picture.gamma"
+msgstr "gamma"
+
+msgid "shell.picture.hue"
+msgstr "hue"
+
+#. The camera's colour temperature, in kelvin, where it offers one.
+msgid "shell.picture.temperature"
+msgstr "temperature"
+
+msgid "shell.picture.owned"
+msgstr "The camera's own automatic owns this right now."
+
+#. On the time bar while the camera's automatic exposure is on, switched
+#. on from the controls page. Our loop holds too.
+msgid "shell.exposure.owned"
+msgstr ""
+"The camera's own automatic exposure is on (Cameras > Controls), so\n"
+"the time is its to set. Switch it to manual there to take it back."
+
+msgid "shell.picture.bar.tooltip"
+msgstr "{name}. The camera's default is {default}; right-click to go back to it."
+
 msgid "shell.group.measure_from"
 msgstr "measure from"
 

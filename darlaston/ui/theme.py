@@ -1090,6 +1090,21 @@ def stylesheet() -> str:
                                        border-color: {BRASS}; }}
     QRadioButton::indicator:hover {{ border-color: {BRASS}; }}
 
+    /* Scroll bars: a thin handle in the dim ink on no groove, so it is
+       seen against the panel and never mistaken for a rule. The arrows
+       are gone; a bar this narrow has no room for them. */
+    QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; border: 0; }}
+    QScrollBar::handle:vertical {{ background: {DIM}; border-radius: 4px;
+        min-height: 24px; }}
+    QScrollBar::handle:vertical:hover {{ background: {INK}; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+    QScrollBar:horizontal {{ background: transparent; height: 8px; margin: 0; border: 0; }}
+    QScrollBar::handle:horizontal {{ background: {DIM}; border-radius: 4px;
+        min-width: 24px; }}
+    QScrollBar::handle:horizontal:hover {{ background: {INK}; }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
     QSlider::groove:horizontal {{ height: 3px; background: {SUNK};
                                   border-radius: 2px; }}
     QSlider::handle:horizontal {{ background: {INK}; width: 11px;
