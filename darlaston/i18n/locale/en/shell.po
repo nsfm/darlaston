@@ -240,6 +240,13 @@ msgstr ""
 "gain once a longer exposure would cost frame rate. Paused during a\n"
 "capture, a stack, a mosaic and a calibration."
 
+#. The same switch on a camera that meters itself: there is no exposure
+#. time for our loop to drive, so the switch is the camera's own.
+msgid "shell.auto_exposure.device.tooltip"
+msgstr ""
+"This camera meters itself. The switch turns its own automatic\n"
+"exposure on and off; gain biases it."
+
 #. Offered only where the camera has both controls: with gain alone there
 #. is no time to pin, and with time alone there would be nothing left to
 #. move.

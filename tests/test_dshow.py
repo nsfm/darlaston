@@ -569,3 +569,42 @@ def test_the_sdk_wrapper_hides_behind_the_plain_device_and_stands_alone_otherwis
     alone = [c for c in discovery.look() if c.kind == "dshow"]
     assert [c.name for c in alone] == ["X5FCAM4K8MPA(UvcHam)"]
     assert alone[0].detail.startswith("ToupTek SDK wrapper")
+
+
+def test_an_automatic_only_exposure_is_no_exposure_but_is_a_switch(fake, monkeypatch):
+    """A device may list Exposure and then say it is automatic only. A
+    range we cannot write is no range; what it does have is a switch."""
+    auto_only = _found(controls=[
+        {"name": "Exposure", "which": "camera", "prop": 4, "min": -13,
+         "max": 1, "step": 1, "default": -6, "flags": dshow.CameraControl_Flags_Auto},
+        {"name": "Gain", "which": "amp", "prop": 9, "min": 0, "max": 55,
+         "step": 1, "default": 0, "flags": 2},
+    ])
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [auto_only])
+    cam = dshow.DshowBackend(key=auto_only["key"])
+    info = cam.open()
+    assert info.exposure_range_us is None and info.meters_itself
+    assert not info.auto_exposure_switch, "a switch that cannot turn off is no switch"
+    assert info.gain_range_pct == (100, 155)
+    # Settling did not try to take an exposure it cannot hold, and nor
+    # does the session's exposure on connect.
+    assert not any(w[:2] == ("camera", 4) for w in fake.instances[0].writes)
+    cam.set_exposure(20000)
+    cam._apply_pending()
+    assert not any(w[:2] == ("camera", 4) for w in fake.instances[0].writes)
+    assert not cam.set_auto_exposure(True)
+    cam.close()
+
+
+def test_an_exposure_that_goes_both_ways_is_a_switch(fake, monkeypatch):
+    monkeypatch.setattr(dshow, "enumerate_cameras", lambda: [_found()])
+    cam = dshow.DshowBackend(key=_found()["key"])
+    info = cam.open()
+    assert info.auto_exposure_switch and not info.meters_itself
+    assert cam.set_auto_exposure(True)
+    cam._apply_pending()
+    assert fake.instances[0].writes[-1] == ("camera", 4, -6, True)
+    assert cam.set_auto_exposure(False)
+    cam._apply_pending()
+    assert fake.instances[0].writes[-1][:2] == ("camera", 4) and fake.instances[0].writes[-1][3] is False
+    cam.close()

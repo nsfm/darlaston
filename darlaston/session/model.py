@@ -259,6 +259,12 @@ class CameraProfile:
     #: wearing the previous occupant's identity -- its name, and worse,
     #: its measured geometry and response. This is how that is caught.
     fingerprint: str = ""
+    #: The camera's own automatic exposure, on a camera that meters
+    #: itself: on or off, as last chosen for *this* camera. Kept apart
+    #: from the global switch that runs our loop, because someone who
+    #: turned our loop off for a long manual exposure on one camera
+    #: does not want the next webcam frozen at whatever it last chose.
+    camera_auto_exposure: bool = True
     #: What a profiling run measured, or empty until one has been done.
     #:
     #: `geometry` is one entry per resolution mode: its size, whether the
