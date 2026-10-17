@@ -339,6 +339,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cross_action.setToolTip(_("menu.capture.guides.cross.tooltip"))
         self.cross_action.toggled.connect(
             lambda on: self._set_framing(cross=on))
+        # Which cross. Named reticles, the way the palettes are named:
+        # four good ones rather than a dialog of line widths. Spelled
+        # out for the catalogue check.
+        crosses = guides.addMenu(_("menu.capture.guides.crosshair"))
+        self._crosshair_actions = {}
+        cross_group = QtGui.QActionGroup(self)
+        cross_group.setExclusive(True)
+        for value, label, tip in (
+                ("plain", _("menu.capture.guides.crosshair.plain"),
+                 _("menu.capture.guides.crosshair.plain.tooltip")),
+                ("open", _("menu.capture.guides.crosshair.open"),
+                 _("menu.capture.guides.crosshair.open.tooltip")),
+                ("reticle", _("menu.capture.guides.crosshair.reticle"),
+                 _("menu.capture.guides.crosshair.reticle.tooltip")),
+                ("graduated", _("menu.capture.guides.crosshair.graduated"),
+                 _("menu.capture.guides.crosshair.graduated.tooltip"))):
+            act = crosses.addAction(label)
+            act.setCheckable(True)
+            act.setToolTip(tip)
+            act.setChecked(self.settings.crosshair == value)
+            act.triggered.connect(
+                lambda _c=False, v=value: self._set_framing(crosshair=v))
+            cross_group.addAction(act)
+            self._crosshair_actions[value] = act
         self.pips_action = guides.addAction(_("menu.capture.guides.pips"))
         self.pips_action.setCheckable(True)
         self.pips_action.setChecked(self.settings.framing_pips)
@@ -3307,7 +3331,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_framing(self, grid: str | None = None,
                      cross: bool | None = None,
-                     pips: bool | None = None) -> None:
+                     pips: bool | None = None,
+                     crosshair: str | None = None) -> None:
         """Change a framing guide and remember it.
 
         Saved immediately rather than on some later confirmation, because
@@ -3320,8 +3345,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.framing_cross = bool(cross)
         if pips is not None:
             self.settings.framing_pips = bool(pips)
+        if crosshair is not None:
+            self.settings.crosshair = str(crosshair)
+            # Choosing a cross is asking for one.
+            self.settings.framing_cross = True
+            with QtCore.QSignalBlocker(self.cross_action):
+                self.cross_action.setChecked(True)
         self.view.framing_grid = self.settings.framing_grid
         self.view.framing_cross = self.settings.framing_cross
+        self.view.crosshair = self.settings.crosshair
         self.view.update()
         self.settings.save()
 
@@ -3383,6 +3415,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.preview_quality = self.settings.preview_quality
         self.view.framing_grid = self.settings.framing_grid
         self.view.framing_cross = self.settings.framing_cross
+        self.view.crosshair = self.settings.crosshair
         apply_thread_budget(self.settings.cpu_threads)
 
     def settings_rate(self) -> int:

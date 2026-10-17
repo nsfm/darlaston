@@ -223,6 +223,11 @@ class Settings:
     white_balance_gains: list = field(default_factory=lambda: [1.0, 1.0, 1.0])
     framing_grid: str = "none"   # none | thirds | grid | reel | tall
     framing_cross: bool = False
+    #: Which cross: plain, open (a gap at the centre, so the thing being
+    #: centred is not under the lines), reticle (the eyepiece classic, a
+    #: circle and a cross), or graduated (ticks at real micrometres when
+    #: the scale is known, which is the one that is ours to offer).
+    crosshair: str = "plain"
     #: Slide-anchored dots over the preview: the tracker's belief made
     #: visible. They stay glued to the specimens while panning exactly as
     #: long as tracking is right, which makes them both a debugging

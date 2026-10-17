@@ -323,6 +323,11 @@ class LiveView(QtWidgets.QWidget):
         #: frame are different jobs and people want them separately.
         self.framing_grid = "none"
         self.framing_cross = False
+        #: Which cross is drawn when it is: see `CROSSHAIRS`.
+        self.crosshair = "plain"
+        #: Micrometres per picture pixel, as the scale bar knows it; None
+        #: until the optics say. The graduated cross is ticked from it.
+        self._um_per_px: float | None = None
         #: Slide-anchored pips, as normalised (x, y) on the shown frame,
         #: or None. Computed upstream, where the tracker's position and
         #: the display orientation both live.
@@ -455,6 +460,13 @@ class LiveView(QtWidgets.QWidget):
         p.drawText(plate, QtCore.Qt.AlignmentFlag.AlignCenter, text)
         p.restore()
 
+    #: The crosses on offer. Named, like the palettes, rather than mixed
+    #: from parts: four good reticles beat a dialog of line widths.
+    CROSSHAIRS = ("plain", "open", "reticle", "graduated")
+    #: Tick spacings the graduated cross may use, in micrometres: the
+    #: 1-2-5 series, so a tick is always a number a person can say.
+    TICK_UM = (0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+
     #: Divisions each way, per guide style. Thirds is the photographer's
     #: habit; the fine grid is for lining an arrangement up with the frame,
     #: which is the microscope-specific job.
@@ -491,21 +503,111 @@ class LiveView(QtWidgets.QWidget):
             y = target.y() + target.height() * i / n
             lines.append(QtCore.QLineF(x, target.top(), x, target.bottom()))
             lines.append(QtCore.QLineF(target.left(), y, target.right(), y))
+        circles: list[tuple[QtCore.QPointF, float]] = []
+        label: tuple[QtCore.QPointF, str] | None = None
+        # The grid is looked past; the cross is looked at. So the grid
+        # keeps the faint pair and the cross gets a stronger one: over a
+        # mid-grey object the faint white came out at 172 on 128 and the
+        # halo at 97, and the cross vanished into anything its own tone.
+        # At 210 over 140 it is 228 over 58, and no uniform tone can
+        # hide both the line and its halo.
+        cross_lines: list = []
         if self.framing_cross:
             cx = target.x() + target.width() / 2
             cy = target.y() + target.height() / 2
-            arm = min(target.width(), target.height()) * 0.045
-            lines.append(QtCore.QLineF(cx - arm, cy, cx + arm, cy))
-            lines.append(QtCore.QLineF(cx, cy - arm, cx, cy + arm))
-        if not lines:
+            centre = QtCore.QPointF(cx, cy)
+            short = min(target.width(), target.height())
+            style = self.crosshair if self.crosshair in self.CROSSHAIRS else "plain"
+            if style == "plain":
+                arm = short * 0.045
+                cross_lines.append(QtCore.QLineF(cx - arm, cy, cx + arm, cy))
+                cross_lines.append(QtCore.QLineF(cx, cy - arm, cx, cy + arm))
+            elif style == "open":
+                # A gap at the centre a quarter of the arm each way: what
+                # is being centred stays visible while being centred.
+                arm, gap = short * 0.06, short * 0.015
+                for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    cross_lines.append(QtCore.QLineF(cx + sx * gap, cy + sy * gap,
+                                                     cx + sx * arm, cy + sy * arm))
+            elif style == "reticle":
+                # The eyepiece classic: a circle with the cross reaching
+                # past it, the centre open.
+                arm, gap, radius = short * 0.09, short * 0.012, short * 0.05
+                for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    cross_lines.append(QtCore.QLineF(cx + sx * gap, cy + sy * gap,
+                                                     cx + sx * arm, cy + sy * arm))
+                circles.append((centre, radius))
+            else:
+                cross_lines, label = self._graduated(target, centre, short, cross_lines)
+        if not lines and not cross_lines and not circles:
             return
         p.save()
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
         for colour, width in ((QtGui.QColor(0, 0, 0, 60), 3),
                               (QtGui.QColor(255, 255, 255, 90), 1)):
+            if lines:
+                p.setPen(QtGui.QPen(colour, width))
+                p.drawLines(lines)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, bool(circles))
+        for colour, width in ((QtGui.QColor(0, 0, 0, 140), 3),
+                              (QtGui.QColor(255, 255, 255, 210), 1)):
             p.setPen(QtGui.QPen(colour, width))
-            p.drawLines(lines)
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            if cross_lines:
+                p.drawLines(cross_lines)
+            for centre, radius in circles:
+                p.drawEllipse(centre, radius, radius)
+        if label is not None:
+            at, text = label
+            font = QtGui.QFont(self.font())
+            font.setPixelSize(9)
+            p.setFont(font)
+            # The same two strokes as the lines, as an outline under the
+            # letters, so the number reads on white and on black.
+            path = QtGui.QPainterPath()
+            path.addText(at, font, text)
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 140), 2.5))
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawPath(path)
+            p.fillPath(path, QtGui.QColor(255, 255, 255, 210))
         p.restore()
+
+    def _graduated(self, target: QtCore.QRect, centre: QtCore.QPointF,
+                   short: float, lines: list):
+        """A cross with ticks at real micrometres, where the scale is
+        known; a plain cross where it is not, since a tick that means
+        nothing is worse than no tick.
+
+        Ticks every step of the 1-2-5 series that puts them 18 to 45
+        pixels apart, a longer one every fifth, and the arm's length
+        written once at the end of the right arm. The arms are long,
+        a fifth of the frame, because a ruler needs room to be one.
+        """
+        cx, cy = centre.x(), centre.y()
+        arm = short * 0.2
+        if not self._um_per_px:
+            lines.append(QtCore.QLineF(cx - arm, cy, cx + arm, cy))
+            lines.append(QtCore.QLineF(cx, cy - arm, cx, cy + arm))
+            return lines, None
+        px_per_um = 1.0 / self._um_per_px
+        step_um = next((s for s in self.TICK_UM if s * px_per_um >= 18), self.TICK_UM[-1])
+        step_px = step_um * px_per_um
+        count = max(1, int(arm // step_px))
+        reach = count * step_px
+        lines.append(QtCore.QLineF(cx - reach, cy, cx + reach, cy))
+        lines.append(QtCore.QLineF(cx, cy - reach, cx, cy + reach))
+        for k in range(1, count + 1):
+            d = k * step_px
+            tick = short * (0.012 if k % 5 else 0.02)
+            for sx, sy in ((1, 0), (-1, 0)):
+                lines.append(QtCore.QLineF(cx + sx * d, cy - tick, cx + sx * d, cy + tick))
+            for sx, sy in ((0, 1), (0, -1)):
+                lines.append(QtCore.QLineF(cx - tick, cy + sy * d, cx + tick, cy + sy * d))
+        total = count * step_um
+        text = (f"{total:g} µm" if total < 1000 else f"{total / 1000:g} mm")
+        label = (QtCore.QPointF(cx + reach + 6, cy - 4), text)
+        return lines, label
 
     def _draw_crop(self, p: QtGui.QPainter, target: QtCore.QRect,
                    aspect: float) -> None:
@@ -642,6 +744,7 @@ class LiveView(QtWidgets.QWidget):
         return self._peak_image
 
     def set_scale_bar(self, um_per_px, style) -> None:
+        self._um_per_px = float(um_per_px) if um_per_px else None
         """Draw a bar over the live view, or stop.
 
         Called every frame, because the scale can change under a running
