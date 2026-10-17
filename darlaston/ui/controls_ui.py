@@ -100,13 +100,23 @@ class ControlsPage(QtWidgets.QWidget):
     # ---- the rows ----------------------------------------------------------
 
     def reload(self) -> None:
-        """Rebuild from the camera's controls as they stand now."""
+        """The camera's controls as they stand now.
+
+        In place when the list is the same list: values, whose hand is
+        on each, and the ticks. Rebuilding every row after a switch was
+        a hundred widgets created and a hundred deleted, dripped through
+        the event loop, and under a tiling window manager each step was
+        a redraw and each redraw a flash.
+        """
+        controls = tuple(self._live.controls()) if self._live is not None else ()
+        if self._rows and [r["control"].id for r in self._rows] == [c.id for c in controls]:
+            self._update_in_place(controls)
+            return
         for row in self._rows:
             for w in row["widgets"]:
                 self.grid.removeWidget(w)
                 w.deleteLater()
         self._rows = []
-        controls = tuple(self._live.controls()) if self._live is not None else ()
         guesses = {slot: c.id for slot, c in roles_.resolve(controls, {}).items()
                    if c is not None}
         # Slot names spelled out for the catalogue check; "use as" offers
@@ -181,6 +191,31 @@ class ControlsPage(QtWidgets.QWidget):
             widgets.append(use)
             self.grid.addWidget(use, i, 3)
             self._rows.append({"control": control, "widgets": widgets, "value": value})
+
+    def _update_in_place(self, controls) -> None:
+        self.setUpdatesEnabled(False)
+        try:
+            for row, control in zip(self._rows, controls):
+                row["control"] = control
+                name, value, auto = row["widgets"][0], row["value"], row["widgets"][2]
+                name.setEnabled(not control.inactive)
+                value.blockSignals(True)
+                if isinstance(value, ValueBar):
+                    if control.value is not None:
+                        value.setValue(int(control.value))
+                        value.set_value_text(str(int(control.value)))
+                    value.setEnabled(control.writable and not control.inactive)
+                elif isinstance(value, QtWidgets.QCheckBox):
+                    value.setChecked(bool(control.value))
+                elif isinstance(value, QtWidgets.QComboBox) and control.value is not None:
+                    value.setCurrentIndex(max(0, value.findData(control.value)))
+                value.blockSignals(False)
+                if control.auto:
+                    auto.blockSignals(True)
+                    auto.setChecked(bool(control.inactive))
+                    auto.blockSignals(False)
+        finally:
+            self.setUpdatesEnabled(True)
 
     def _value_widget(self, control) -> QtWidgets.QWidget:
         if control.kind == "bool":
