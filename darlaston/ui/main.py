@@ -799,6 +799,10 @@ class MainWindow(QtWidgets.QMainWindow):
         bottom.setObjectName("rail_bottom")
         outer.addWidget(shell, 1)
         outer.addWidget(bottom, 0)
+        # A fade over the hidden end, so the top section reads as
+        # continuing rather than ending where the window cut it.
+        from .scrollfade import ScrollFade
+        self._rail_fade = ScrollFade(shell)
 
         col = QtWidgets.QVBoxLayout(top)
         col.setContentsMargins(14, 14, 14, 14)

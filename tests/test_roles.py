@@ -303,3 +303,27 @@ def test_a_right_click_on_a_picture_bar_goes_back_to_the_camera_s_default(qapp):
                               QtCore.Qt.KeyboardModifier.NoModifier)
     qapp.sendEvent(bar, press)
     assert bar.value() == 32 and got[-1] == ("contrast", 32), "the camera's default, and written"
+
+
+def test_the_wheel_over_a_picture_bar_scrolls_the_row_not_the_value(qapp):
+    from PySide6 import QtCore, QtGui
+    from darlaston.ui.picture_ui import PictureRow
+    from darlaston.camera.base import Control
+
+    row = PictureRow()
+    row.resize(286, 300); row.show()
+    many = tuple(Control(id=0x00980900 + i, name=n, min=0, max=100, default=50, value=50)
+                 for i, n in enumerate(("Brightness", "Contrast", "Saturation", "Sharpness", "Gamma", "Hue")))
+    row.set_controls(roles.resolve(many, {}))
+    row.set_open(True)
+    for _ in range(5): qapp.processEvents()
+    bar = row._bars["brightness"]
+    assert row.body.verticalScrollBar().maximum() > 0, "six bars, four shown: it scrolls"
+    wheel = QtGui.QWheelEvent(QtCore.QPointF(10, 10), QtCore.QPointF(10, 10), QtCore.QPoint(0, -120),
+                              QtCore.QPoint(0, -120), QtCore.Qt.MouseButton.NoButton,
+                              QtCore.Qt.KeyboardModifier.NoModifier, QtCore.Qt.ScrollPhase.NoScrollPhase, False)
+    before = row.body.verticalScrollBar().value()
+    qapp.sendEvent(bar, wheel)
+    assert bar.value() == 50, "the value did not move"
+    assert row.body.verticalScrollBar().value() > before, "the row did"
+    assert row.fade.below or row.fade.above, "and the fade says there is more"

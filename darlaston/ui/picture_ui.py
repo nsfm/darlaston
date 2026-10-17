@@ -73,6 +73,8 @@ class PictureRow(QtWidgets.QWidget):
         self._body_col.setContentsMargins(0, 0, 0, 0)
         self._body_col.setSpacing(6)
         self.body.setWidget(inner)
+        from .scrollfade import ScrollFade
+        self.fade = ScrollFade(self.body)
         # Spelled out, one key per slot, so the catalogue check can see
         # them; the order is the order of PICTURE_SLOTS.
         labels = {"brightness": _("shell.picture.brightness"),
@@ -142,6 +144,12 @@ class PictureRow(QtWidgets.QWidget):
                 if bar is watched:
                     self.reset(slot)
                     return True
+        if event.type() == QtCore.QEvent.Type.Wheel and watched in self._bars.values():
+            # The wheel over a bar scrolls the row, not the value: with
+            # four of seven bars showing, a wheel that moved values left
+            # the hidden three reachable only by the bar's own handle.
+            QtWidgets.QApplication.sendEvent(self.body.viewport(), event)
+            return True
         return super().eventFilter(watched, event)
 
     def reset(self, slot: str) -> None:
