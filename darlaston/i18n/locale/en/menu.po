@@ -75,6 +75,37 @@ msgstr ""
 "Independent of the grid: centering a specimen and composing a frame are "
 "different jobs."
 
+#. Which cross. Four named reticles; choosing one turns the cross on.
+msgid "menu.capture.guides.crosshair"
+msgstr "Crosshair"
+
+msgid "menu.capture.guides.crosshair.plain"
+msgstr "Plain"
+
+msgid "menu.capture.guides.crosshair.plain.tooltip"
+msgstr "Two short lines through the centre."
+
+msgid "menu.capture.guides.crosshair.open"
+msgstr "Open centre"
+
+msgid "menu.capture.guides.crosshair.open.tooltip"
+msgstr "A gap at the centre, so what you are centering stays visible while you center it."
+
+msgid "menu.capture.guides.crosshair.reticle"
+msgstr "Reticle"
+
+msgid "menu.capture.guides.crosshair.reticle.tooltip"
+msgstr "The eyepiece classic: a circle and a cross, centre open."
+
+msgid "menu.capture.guides.crosshair.graduated"
+msgstr "Graduated"
+
+msgid "menu.capture.guides.crosshair.graduated.tooltip"
+msgstr ""
+"Ticks at real micrometres once the optics are described, every fifth\n"
+"one longer, the arm's length written at its end. A plain cross until\n"
+"then: a tick that means nothing is worse than no tick."
+
 #. The rendering the operator works in. It is worn by the live view, the
 #. presentation, the stream and the JPEG, and never by the raw file.
 #. "Color" rather than "Rendering": less precise, far more colloquial.
