@@ -46,7 +46,7 @@ jobs:
       tag: ${{ steps.pick.outputs.tag }}
       version: ${{ steps.pick.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
@@ -100,7 +100,7 @@ jobs:
             label: windows-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # setuptools-scm reads tags, and a shallow clone has none, which
           # silently produces version 0.1.dev1 for every build ever made.
@@ -189,7 +189,7 @@ jobs:
     if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Not inherited from the build jobs: this one runs on a fresh runner,
