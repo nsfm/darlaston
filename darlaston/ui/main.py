@@ -244,6 +244,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # same lamp starts nearer where they want to be, and undoing it is
         # one click. Applied before the first frame, so the preview is
         # never briefly the wrong colour.
+        if self.settings.white_balance_domain != "linear":
+            # A pick saved by an older build is a display ratio; read as
+            # linear it would come back weaker than it was set.
+            self.settings.white_balance_gains = list(
+                balance.from_display_ratio(self.settings.white_balance_gains))
+            self.settings.white_balance_domain = "linear"
+            self.settings.save()
         self.pipeline.set_white_balance(self.settings.white_balance_gains)
         self.pipeline.set_balance_rect(self.DEFAULT_WB_RECT)
         self._refresh_wb()
@@ -2009,9 +2016,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if sample is None:
             return
         b, g, r = sample
-        gains = balance.sane((g / r, 1.0, g / b) if min(r, g, b) > 0
-                             else balance.UNITY)
+        gains = balance.gains_from_means(b, g, r)
         self.settings.white_balance_gains = list(gains)
+        self.settings.white_balance_domain = "linear"
         self.settings.save()
         self.pipeline.set_white_balance(gains)
         self._refresh_wb()

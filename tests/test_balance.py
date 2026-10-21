@@ -26,6 +26,58 @@ def test_a_picked_region_comes_out_neutral():
     assert max(channels) - min(channels) <= 1.0, channels
 
 
+def test_the_stored_gain_is_a_linear_ratio_not_a_display_one():
+    """The one thing this change alters: the number kept for the file.
+    A 120-green over 90-red patch is a display ratio of 1.33 and a linear
+    ratio of 1.33 ** 2.2, and the raw path multiplies linear values."""
+    gains = B.gains_from_means(b=120, g=120, r=90)
+    assert gains[0] == pytest.approx((120 / 90) ** B.GAMMA, rel=1e-6)
+    assert gains[1] == 1.0 and gains[2] == 1.0
+
+
+def test_the_preview_lookup_is_unchanged_by_the_domain():
+    """A power law commutes with a scale, so deriving in linear light and
+    applying through a linearising lookup gives the display-domain table
+    main always had, wherever the clamp does not bind. Pinned so nobody
+    claims a preview fix out of it again."""
+    rng = np.random.default_rng(1)
+    ramp = np.arange(256, dtype=np.float32)
+    for _ in range(200):
+        b, g, r = rng.uniform(80, 220, 3)        # ratios under the 3.5x clamp
+        new = B.lut(B.gains_from_means(b, g, r))
+        old = np.empty((1, 256, 3), np.uint8)
+        for ch, gain in enumerate((g / b, 1.0, g / r)):
+            old[0, :, ch] = np.clip(ramp * gain + 0.5, 0, 255)
+        assert np.abs(new.astype(int) - old.astype(int)).max() <= 1
+
+
+def test_a_legacy_display_ratio_is_carried_into_linear_once():
+    assert B.from_display_ratio((1.33, 1.0, 0.6)) == pytest.approx(
+        (1.33 ** B.GAMMA, 1.0, 0.6 ** B.GAMMA), rel=1e-6)
+
+
+def test_an_old_settings_file_is_converted_on_load(qapp, tmp_path, monkeypatch):
+    """A pick saved by the build that kept display ratios must not come
+    back weaker: 1.33 read as linear is a 1.14 display ratio."""
+    import json
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from darlaston.session.settings import Settings, config_dir
+    path = config_dir() / "settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"white_balance_gains": [1.33, 1.0, 0.6]}))
+    from darlaston.camera.mock import MockCamera
+    from darlaston.ui.main import MainWindow
+
+    win = MainWindow(lambda: MockCamera(fps=30.0))
+    try:
+        assert win.pipeline.white_balance[0] == pytest.approx(1.33 ** B.GAMMA, rel=1e-3)
+        saved = Settings.load()
+        assert saved.white_balance_domain == "linear"
+        assert saved.white_balance_gains[0] == pytest.approx(1.33 ** B.GAMMA, rel=1e-3)
+    finally:
+        win.shutdown()
+
+
 def test_picking_again_on_a_corrected_image_changes_nothing():
     """A pick is relative -- it is taken off the image as displayed, which
     already carries whatever is in force. So the second press on an
@@ -231,7 +283,10 @@ def test_one_press_arrives_rather_than_creeping(qapp, tmp_path, monkeypatch):
             _push_cast(win)
             win._take_white_balance()
             seen.append(win.pipeline.white_balance)
-        assert seen[0][0] == pytest.approx(120 / 90, rel=0.02), \
+        # The gain is derived in linear light now, not from the display-
+        # encoded means, so the ratio that neutralises a 120-green/90-red
+        # patch is (120/90) raised through the gamma, not the bare ratio.
+        assert seen[0][0] == pytest.approx((120 / 90) ** B.GAMMA, rel=0.02), \
             f"one press did not arrive: {seen[0]}"
         for later in seen[1:]:
             assert later == pytest.approx(seen[0], rel=1e-6), \
