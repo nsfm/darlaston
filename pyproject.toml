@@ -47,7 +47,7 @@ dependencies = [
     "opencv-python-headless==5.0.0.93",
     # 6.12.0 is out and crashes this suite two ways (TODO.md). 6.11.1 is
     # the version every test and the Windows camera job have passed on.
-    "PySide6==6.11.1",
+    "PySide6==6.12.0",
     # The fourth dependency, admitted reluctantly and for one job: a CA
     # bundle that travels with the app. The packaged interpreter trusts
     # whatever the build machine's Python trusted, and on macOS that was
