@@ -54,7 +54,7 @@ dependencies = [
     # nothing at all, so the SDK download failed TLS verification on a
     # server whose chain measures complete. Pure Python, no binary, and
     # PyInstaller's own hook carries the certificates into the bundle.
-    "certifi==2026.7.22",
+    "certifi==2026.10.19",
 ]
 
 [project.optional-dependencies]
