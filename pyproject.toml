@@ -58,10 +58,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "pytest-xdist==3.8.0"]
+dev = ["pytest==9.2.0", "pytest-xdist==3.8.0"]
 # Building the double-clickable artifacts. Not needed to run
 # darlaston, and deliberately not a runtime dependency.
-package = ["pytest==9.1.1", "pyinstaller==6.21.0"]
+package = ["pytest==9.2.0", "pyinstaller==6.21.0"]
 
 [project.urls]
 Homepage = "https://github.com/nsfm/darlaston"
